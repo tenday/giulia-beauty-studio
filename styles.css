@@ -1583,6 +1583,215 @@ body::before {
 }
 
 /* ==========================================================================
+   LO STUDIO, CONTATTI & DOVE SIAMO (BUSINESS CARD REPLICA + MAP)
+   ========================================================================== */
+.studio-contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  align-items: stretch;
+}
+
+.business-card-showcase {
+  background: linear-gradient(155deg, #ffffff 0%, #fcf3f4 62%, #f7e1e5 100%);
+  border: 1px solid rgba(173, 107, 114, 0.36);
+  border-radius: var(--radius-lg);
+  padding: 36px 32px;
+  box-shadow: var(--shadow-soft);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.card-floral-watercolor {
+  position: absolute;
+  bottom: -10px;
+  right: -10px;
+  width: 240px;
+  height: 205px;
+  pointer-events: none;
+  z-index: 1;
+  filter: blur(0.4px);
+}
+
+.bcard-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.bcard-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.bcard-monogram {
+  width: 112px;
+  height: 86px;
+}
+
+.bcard-title {
+  font-family: var(--font-serif);
+  font-size: 1.7rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  padding-left: 0.32em;
+  color: var(--ink-primary);
+  line-height: 1.1;
+}
+
+.bcard-sub {
+  font-family: var(--font-serif);
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  padding-left: 0.28em;
+  color: var(--ink-secondary);
+  margin-top: 2px;
+}
+
+.bcard-tag {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  padding-left: 0.26em;
+  color: var(--rose-deep);
+}
+
+.bcard-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-serif);
+  font-size: 1.24rem;
+  color: var(--ink-primary);
+}
+
+.bcard-line {
+  color: var(--ink-primary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+  line-height: 1.35;
+}
+
+a.bcard-line:hover {
+  color: var(--rose-deep);
+  text-decoration: underline;
+}
+
+.bcard-phone {
+  font-weight: 600;
+  font-size: 1.34rem;
+}
+
+.bcard-hours {
+  color: var(--ink-secondary);
+}
+
+.bcard-ig {
+  font-weight: 500;
+}
+
+.bcard-quick-actions {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bcard-quick-actions .btn-primary-luxury,
+.bcard-quick-actions .btn-secondary-luxury {
+  padding: 12px 18px;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+}
+
+.studio-map-card {
+  background: var(--surface-card);
+  border: 1px solid rgba(173, 107, 114, 0.34);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+}
+
+.map-frame-wrap {
+  flex: 1;
+  min-height: 280px;
+  background: #f4dcd9;
+}
+
+.map-frame-wrap iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  border: 0;
+  display: block;
+  filter: sepia(12%) saturate(90%) contrast(98%);
+}
+
+.map-card-footer {
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: rgba(255, 251, 250, 0.95);
+  border-top: 1px solid var(--rose-gold-hairline);
+}
+
+.map-address-label {
+  display: block;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--rose-deep);
+  font-weight: 600;
+}
+
+.map-address-title {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 1.28rem;
+  color: var(--ink-primary);
+  margin: 2px 0;
+}
+
+.map-hours-note {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--ink-secondary);
+}
+
+.btn-map-open {
+  padding: 12px 20px;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.closed-day-warning {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(216, 122, 141, 0.16);
+  border: 1px solid var(--rose-deep);
+  color: var(--ink-primary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+/* ==========================================================================
    SHOPPING BAG & BOOKING DRAWER (SLIDE-OVER E-COMMERCE CHECKOUT)
    ========================================================================== */
 .drawer-backdrop {
@@ -2105,7 +2314,8 @@ body::before {
 @media (max-width: 1080px) {
   .hero-grid,
   .editorial-split,
-  .giftcard-studio-grid {
+  .giftcard-studio-grid,
+  .studio-contact-grid {
     grid-template-columns: 1fr;
     gap: 36px;
   }
@@ -2530,8 +2740,45 @@ body::before {
   }
 
   /* Gift Card Studio on Mobile */
-  .giftcard-studio-grid {
+  .giftcard-studio-grid,
+  .studio-contact-grid {
     gap: 24px;
+  }
+
+  .business-card-showcase {
+    padding: 24px 18px;
+    border-radius: var(--radius-md);
+  }
+
+  .bcard-header {
+    width: 100%;
+  }
+
+  .bcard-details {
+    font-size: 1.12rem;
+    width: 100%;
+    text-align: center;
+    align-items: center;
+  }
+
+  .bcard-quick-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .bcard-quick-actions .btn-primary-luxury,
+  .bcard-quick-actions .btn-secondary-luxury {
+    width: 100%;
+  }
+
+  .map-card-footer {
+    padding: 16px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-map-open {
+    width: 100%;
   }
 
   .luxury-giftcard {

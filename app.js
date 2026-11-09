@@ -451,14 +451,61 @@ function closeCheckoutDrawer() {
 /**
  * Initialize Event Listeners
  */
+const STUDIO_WHATSAPP = '393315045135';
+
+function isClosedDay(dateStr) {
+  if (!dateStr) return false;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  const day = dt.getDay(); // 0 = Domenica, 2 = Martedì
+  return day === 0 || day === 2;
+}
+
+function getNextOpenDateString() {
+  const dt = new Date();
+  dt.setDate(dt.getDate() + 1);
+  while (dt.getDay() === 0 || dt.getDay() === 2) {
+    dt.setDate(dt.getDate() + 1);
+  }
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function buildWhatsAppUrl() {
+  const clientName = document.getElementById('clientNameInput')?.value.trim() || '';
+  const clientPhone = document.getElementById('clientPhoneInput')?.value.trim() || '';
+  const clientNotes = document.getElementById('clientNotesInput')?.value.trim() || '';
+  const bookingDate = document.getElementById('bookingDateInput')?.value || '';
+  const totalEuro = selectedBag.reduce((acc, item) => acc + item.price, 0);
+  const listText = selectedBag.map((i) => `• ${i.name} (${i.price} €)`).join('\n');
+
+  const msg = `Ciao *Giulia Beauty Studio* ♡\nVorrei ${
+    purchaseMode === 'booking'
+      ? `prenotare un appuntamento in studio (Via Principe Amedeo 17, Verdellino) per il giorno *${bookingDate}* alle *${selectedTimeSlot}*`
+      : `richiedere un Voucher / Gift Card per`
+  } i seguenti trattamenti:\n\n${listText}\n\n*Totale: ${totalEuro} €*${
+    clientName ? `\nCliente: ${clientName}` : ''
+  }${clientPhone ? `\nRecapito: ${clientPhone}` : ''}${
+    clientNotes ? `\nNote: ${clientNotes}` : ''
+  }`;
+
+  return `https://wa.me/${STUDIO_WHATSAPP}?text=${encodeURIComponent(msg)}`;
+}
+
 function initApp() {
-  // Set default date in booking calendar to tomorrow
+  // Set default date in booking calendar to next open studio day (skipping Tuesday & Sunday)
   const dateInput = document.getElementById('bookingDateInput');
+  const closedWarningEl = document.getElementById('closedDayWarning');
   if (dateInput) {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    dateInput.value = tomorrow.toISOString().split('T')[0];
+    dateInput.value = getNextOpenDateString();
     dateInput.min = new Date().toISOString().split('T')[0];
+    dateInput.addEventListener('change', () => {
+      if (closedWarningEl) {
+        closedWarningEl.hidden = !isClosedDay(dateInput.value);
+      }
+    });
   }
 
   // Category filter pills
@@ -645,20 +692,25 @@ function initApp() {
       )
       .join('');
 
+    const waUrl = buildWhatsAppUrl();
+
     receiptContent.innerHTML = `
       <div style="font-size: 2.2rem; color: var(--rose-deep); margin-bottom: 4px;">♡</div>
       <span style="font-size: 0.68rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--rose-deep); font-weight: 600;">
-        Richiesta Registrata con Successo
+        Riepilogo Pronto — Giulia Beauty Studio
       </span>
       <h3 id="confirmModalTitle" style="font-family: var(--font-serif); font-size: 2rem; color: var(--ink-primary); margin: 6px 0;">
         Grazie, ${clientName}!
       </h3>
-      <p style="font-size: 0.86rem; color: var(--ink-secondary); margin-bottom: 18px;">
-        Codice Riepilogo: <strong>${orderCode}</strong> • ${
+      <p style="font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 6px;">
+        Codice: <strong>${orderCode}</strong> • ${
       purchaseMode === 'booking'
-        ? `Appuntamento richiesto per il <strong>${bookingDate}</strong> alle <strong>${selectedTimeSlot}</strong>`
+        ? `Richiesta per il <strong>${bookingDate}</strong> alle <strong>${selectedTimeSlot}</strong>`
         : 'Voucher / Gift Card Digitale'
     }
+      </p>
+      <p style="font-size: 0.78rem; color: var(--ink-muted); margin-bottom: 16px;">
+        📍 Via Principe Amedeo, 17 - Verdellino (BG) • Tel: +39 331 504 5135
       </p>
       <ul style="list-style:none; text-align:left; background:#fff; padding:16px 20px; border-radius:12px; border:1px solid var(--rose-gold-hairline); margin-bottom:18px; font-size:0.88rem;">
         ${itemsHtml}
@@ -667,8 +719,11 @@ function initApp() {
           <span>${totalEuro} €</span>
         </li>
       </ul>
-      <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
-        <button type="button" class="btn-primary-luxury" id="closeReceiptBtn" style="padding:12px 28px;">
+      <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+        <a href="${waUrl}" target="_blank" rel="noopener" class="btn-primary-luxury" style="padding:12px 24px;">
+          Invia Ora su WhatsApp a Giulia
+        </a>
+        <button type="button" class="btn-secondary-luxury" id="closeReceiptBtn" style="padding:12px 22px;">
           Torna alla Boutique
         </button>
       </div>
@@ -682,27 +737,20 @@ function initApp() {
     });
   });
 
-  // WhatsApp Quick Summary Generator
+  // WhatsApp Quick Summary Generator (Direct to +39 331 504 5135)
   document.getElementById('whatsappDirectBtn').addEventListener('click', () => {
     if (selectedBag.length === 0) {
-      alert('Aggiungi almeno un trattamento dal listino per inviare il riepilogo su WhatsApp.');
+      alert('Aggiungi almeno un trattamento dal listino per inviare la richiesta su WhatsApp.');
       return;
     }
-    const clientName = document.getElementById('clientNameInput').value.trim() || '';
-    const bookingDate = document.getElementById('bookingDateInput').value;
-    const totalEuro = selectedBag.reduce((acc, item) => acc + item.price, 0);
-    const listText = selectedBag.map((i) => `• ${i.name} (${i.price} €)`).join('\n');
-
-    const msg = `Ciao *Giulia Beauty Studio* ♡\nVorrei ${
-      purchaseMode === 'booking'
-        ? `prenotare per il giorno *${bookingDate}* alle *${selectedTimeSlot}*`
-        : `acquistare un Voucher / Gift Card per`
-    } i seguenti trattamenti:\n\n${listText}\n\n*Totale: ${totalEuro} €*${
-      clientName ? `\nNome: ${clientName}` : ''
-    }`;
-
-    const encoded = encodeURIComponent(msg);
-    window.open(`https://wa.me/?text=${encoded}`, '_blank', 'noopener');
+    if (purchaseMode === 'booking') {
+      const bookingDate = document.getElementById('bookingDateInput')?.value;
+      if (isClosedDay(bookingDate)) {
+        alert('Nota: Il Martedì e la Domenica lo studio è chiuso. Seleziona un giorno di apertura (Lun, Mer, Gio, Ven, Sab) prima di procedere.');
+        return;
+      }
+    }
+    window.open(buildWhatsAppUrl(), '_blank', 'noopener');
   });
 
   // Initial Render
