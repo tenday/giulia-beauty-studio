@@ -466,6 +466,7 @@ function initApp() {
     btn.addEventListener('click', () => {
       categoryPillsEl.querySelectorAll('.cat-pill').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
+      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
       activeCategory = btn.dataset.cat;
       renderListino();
     });
@@ -611,9 +612,10 @@ function initApp() {
 
   // Original Flyer Modal
   const flyerModal = document.getElementById('flyerModal');
-  document.getElementById('openFlyerTopBtn').addEventListener('click', () => flyerModal.classList.add('open'));
-  document.getElementById('openFlyerHeaderBtn').addEventListener('click', () => flyerModal.classList.add('open'));
-  document.getElementById('closeFlyerModalBtn').addEventListener('click', () => flyerModal.classList.remove('open'));
+  document.getElementById('openFlyerTopBtn')?.addEventListener('click', () => flyerModal.classList.add('open'));
+  document.getElementById('openFlyerHeaderBtn')?.addEventListener('click', () => flyerModal.classList.add('open'));
+  document.getElementById('openFlyerMobileNavBtn')?.addEventListener('click', () => flyerModal.classList.add('open'));
+  document.getElementById('closeFlyerModalBtn')?.addEventListener('click', () => flyerModal.classList.remove('open'));
   flyerModal.addEventListener('click', (e) => {
     if (e.target === flyerModal) flyerModal.classList.remove('open');
   });
