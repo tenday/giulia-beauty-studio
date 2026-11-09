@@ -224,8 +224,9 @@ body::before {
 }
 
 .brand-monogram-mini {
-  width: 42px;
-  height: 42px;
+  width: 52px;
+  height: 36px;
+  object-fit: contain;
   flex-shrink: 0;
 }
 
@@ -412,15 +413,29 @@ body::before {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 26px 34px 22px;
-  background: linear-gradient(145deg, rgba(255, 252, 251, 0.94), rgba(250, 234, 232, 0.8));
+  padding: 24px 30px 22px;
+  background: linear-gradient(145deg, rgba(255, 252, 251, 0.96), rgba(250, 234, 232, 0.85));
   border: 1px solid rgba(194, 141, 133, 0.38);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-soft);
   margin-bottom: 28px;
   position: relative;
   width: 100%;
-  max-width: 450px;
+  max-width: 440px;
+}
+
+.crest-official-logo {
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  display: block;
+}
+
+.bcard-official-logo {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  display: block;
 }
 
 .crest-monogram-svg {
@@ -2641,8 +2656,16 @@ a.bcard-line:hover {
   }
 
   .brand-monogram-mini {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 30px;
+  }
+
+  .crest-official-logo {
+    max-width: 240px;
+  }
+
+  .bcard-official-logo {
+    max-width: 195px;
   }
 
   .brand-title {
