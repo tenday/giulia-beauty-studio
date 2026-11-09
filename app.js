@@ -667,6 +667,107 @@ function initApp() {
     if (e.target === flyerModal) flyerModal.classList.remove('open');
   });
 
+  // Legal Modal (Privacy GDPR, Terms & Conditions, Cookie Policy)
+  const legalModal = document.getElementById('legalModal');
+  const legalTabBtns = document.querySelectorAll('.legal-tab-btn');
+  const legalPanels = {
+    privacy: document.getElementById('legalPanelPrivacy'),
+    terms: document.getElementById('legalPanelTerms'),
+    cookies: document.getElementById('legalPanelCookies')
+  };
+
+  function openLegalModal(tabKey = 'privacy') {
+    legalTabBtns.forEach((btn) => {
+      const isMatch = btn.dataset.legalTab === tabKey;
+      btn.classList.toggle('active', isMatch);
+      btn.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+    });
+    Object.entries(legalPanels).forEach(([key, panel]) => {
+      if (panel) panel.classList.toggle('active', key === tabKey);
+    });
+    legalModal?.classList.add('open');
+  }
+
+  legalTabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => openLegalModal(btn.dataset.legalTab));
+  });
+
+  document.querySelectorAll('[data-open-legal]').forEach((trigger) => {
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      openLegalModal(trigger.dataset.openLegal);
+    });
+  });
+
+  document.getElementById('closeLegalModalBtn')?.addEventListener('click', () => {
+    legalModal?.classList.remove('open');
+  });
+
+  legalModal?.addEventListener('click', (e) => {
+    if (e.target === legalModal) legalModal.classList.remove('open');
+  });
+
+  // Privacy Consent Checkbox in Checkout Drawer
+  const privacyCheckbox = document.getElementById('privacyConsentCheckbox');
+  const privacyErrorEl = document.getElementById('privacyConsentError');
+
+  privacyCheckbox?.addEventListener('change', () => {
+    if (privacyCheckbox.checked && privacyErrorEl) {
+      privacyErrorEl.hidden = true;
+    }
+  });
+
+  document.getElementById('acceptLegalFromModalBtn')?.addEventListener('click', () => {
+    if (privacyCheckbox) {
+      privacyCheckbox.checked = true;
+    }
+    if (privacyErrorEl) {
+      privacyErrorEl.hidden = true;
+    }
+    try {
+      localStorage.setItem('gbs_privacy_consent_v1', 'accepted');
+    } catch (_) {}
+    document.getElementById('cookieBanner')?.setAttribute('hidden', '');
+    legalModal?.classList.remove('open');
+  });
+
+  // Cookie & Privacy Banner
+  const cookieBanner = document.getElementById('cookieBanner');
+  try {
+    const savedConsent = localStorage.getItem('gbs_privacy_consent_v1');
+    if (!savedConsent && cookieBanner) {
+      cookieBanner.removeAttribute('hidden');
+    }
+  } catch (_) {
+    cookieBanner?.removeAttribute('hidden');
+  }
+
+  document.getElementById('cookieAcceptBtn')?.addEventListener('click', () => {
+    try {
+      localStorage.setItem('gbs_privacy_consent_v1', 'accepted');
+    } catch (_) {}
+    cookieBanner?.setAttribute('hidden', '');
+  });
+
+  document.getElementById('cookieEssentialBtn')?.addEventListener('click', () => {
+    try {
+      localStorage.setItem('gbs_privacy_consent_v1', 'essential');
+    } catch (_) {}
+    cookieBanner?.setAttribute('hidden', '');
+  });
+
+  function validateCheckoutLegalConsent() {
+    if (privacyCheckbox && !privacyCheckbox.checked) {
+      if (privacyErrorEl) {
+        privacyErrorEl.hidden = false;
+        privacyErrorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      return false;
+    }
+    if (privacyErrorEl) privacyErrorEl.hidden = true;
+    return true;
+  }
+
   // Confirm Order & Booking Receipt Modal
   const confirmModal = document.getElementById('confirmationModal');
   const receiptContent = document.getElementById('confirmationReceiptContent');
@@ -674,6 +775,9 @@ function initApp() {
   document.getElementById('confirmOrderBtn').addEventListener('click', () => {
     if (selectedBag.length === 0) {
       alert('Seleziona almeno un trattamento dal listino prima di confermare.');
+      return;
+    }
+    if (!validateCheckoutLegalConsent()) {
       return;
     }
 
@@ -749,6 +853,9 @@ function initApp() {
         alert('Nota: Il Martedì e la Domenica lo studio è chiuso. Seleziona un giorno di apertura (Lun, Mer, Gio, Ven, Sab) prima di procedere.');
         return;
       }
+    }
+    if (!validateCheckoutLegalConsent()) {
+      return;
     }
     window.open(buildWhatsAppUrl(), '_blank', 'noopener');
   });

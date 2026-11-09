@@ -669,6 +669,19 @@
             <span>Richiedi pagamento digitale o Gift Card</span>
           </button>
         </div>
+
+        <!-- Mandatory Privacy & Terms Consent Checkbox -->
+        <div class="legal-consent-box" id="legalConsentBox">
+          <label class="consent-checkbox-label" for="privacyConsentCheckbox">
+            <input type="checkbox" id="privacyConsentCheckbox" class="consent-checkbox-input" />
+            <span class="consent-text">
+              Dichiaro di aver letto e accettato l’<button type="button" class="inline-legal-link" data-open-legal="privacy">Informativa Privacy (GDPR)</button> e i <button type="button" class="inline-legal-link" data-open-legal="terms">Termini e Condizioni</button> di prenotazione, disdetta e vendita. *
+            </span>
+          </label>
+          <p id="privacyConsentError" class="closed-day-warning" hidden>
+            ♡ Per procedere è necessario accettare l’Informativa Privacy e i Termini e Condizioni.
+          </p>
+        </div>
       </div>
     </div>
 
@@ -718,6 +731,163 @@
   </div>
 
   <!-- ====================================================================
+       MODAL 3: PRIVACY POLICY (GDPR), COOKIE POLICY & TERMINI E CONDIZIONI
+       ==================================================================== -->
+  <div class="modal-overlay" id="legalModal" role="dialog" aria-modal="true" aria-labelledby="legalModalTitle">
+    <div class="modal-card legal-modal-card">
+      <div class="modal-header-row">
+        <div>
+          <span class="drawer-subtitle">Documentazione Legale &amp; Trasparenza</span>
+          <h3 id="legalModalTitle" class="modal-title">
+            Privacy, Cookie &amp; Termini di Servizio
+          </h3>
+        </div>
+        <button type="button" class="btn-close-drawer" id="closeLegalModalBtn" aria-label="Chiudi finestra legale">✕</button>
+      </div>
+
+      <!-- Legal Tabs Switcher -->
+      <div class="legal-tabs-bar" role="tablist">
+        <button type="button" class="legal-tab-btn active" data-legal-tab="privacy" role="tab" aria-selected="true">
+          Informativa Privacy (GDPR)
+        </button>
+        <button type="button" class="legal-tab-btn" data-legal-tab="terms" role="tab" aria-selected="false">
+          Termini e Condizioni
+        </button>
+        <button type="button" class="legal-tab-btn" data-legal-tab="cookies" role="tab" aria-selected="false">
+          Cookie Policy
+        </button>
+      </div>
+
+      <!-- TAB 1: PRIVACY POLICY (Art. 13 GDPR UE 2016/679) -->
+      <div class="legal-tab-panel active" id="legalPanelPrivacy" role="tabpanel">
+        <h4>Informativa sul Trattamento dei Dati Personali (Art. 13 Regolamento UE 2016/679 – GDPR)</h4>
+        <p>
+          La presente informativa descrive le modalità di gestione dei dati personali degli utenti che consultano il sito web e utilizzano il sistema di prenotazione e richiesta servizi di <strong>Giulia Beauty Studio</strong>.
+        </p>
+
+        <h5>1. Titolare del Trattamento</h5>
+        <p>
+          Il Titolare del Trattamento è <strong>Giulia Beauty Studio — Nails &amp; Makeup</strong>, con sede operativa in <strong>Via Principe Amedeo, 17 — 24040 Verdellino (BG)</strong>.<br />
+          Contatto telefonico / WhatsApp: <strong>+39 331 504 5135</strong> • Profilo Instagram ufficiale: <strong>@giuliabeautystudio_bergamo</strong>.
+        </p>
+
+        <h5>2. Tipologia di Dati Trattati e Modalità Tecnica ("Zero Server Database")</h5>
+        <p>
+          Attraverso il configuratore del listino e della <em>Beauty Bag</em>, l’utente può inserire volontariamente: nome e cognome, recapito telefonico/WhatsApp, data e fascia oraria desiderata, ed eventuali note o dediche per Gift Card.<br />
+          <strong>Importante:</strong> Il presente sito web opera con architettura <em>client-side</em> priva di database centralizzato di profilazione. I dati inseriti nei campi del modulo vengono elaborati localmente nel browser dell’utente al solo scopo di generare il messaggio di riepilogo indirizzato all’utenza WhatsApp ufficiale dello studio (<code>+39 331 504 5135</code>) o la ricevuta riepilogativa locale.
+        </p>
+
+        <h5>3. Finalità e Base Giuridica del Trattamento</h5>
+        <ul>
+          <li><strong>Gestione delle prenotazioni e richieste di acquisto/voucher:</strong> esecuzione di misure precontrattuali e contrattuali richieste dall’interessato (Art. 6, par. 1, lett. b GDPR).</li>
+          <li><strong>Comunicazioni di servizio:</strong> conferma, modifica o annullamento dell’appuntamento tramite telefono o WhatsApp.</li>
+          <li><strong>Adempimenti fiscali e di legge:</strong> connessi all’erogazione dei servizi estetici in studio (Art. 6, par. 1, lett. c GDPR).</li>
+        </ul>
+
+        <h5>4. Conservazione dei Dati</h5>
+        <p>
+          I dati trasmessi dall’utente tramite messaggistica WhatsApp o contatto telefonico sono conservati dal Titolare per il tempo strettamente necessario alla gestione dell’appuntamento e dell’eventuale rapporto contrattuale, nel rispetto degli obblighi civili e fiscali vigenti.
+        </p>
+
+        <h5>5. Diritti dell’Interessato (Artt. 15–22 GDPR)</h5>
+        <p>
+          L’interessato ha il diritto di chiedere in qualunque momento al Titolare l’accesso ai propri dati personali, la rettifica, la cancellazione degli stessi (diritto all’oblio), la limitazione del trattamento o di opporsi al loro trattamento, rivolgendosi direttamente a <strong>Giulia Beauty Studio</strong> presso la sede di Via Principe Amedeo, 17 – Verdellino (BG) o al recapito <strong>+39 331 504 5135</strong>. È inoltre fatto salvo il diritto di proporre reclamo al Garante per la Protezione dei Dati Personali (<em>www.garanteprivacy.it</em>).
+        </p>
+      </div>
+
+      <!-- TAB 2: TERMINI E CONDIZIONI DI PRENOTAZIONE E VENDITA -->
+      <div class="legal-tab-panel" id="legalPanelTerms" role="tabpanel">
+        <h4>Termini e Condizioni di Prenotazione, Vendita Servizi &amp; Gift Card</h4>
+        <p>
+          L’utilizzo del sito e l’invio di una richiesta di prenotazione o acquisto comportano l’accettazione integrale dei seguenti Termini e Condizioni operativi di <strong>Giulia Beauty Studio</strong>.
+        </p>
+
+        <h5>1. Listino Prezzi e Trattamenti</h5>
+        <p>
+          Tutti i prezzi esposti nel listino digitale corrispondono al listino ufficiale di <strong>Giulia Beauty Studio</strong>, sono espressi in Euro (€) e si intendono comprensivi di imposte. La durata indicata accanto a ciascun trattamento è una stima media che può variare lievemente in base alle esigenze specifiche della cliente.
+        </p>
+
+        <h5>2. Prenotazione Appuntamenti e Giorni di Chiusura</h5>
+        <p>
+          Le richieste di appuntamento effettuate tramite il sito o WhatsApp (<code>+39 331 504 5135</code>) s’intendono perfezionate al momento della conferma da parte dello studio.<br />
+          Lo studio osserva la chiusura settimanale nei giorni di <strong>Martedì</strong> e <strong>Domenica</strong>.
+        </p>
+
+        <h5>3. Politica di Disdetta, Spostamento e Ritardi</h5>
+        <ul>
+          <li><strong>Disdetta o Spostamento:</strong> Qualora non fosse possibile presentarsi all’appuntamento, è richiesto un preavviso di almeno <strong>24 ore</strong> contattando il numero <strong>+39 331 504 5135</strong>.</li>
+          <li><strong>Puntualità:</strong> Si prega di presentarsi puntuali. In caso di ritardo superiore a <strong>15 minuti</strong> senza preavviso, lo studio si riserva il diritto di adattare il trattamento al tempo residuo disponibile o di riprogrammare la seduta per garantire la puntualità alle clienti successive.</li>
+        </ul>
+
+        <h5>4. Regolamento Gift Card e Voucher Regalo</h5>
+        <ul>
+          <li>Le <strong>Gift Card Giulia Beauty Studio</strong> hanno validità di <strong>12 mesi</strong> dalla data di emissione/acquisto.</li>
+          <li>Possono essere utilizzate per qualsiasi trattamento estetico presente nel listino (Nails, Ciglia e Sopracciglia, Epilazione, Viso, Make Up) presso la sede di Via Principe Amedeo 17, Verdellino (BG).</li>
+          <li>Le Gift Card non sono rimborsabili, non sono convertibili in denaro contante e non danno diritto a resto in contanti. Qualora l’importo del trattamento scelto sia inferiore al valore della Gift Card, il credito residuo resterà utilizzabile per un appuntamento successivo entro la data di scadenza.</li>
+        </ul>
+
+        <h5>5. Segnalazione di Allergie, Sensibilità o Condizioni Specifiche</h5>
+        <p>
+          Prima dell’inizio di qualsiasi trattamento (in particolare laminazione ciglia/sopracciglia, extension ciglia, henné, resine epilatorie, gel/acrilico e prodotti cosmetici viso/make up), è responsabilità della cliente informare l’operatrice di eventuali allergie note, ipersensibilità cutanee o oculari, assunzione di farmaci fotosensibilizzanti o stato di gravidanza.
+        </p>
+      </div>
+
+      <!-- TAB 3: COOKIE POLICY -->
+      <div class="legal-tab-panel" id="legalPanelCookies" role="tabpanel">
+        <h4>Informativa sull’uso dei Cookie e Tecnologie Simili</h4>
+        <p>
+          Questo sito web è progettato nel pieno rispetto della riservatezza dell’utente (<em>Privacy by Design</em>).
+        </p>
+
+        <h5>1. Cookie Tecnici e Archiviazione Locale (LocalStorage)</h5>
+        <p>
+          Il sito utilizza esclusivamente strumenti tecnici strettamente necessari al funzionamento dell’interfaccia (quali la memorizzazione locale della preferenza espressa sul banner informativo privacy/cookie tramite <code>localStorage</code>). Non vengono installati cookie di profilazione proprietari né sistemi di tracciamento pubblicitario o analytics invasivi.
+        </p>
+
+        <h5>2. Servizi di Terze Parti Incorporati</h5>
+        <ul>
+          <li><strong>Google Maps (Widget Mappa Interattiva):</strong> Nella sezione <em>“Ti Aspettiamo in Studio”</em> è incorporata la mappa di Google Maps per agevolare la localizzazione della sede in Via Principe Amedeo, 17 – Verdellino (BG). L’interazione con la mappa può comportare l’invio di richieste ai server di Google Ireland Limited secondo la relativa <a href="https://policies.google.com/privacy?hl=it" target="_blank" rel="noopener">Privacy Policy di Google</a>.</li>
+          <li><strong>Google Fonts:</strong> Utilizzato per il caricamento dei caratteri tipografici editoriali (<em>Cormorant Garamond</em> e <em>Montserrat</em>).</li>
+          <li><strong>Collegamenti Esterni (WhatsApp / Instagram):</strong> I pulsanti verso WhatsApp (Meta Platforms Ireland Ltd.) e Instagram aprono le rispettive piattaforme solo su azione volontaria dell’utente.</li>
+        </ul>
+
+        <h5>3. Gestione delle Preferenze</h5>
+        <p>
+          L’utente può in qualsiasi momento modificare le proprie preferenze sui cookie tramite le impostazioni del proprio browser o cliccando sul pulsante sottostante per ripristinare il banner di consenso.
+        </p>
+      </div>
+
+      <div class="modal-actions-row legal-modal-footer">
+        <button type="button" class="btn-primary-luxury btn-modal-download" id="acceptLegalFromModalBtn">
+          ♡ Ho Letto e Accetto
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       COOKIE & PRIVACY CONSENT BANNER (DISCREET LUXURY BAR)
+       ==================================================================== -->
+  <div class="cookie-banner" id="cookieBanner" role="region" aria-label="Informativa Privacy e Cookie" hidden>
+    <div class="cookie-banner-inner">
+      <div class="cookie-banner-text">
+        <strong>♡ Rispetto della tua Privacy</strong>
+        <p>
+          Questo sito utilizza esclusivamente memoria tecnica per il funzionamento del listino e integra Google Maps per mostrarti la sede di Verdellino (BG). Nessun dato viene ceduto a terzi per profilazione pubblicitaria. Consulta l’<button type="button" class="inline-legal-link" data-open-legal="privacy">Informativa Privacy</button>, la <button type="button" class="inline-legal-link" data-open-legal="cookies">Cookie Policy</button> e i <button type="button" class="inline-legal-link" data-open-legal="terms">Termini e Condizioni</button>.
+        </p>
+      </div>
+      <div class="cookie-banner-actions">
+        <button type="button" class="btn-secondary-luxury btn-cookie-essential" id="cookieEssentialBtn">
+          Solo Tecnici
+        </button>
+        <button type="button" class="btn-primary-luxury btn-cookie-accept" id="cookieAcceptBtn">
+          Accetta Tutto
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
        FOOTER ATELIER
        ==================================================================== -->
   <footer class="site-footer">
@@ -754,18 +924,26 @@
       </div>
 
       <div class="footer-col">
-        <h4>Contatti Diretti</h4>
+        <h4>Contatti &amp; Note Legali</h4>
         <ul>
           <li><a href="https://wa.me/393315045135" target="_blank" rel="noopener">💬 WhatsApp: +39 331 504 5135</a></li>
           <li><a href="https://www.instagram.com/giuliabeautystudio_bergamo/" target="_blank" rel="noopener">📸 IG: @giuliabeautystudio_bergamo</a></li>
-          <li><a href="https://www.google.com/maps/search/?api=1&query=Via+Principe+Amedeo+17+Verdellino+BG" target="_blank" rel="noopener">📍 Via Principe Amedeo, 17 - Verdellino (BG)</a></li>
+          <li><button type="button" class="footer-legal-btn" data-open-legal="privacy">🔒 Informativa Privacy (GDPR)</button></li>
+          <li><button type="button" class="footer-legal-btn" data-open-legal="terms">📜 Termini e Condizioni</button></li>
+          <li><button type="button" class="footer-legal-btn" data-open-legal="cookies">🍪 Cookie Policy &amp; Preferenze</button></li>
         </ul>
       </div>
     </div>
 
     <div class="footer-bottom">
       <span>© 2026 GIULIA BEAUTY STUDIO — VIA PRINCIPE AMEDEO, 17 - VERDELLINO (BG)</span>
-      <span>IG: <a href="https://www.instagram.com/giuliabeautystudio_bergamo/" target="_blank" rel="noopener" style="color: inherit;">@GIULIABEAUTYSTUDIO_BERGAMO</a></span>
+      <div class="footer-bottom-links">
+        <button type="button" class="footer-legal-btn" data-open-legal="privacy">PRIVACY POLICY</button>
+        <span>•</span>
+        <button type="button" class="footer-legal-btn" data-open-legal="terms">TERMINI E CONDIZIONI</button>
+        <span>•</span>
+        <button type="button" class="footer-legal-btn" data-open-legal="cookies">COOKIE POLICY</button>
+      </div>
     </div>
   </footer>
 
