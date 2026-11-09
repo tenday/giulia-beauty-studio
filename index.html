@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Giulia Beauty Studio — Nails &amp; Makeup | Boutique &amp; Prenotazioni Online</title>
+  <meta name="description" content="Giulia Beauty Studio — Nails & Makeup. Scopri il listino esclusivo, acquista i tuoi trattamenti estetici, prenota online o regala una Gift Card personalizzata. La tua bellezza, la nostra passione." />
+
+  <!-- Google Fonts: Cormorant Garamond (Neoclassical Editorial Serif) & Montserrat (Refined Sans) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Alex+Brush&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Architectural Hairline Frame with Heart Accents (Echoing the Original Flyer) -->
+  <div class="atelier-frame" aria-hidden="true"></div>
+
+  <!-- Delicate Botanical Line-Art Ornaments (Left & Right Borders) -->
+  <svg class="botanical-ornament botanical-left-bottom" viewBox="0 0 160 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M12 250 C38 190, 65 130, 108 42" stroke="#5A222B" stroke-width="1.1" stroke-linecap="round"/>
+    <path d="M44 185 C30 160, 26 132, 42 110 C55 132, 54 162, 44 185 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M65 142 C88 134, 114 140, 128 156 C106 164, 82 158, 65 142 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M82 104 C66 82, 66 56, 80 36 C94 58, 92 84, 82 104 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M98 70 C118 62, 138 66, 150 78 C132 88, 112 82, 98 70 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M30 214 C56 206, 86 212, 102 228 C78 236, 52 228, 30 214 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+  </svg>
+
+  <svg class="botanical-ornament botanical-right-mid" viewBox="0 0 150 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M138 245 C115 182, 88 122, 48 34" stroke="#5A222B" stroke-width="1.1" stroke-linecap="round"/>
+    <path d="M112 178 C124 152, 126 124, 112 102 C98 124, 100 154, 112 178 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M92 136 C68 128, 44 134, 30 150 C52 158, 76 152, 92 136 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+    <path d="M74 96 C88 74, 88 48, 74 28 C60 50, 62 76, 74 96 Z" stroke="#5A222B" stroke-width="1" fill="rgba(236, 178, 186, 0.16)"/>
+  </svg>
+
+  <!-- Top Luxury Announcement Ribbon -->
+  <div class="top-ribbon">
+    <span><span class="ribbon-heart">♡</span> LA TUA BELLEZZA, LA NOSTRA PASSIONE — PRENOTA ONLINE O ACQUISTA UN VOUCHER REGALO</span>
+    <button type="button" class="ribbon-link" id="openFlyerTopBtn">Sfoglia il Listino Originale</button>
+  </div>
+
+  <!-- Sticky Navigation Header -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="#top" class="brand-lockup" aria-label="Giulia Beauty Studio Home">
+        <svg class="brand-monogram-mini" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="roseGradMini" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#F3A6B8" />
+              <stop offset="50%" stop-color="#DF758E" />
+              <stop offset="100%" stop-color="#9A364B" />
+            </linearGradient>
+          </defs>
+          <circle cx="50" cy="50" r="46" stroke="url(#roseGradMini)" stroke-width="1.5" fill="rgba(255,248,247,0.9)" />
+          <text x="24" y="64" font-family="'Cormorant Garamond', serif" font-size="52" font-weight="600" fill="url(#roseGradMini)">G</text>
+          <text x="48" y="72" font-family="'Cormorant Garamond', serif" font-size="48" font-weight="600" fill="url(#roseGradMini)" opacity="0.88">B</text>
+          <path d="M18 68 C42 46, 68 54, 84 44" stroke="#691F2C" stroke-width="1.6" stroke-linecap="round" fill="none" />
+        </svg>
+        <div class="brand-text-group">
+          <span class="brand-title">GIULIA</span>
+          <span class="brand-subtitle">Beauty Studio • Nails &amp; Makeup</span>
+        </div>
+      </a>
+
+      <nav class="main-nav" aria-label="Navigazione Principale">
+        <a href="#listino-atelier" class="nav-link">Listino &amp; Acquisto</a>
+        <a href="#percorsi-esclusivi" class="nav-link">Percorsi &amp; Pacchetti</a>
+        <a href="#consulente-bellezza" class="nav-link">Consulente</a>
+        <a href="#gift-card-atelier" class="nav-link">Gift Card</a>
+      </nav>
+
+      <div class="header-actions">
+        <button type="button" class="btn-flyer-preview" id="openFlyerHeaderBtn" title="Visualizza la locandina originale">
+          <span>♡</span> Listino Classico
+        </button>
+        <button type="button" class="btn-bag-trigger" id="openBagBtn" aria-label="Apri riepilogo trattamenti selezionati">
+          <span>I Tuoi Trattamenti</span>
+          <span class="bag-count-badge" id="headerBagCount">0</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ====================================================================
+         HERO SECTION — RECREATED MONOGRAM CREST & EDITORIAL PORTRAIT
+         ==================================================================== -->
+    <section class="hero-section">
+      <div class="hero-grid">
+        <div class="hero-brand-column">
+          <!-- Faithful Vector Recreation of the Giulia Beauty Studio Crest -->
+          <div class="crest-badge-card">
+            <svg class="crest-monogram-svg" viewBox="0 0 220 165" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Monogramma Giulia Beauty Studio">
+              <defs>
+                <linearGradient id="gbPinkGrad" x1="15%" y1="5%" x2="85%" y2="95%">
+                  <stop offset="0%" stop-color="#F7B7C7" />
+                  <stop offset="48%" stop-color="#E7839B" />
+                  <stop offset="100%" stop-color="#C85A74" />
+                </linearGradient>
+                <linearGradient id="gbStrokeGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+                  <stop offset="0%" stop-color="#6E202E" />
+                  <stop offset="50%" stop-color="#9E384B" />
+                  <stop offset="100%" stop-color="#6E202E" />
+                </linearGradient>
+              </defs>
+              <!-- Large Monogram G & B -->
+              <text x="48" y="106" font-family="'Cormorant Garamond', Georgia, serif" font-size="112" font-weight="600" fill="url(#gbPinkGrad)" opacity="0.92">G</text>
+              <text x="98" y="138" font-family="'Cormorant Garamond', Georgia, serif" font-size="102" font-weight="600" fill="url(#gbPinkGrad)" opacity="0.86">B</text>
+              <!-- Calligraphic S Flourish & Heart (Matching the Flyer Logo) -->
+              <path d="M126 42 C102 28, 78 54, 105 78 C132 102, 92 134, 72 118 C62 110, 74 92, 108 88 C142 84, 178 90, 196 105" stroke="url(#gbStrokeGrad)" stroke-width="1.9" stroke-linecap="round" fill="none"/>
+              <path d="M32 124 C58 92, 114 82, 172 90" stroke="url(#gbStrokeGrad)" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+              <!-- Delicate Open Heart on the Right Flourish -->
+              <path d="M180 78 C176 70, 166 70, 166 78 C166 85, 176 90, 178 94 C182 88, 192 84, 190 76 C189 70, 182 72, 180 78 Z" stroke="#6E202E" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+            </svg>
+
+            <h1 class="crest-title">GIULIA</h1>
+            <p class="crest-subtitle">BEAUTY STUDIO</p>
+            <div class="heart-divider" aria-hidden="true"><span>♡</span></div>
+            <p class="crest-category-tag">NAILS &amp; MAKEUP</p>
+          </div>
+
+          <h2 class="hero-headline">
+            L’arte della cura estetica, <em>disegnata su di te.</em>
+          </h2>
+          <p class="hero-lead">
+            Dalla perfezione sartoriale di mani e piedi alla laminazione ciglia, dall’epilazione brasiliana ultra-delicata al make up sposa e cerimonia. Seleziona i tuoi trattamenti preferiti dal listino ufficiale, componi il tuo rituale e acquista o prenota in pochi istanti.
+          </p>
+
+          <div class="hero-cta-row">
+            <a href="#listino-atelier" class="btn-primary-luxury">
+              <span>Esplora &amp; Acquista Servizi</span>
+              <span>→</span>
+            </a>
+            <a href="#gift-card-atelier" class="btn-secondary-luxury">
+              <span>♡ Regala una Gift Card</span>
+            </a>
+          </div>
+
+          <div class="hero-trust-metrics">
+            <div class="metric-item">
+              <span class="metric-value">43</span>
+              <span class="metric-label">Trattamenti Esclusivi</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value">6</span>
+              <span class="metric-label">Aree di Bellezza</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value">100%</span>
+              <span class="metric-label">Cura Artigianale</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Editorial Arch Portrait Column -->
+        <div class="hero-visual-column">
+          <div class="hero-arch-frame">
+            <div class="hero-arch-inner">
+              <img src="assets/hero-editorial.jpg" alt="Ritratto editoriale Giulia Beauty Studio — manicure rose nude e sguardo luminoso" />
+            </div>
+
+            <div class="hero-floating-badge-top">
+              <span>♡</span> Atelier Certificato
+            </div>
+
+            <div class="hero-floating-card">
+              <div class="floating-card-tag">Più Richiesto in Studio</div>
+              <div class="floating-card-title">Manicure + Semipermanente &amp; Laminazione Ciglia</div>
+              <div class="floating-card-meta">
+                <span>Rituale Completo • 105 min</span>
+                <span class="floating-card-price">73 €</span>
+              </div>
+              <button type="button" class="btn-primary-luxury" id="heroQuickAddBtn" style="width: 100%; margin-top: 12px; padding: 11px 18px; font-size: 0.7rem;">
+                + Aggiungi entrambi al Riepilogo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         INTERACTIVE E-COMMERCE PRICE LIST ("IL LISTINO ATELIER")
+         ==================================================================== -->
+    <section class="section-container" id="listino-atelier">
+      <div class="section-header-center">
+        <span class="section-eyebrow">Boutique &amp; Listino Ufficiale</span>
+        <h2 class="section-title">Seleziona i Tuoi Trattamenti</h2>
+        <div class="heart-divider" aria-hidden="true"><span>♡</span></div>
+        <p class="section-subtitle">
+          Clicca su qualsiasi servizio per aggiungerlo alla tua <strong>Beauty Bag</strong>. Potrai scegliere se prenotare il tuo appuntamento in studio oppure acquistare un voucher digitale/regalo.
+        </p>
+      </div>
+
+      <!-- Filter Pills & Instant Search -->
+      <div class="menu-controls-bar" role="region" aria-label="Filtri del listino">
+        <div class="category-pills" id="categoryPills">
+          <button type="button" class="cat-pill active" data-cat="all">Tutti (43)</button>
+          <button type="button" class="cat-pill" data-cat="nails">Nails (18)</button>
+          <button type="button" class="cat-pill" data-cat="lashes">Ciglia &amp; Sopracciglia (6)</button>
+          <button type="button" class="cat-pill" data-cat="epilazione">Epilazione (8)</button>
+          <button type="button" class="cat-pill" data-cat="brasiliana">Epilazione Brasiliana (6)</button>
+          <button type="button" class="cat-pill" data-cat="viso">Viso (2)</button>
+          <button type="button" class="cat-pill" data-cat="makeup">Make Up (3)</button>
+        </div>
+
+        <div class="search-box-wrapper">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            id="serviceSearchInput"
+            class="search-input"
+            placeholder="Cerca trattamento (es. semipermanente, sposa...)"
+            aria-label="Cerca un trattamento nel listino"
+          />
+        </div>
+      </div>
+
+      <!-- Faithful Two-Column Editorial Listino Sheet -->
+      <div class="listino-sheet">
+        <div class="listino-columns" id="listinoColumnsContainer">
+          <!-- Left Column: NAILS + CIGLIA E SOPRACCIGLIA (Just like the original flyer!) -->
+          <div class="listino-col" id="listinoLeftCol"></div>
+
+          <!-- Center Hairline Vertical Rule with Open Heart -->
+          <div class="listino-vertical-divider" aria-hidden="true">
+            <span>♡</span>
+          </div>
+
+          <!-- Right Column: EPILAZIONE + EPILAZIONE CON BRASILIANA + VISO + MAKE UP -->
+          <div class="listino-col" id="listinoRightCol"></div>
+        </div>
+
+        <div class="listino-footer-motto">
+          <div class="heart-divider" aria-hidden="true"><span>♡</span></div>
+          <p>LA TUA BELLEZZA, LA NOSTRA PASSIONE</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         CURATED PACKAGES & RITUALS ("PERCORSI DI BELLEZZA")
+         ==================================================================== -->
+    <section class="section-container" id="percorsi-esclusivi">
+      <div class="section-header-center">
+        <span class="section-eyebrow">Rituali Combinati</span>
+        <h2 class="section-title">Percorsi di Bellezza Curati</h2>
+        <div class="heart-divider" aria-hidden="true"><span>♡</span></div>
+        <p class="section-subtitle">
+          Abbinamenti pensati da Giulia per offrirti un’esperienza armoniosa in un’unica seduta o per un regalo indimenticabile.
+        </p>
+      </div>
+
+      <div class="packages-grid">
+        <!-- Package 1 -->
+        <article class="package-card">
+          <div>
+            <span class="package-badge">Mani &amp; Piedi Perfection</span>
+            <h3 class="package-title">Rituale Semipermanente Completo</h3>
+            <p class="package-desc">
+              Cura impeccabile e brillantezza a lunga durata per mani e piedi sempre perfetti in ogni stagione.
+            </p>
+            <ul class="package-includes">
+              <li><span>Manicure + semipermanente</span> <span class="inc-price">28 €</span></li>
+              <li><span>Pedicure estetica + semipermanente</span> <span class="inc-price">34 €</span></li>
+            </ul>
+          </div>
+          <div class="package-footer">
+            <div>
+              <span class="package-total-label">Valore Complessivo</span>
+              <span class="package-total-price">62 €</span>
+            </div>
+            <button type="button" class="btn-primary-luxury pkg-add-btn" data-services="nails-12,nails-8" style="padding: 13px 22px; font-size: 0.72rem;">
+              + Seleziona Percorso
+            </button>
+          </div>
+        </article>
+
+        <!-- Package 2 (Featured) -->
+        <article class="package-card featured">
+          <div>
+            <span class="package-badge">♡ Sguardo &amp; Viso Radioso</span>
+            <h3 class="package-title">Rituale Sguardo Magnetico &amp; Glow</h3>
+            <p class="package-desc">
+              Laminazione completa per ciglia e sopracciglia unita alla pulizia viso su misura per un volto fresco e luminoso senza trucco.
+            </p>
+            <ul class="package-includes">
+              <li><span>Laminazione ciglia</span> <span class="inc-price">45 €</span></li>
+              <li><span>Laminazione sopracciglia</span> <span class="inc-price">35 €</span></li>
+              <li><span>Pulizia viso</span> <span class="inc-price">45 €</span></li>
+            </ul>
+          </div>
+          <div class="package-footer">
+            <div>
+              <span class="package-total-label">Valore Complessivo</span>
+              <span class="package-total-price">125 €</span>
+            </div>
+            <button type="button" class="btn-primary-luxury pkg-add-btn" data-services="lashes-1,lashes-2,viso-1" style="padding: 13px 22px; font-size: 0.72rem;">
+              + Seleziona Percorso
+            </button>
+          </div>
+        </article>
+
+        <!-- Package 3 -->
+        <article class="package-card">
+          <div>
+            <span class="package-badge">Speciale Sposa &amp; Grandi Eventi</span>
+            <h3 class="package-title">Bridal Couture Experience</h3>
+            <p class="package-desc">
+              Il pacchetto d’eccellenza per il tuo giorno più bello: preparazione della pelle, manicure spa + semipermanente e make up sposa.
+            </p>
+            <ul class="package-includes">
+              <li><span>Make up sposa</span> <span class="inc-price">150 €</span></li>
+              <li><span>Trattamento viso relax</span> <span class="inc-price">40 €</span></li>
+              <li><span>Manicure + semipermanente rinforzato</span> <span class="inc-price">33 €</span></li>
+            </ul>
+          </div>
+          <div class="package-footer">
+            <div>
+              <span class="package-total-label">Valore Complessivo</span>
+              <span class="package-total-price">223 €</span>
+            </div>
+            <button type="button" class="btn-primary-luxury pkg-add-btn" data-services="makeup-1,viso-2,nails-13" style="padding: 13px 22px; font-size: 0.72rem;">
+              + Seleziona Percorso
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         EDITORIAL GALLERY & INTERACTIVE BEAUTY CONCIERGE
+         ==================================================================== -->
+    <section class="section-container" id="consulente-bellezza">
+      <div class="editorial-split">
+        <div class="editorial-gallery-pair">
+          <div class="editorial-img-card">
+            <img src="assets/nails-editorial.jpg" alt="Manicure spa di lusso su pietra di travertino" loading="lazy" />
+          </div>
+          <div class="editorial-img-card">
+            <img src="assets/rituals-editorial.jpg" alt="Strumenti di bellezza in quarzo rosa e pennelli rose gold" loading="lazy" />
+          </div>
+        </div>
+
+        <div class="concierge-quiz-box">
+          <span class="quiz-step-label">Consulente di Bellezza Digitale</span>
+          <h2 class="section-title" style="font-size: 2.35rem;">Non sai da dove iniziare?</h2>
+          <p style="font-size: 0.92rem; color: var(--ink-secondary);">
+            Scegli il tuo desiderio del momento: ti consigliamo subito la combinazione ideale dal listino di Giulia Beauty Studio.
+          </p>
+
+          <div class="quiz-options-grid" id="conciergeOptions">
+            <button type="button" class="quiz-option-btn active" data-preset="mani-sguardo">
+              <strong>Mani Curate &amp; Sguardo</strong>
+              <span>Perfetta per ogni giorno con eleganza naturale</span>
+            </button>
+            <button type="button" class="quiz-option-btn" data-preset="seta-brasiliana">
+              <strong>Pelle di Seta Delicata</strong>
+              <span>Epilazione con resina brasiliana indolore</span>
+            </button>
+            <button type="button" class="quiz-option-btn" data-preset="cerimonia-glam">
+              <strong>Ospite d’Onore / Cerimonia</strong>
+              <span>Make up cerimonia, unghie in gel e ciglia</span>
+            </button>
+            <button type="button" class="quiz-option-btn" data-preset="pausa-spa">
+              <strong>Pausa Rigenerante Spa</strong>
+              <span>Manicure Spa, Pedicure Spa e Viso Relax</span>
+            </button>
+          </div>
+
+          <div class="quiz-recommendation-box" id="conciergeResultBox">
+            <div>
+              <span style="font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--rose-deep); font-weight: 600;">Consiglio Su Misura</span>
+              <h4 id="conciergeTitle" style="font-family: var(--font-serif); font-size: 1.35rem; color: var(--ink-primary); margin: 2px 0;">
+                Manicure + Semipermanente &amp; Mappatura Sopracciglia + Tinta
+              </h4>
+              <p id="conciergeMeta" style="font-size: 0.8rem; color: var(--ink-secondary);">
+                2 Trattamenti • Totale <strong>58 €</strong>
+              </p>
+            </div>
+            <button type="button" class="btn-primary-luxury" id="conciergeAddBtn" style="padding: 12px 22px; font-size: 0.72rem;">
+              + Aggiungi Consiglio
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         GIFT CARD STUDIO ("REGALA UN RITUALE DI BELLEZZA")
+         ==================================================================== -->
+    <section class="section-container" id="gift-card-atelier">
+      <div class="section-header-center">
+        <span class="section-eyebrow">Gift Atelier</span>
+        <h2 class="section-title">Regala un’Esperienza di Bellezza</h2>
+        <div class="heart-divider" aria-hidden="true"><span>♡</span></div>
+        <p class="section-subtitle">
+          Personalizza la tua <strong>Gift Card Giulia Beauty Studio</strong>. Scegli l’importo o i trattamenti, scrivi la tua dedica e acquistala subito in formato digitale pronto da inviare o stampare.
+        </p>
+      </div>
+
+      <div class="giftcard-studio-grid">
+        <!-- Live Interactive Gift Card Preview -->
+        <div class="giftcard-preview-stage">
+          <div class="luxury-giftcard" id="giftCardPreview">
+            <div class="giftcard-top">
+              <div>
+                <div class="giftcard-brand-name">GIULIA</div>
+                <div class="giftcard-brand-sub">BEAUTY STUDIO • NAILS &amp; MAKEUP</div>
+              </div>
+              <div class="giftcard-amount-pill" id="gcDisplayAmount">50 €</div>
+            </div>
+
+            <div class="giftcard-body">
+              <div class="giftcard-to-label">Un dono speciale per</div>
+              <div class="giftcard-recipient-display" id="gcDisplayRecipient">Chiara</div>
+              <p class="giftcard-message-display" id="gcDisplayMessage">
+                “Un momento di pura bellezza e relax pensato solo per te. Con affetto!”
+              </p>
+            </div>
+
+            <div class="giftcard-bottom">
+              <span>♡ LA TUA BELLEZZA, LA NOSTRA PASSIONE</span>
+              <span>VALIDITÀ 12 MESI</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gift Card Customizer Form -->
+        <div class="giftcard-form-card">
+          <span class="form-label">Seleziona il Valore della Gift Card</span>
+          <div class="amount-preset-row" id="gcAmountChips">
+            <button type="button" class="amount-chip" data-amount="30">30 €</button>
+            <button type="button" class="amount-chip active" data-amount="50">50 €</button>
+            <button type="button" class="amount-chip" data-amount="80">80 €</button>
+            <button type="button" class="amount-chip" data-amount="100">100 €</button>
+            <button type="button" class="amount-chip" data-amount="150">150 €</button>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="gcRecipientInput">Nome del Destinatario</label>
+            <input type="text" id="gcRecipientInput" class="form-control" value="Chiara" placeholder="Es. Sofia, Mamma, Sara..." maxlength="40" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="gcMessageInput">Dedica Personalizzata</label>
+            <input type="text" id="gcMessageInput" class="form-control" value="Un momento di pura bellezza e relax pensato solo per te. Con affetto!" placeholder="Scrivi il tuo messaggio..." maxlength="110" />
+          </div>
+
+          <button type="button" class="btn-primary-luxury" id="addGiftCardToBagBtn" style="width: 100%; margin-top: 8px;">
+            <span>♡ Aggiungi Gift Card al Carrello (<span id="gcBtnPrice">50 €</span>)</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ====================================================================
+       STICKY FLOATING BOTTOM SUMMARY BAR
+       ==================================================================== -->
+  <div class="sticky-bottom-cart" id="stickyBottomBar" role="region" aria-label="Riepilogo rapido selezione">
+    <div class="sticky-cart-summary">
+      <span class="sticky-cart-count" id="stickyCountText">0 Trattamenti selezionati</span>
+      <span class="sticky-cart-total" id="stickyTotalText">0 €</span>
+    </div>
+    <button type="button" class="btn-sticky-checkout" id="stickyOpenDrawerBtn">
+      Procedi all’Acquisto / Prenota →
+    </button>
+  </div>
+
+  <!-- ====================================================================
+       SLIDE-OVER CHECKOUT & BOOKING DRAWER
+       ==================================================================== -->
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="checkout-drawer" id="checkoutDrawer" aria-label="Carrello e Prenotazione Trattamenti">
+    <div class="drawer-header">
+      <div>
+        <span class="drawer-subtitle">Giulia Beauty Studio</span>
+        <h3 class="drawer-title">La Tua Beauty Bag</h3>
+      </div>
+      <button type="button" class="btn-close-drawer" id="closeDrawerBtn" aria-label="Chiudi pannello">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Mode Switcher: Prenota in Studio vs Acquista Voucher Regalo -->
+      <div class="purchase-mode-tabs" role="tablist">
+        <button type="button" class="mode-tab active" data-mode="booking" id="tabModeBooking">
+          Prenota Appuntamento
+        </button>
+        <button type="button" class="mode-tab" data-mode="voucher" id="tabModeVoucher">
+          Acquista Voucher / Regalo
+        </button>
+      </div>
+
+      <!-- Selected Items List -->
+      <ul class="bag-items-list" id="bagItemsList"></ul>
+
+      <!-- Date & Time Picker (Shown in Booking Mode) -->
+      <div class="checkout-step-section" id="bookingScheduleSection">
+        <h4 class="checkout-step-title">1. Scegli Giorno e Fascia Oraria</h4>
+        <div class="form-group">
+          <label class="form-label" for="bookingDateInput">Data Preferita</label>
+          <input type="date" id="bookingDateInput" class="form-control" />
+        </div>
+        <span class="form-label">Orario Disponibile</span>
+        <div class="time-slots-grid" id="timeSlotsGrid">
+          <button type="button" class="time-slot-btn" data-time="09:30">09:30</button>
+          <button type="button" class="time-slot-btn active" data-time="11:00">11:00</button>
+          <button type="button" class="time-slot-btn" data-time="14:30">14:30</button>
+          <button type="button" class="time-slot-btn" data-time="16:00">16:00</button>
+          <button type="button" class="time-slot-btn" data-time="17:30">17:30</button>
+          <button type="button" class="time-slot-btn" data-time="18:30">18:30</button>
+        </div>
+      </div>
+
+      <!-- Client Details -->
+      <div class="checkout-step-section">
+        <h4 class="checkout-step-title" id="clientDetailsStepTitle">2. I Tuoi Dati</h4>
+        <div class="form-group">
+          <label class="form-label" for="clientNameInput">Nome e Cognome *</label>
+          <input type="text" id="clientNameInput" class="form-control" placeholder="Es. Giulia Rossi" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="clientPhoneInput">Telefono / WhatsApp *</label>
+          <input type="tel" id="clientPhoneInput" class="form-control" placeholder="Es. +39 340 000 0000" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="clientNotesInput">Note o Richieste Particolari</label>
+          <input type="text" id="clientNotesInput" class="form-control" placeholder="Es. Rimozione semipermanente, allergie, dedica..." />
+        </div>
+      </div>
+
+      <!-- Payment Method Selection -->
+      <div class="checkout-step-section">
+        <h4 class="checkout-step-title">3. Modalità di Acquisto</h4>
+        <div class="payment-methods-grid" id="paymentMethodsGrid">
+          <button type="button" class="payment-option-card active" data-pay="carta">
+            <strong>Carta / Apple Pay</strong>
+            <span>Acquisto immediato garantito</span>
+          </button>
+          <button type="button" class="payment-option-card" data-pay="studio">
+            <strong>Paga in Studio</strong>
+            <span>Conferma ora, salda in atelier</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <div class="drawer-total-row">
+        <span class="drawer-total-label">Totale Riepilogo (<span id="drawerTotalDuration">0 min</span>)</span>
+        <span class="drawer-total-amount" id="drawerTotalAmount">0 €</span>
+      </div>
+      <div class="drawer-cta-stack">
+        <button type="button" class="btn-primary-luxury" id="confirmOrderBtn" style="width: 100%;">
+          Conferma Ordine &amp; Prenotazione
+        </button>
+        <button type="button" class="btn-secondary-luxury" id="whatsappDirectBtn" style="width: 100%; padding: 11px 18px; font-size: 0.7rem;">
+          Invia Riepilogo Rapido su WhatsApp
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ====================================================================
+       MODAL 1: ORIGINAL PRINTABLE FLYER VIEWER
+       ==================================================================== -->
+  <div class="modal-overlay" id="flyerModal" role="dialog" aria-modal="true" aria-labelledby="flyerModalTitle">
+    <div class="modal-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 id="flyerModalTitle" style="font-family: var(--font-serif); font-size: 1.65rem; color: var(--ink-primary);">
+          Listino Ufficiale — Giulia Beauty Studio
+        </h3>
+        <button type="button" class="btn-close-drawer" id="closeFlyerModalBtn" aria-label="Chiudi">✕</button>
+      </div>
+      <img src="assets/listino-originale.jpg" alt="Listino Prezzi Originale Giulia Beauty Studio" class="flyer-full-img" />
+      <div style="margin-top: 18px; display: flex; justify-content: center; gap: 12px;">
+        <a href="assets/listino-originale.jpg" download="Listino-Giulia-Beauty-Studio.jpg" class="btn-primary-luxury" style="padding: 12px 24px; font-size: 0.72rem;">
+          Scarica Immagine Listino
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL 2: ORDER / BOOKING CONFIRMATION RECEIPT
+       ==================================================================== -->
+  <div class="modal-overlay" id="confirmationModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+    <div class="modal-card" id="confirmationReceiptContent">
+      <!-- Populated dynamically on order confirmation -->
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       FOOTER ATELIER
+       ==================================================================== -->
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div class="footer-col">
+        <h4>GIULIA BEAUTY STUDIO</h4>
+        <p>
+          Nails &amp; Makeup Atelier.<br />
+          Trattamenti estetici d’eccellenza per mani, piedi, sguardo, viso, epilazione brasiliana e make up professionale.
+        </p>
+        <p style="margin-top: 12px; color: var(--rose-deep); font-weight: 600; letter-spacing: 0.14em; font-size: 0.74rem;">
+          ♡ LA TUA BELLEZZA, LA NOSTRA PASSIONE
+        </p>
+      </div>
+
+      <div class="footer-col">
+        <h4>Reparti Atelier</h4>
+        <ul>
+          <li><a href="#listino-atelier" style="color: inherit; text-decoration: none;">Nails — Manicure, Pedicure &amp; Gel</a></li>
+          <li><a href="#listino-atelier" style="color: inherit; text-decoration: none;">Ciglia e Sopracciglia — Laminazione &amp; Extension</a></li>
+          <li><a href="#listino-atelier" style="color: inherit; text-decoration: none;">Epilazione Classica &amp; Con Brasiliana</a></li>
+          <li><a href="#listino-atelier" style="color: inherit; text-decoration: none;">Trattamenti Viso &amp; Make Up Sposa</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Orari Studio</h4>
+        <ul>
+          <li>Martedì – Venerdì: 09:00 – 19:30</li>
+          <li>Sabato: 09:00 – 18:30</li>
+          <li>Domenica &amp; Lunedì: Su appuntamento (Spose / Eventi)</li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Contatti &amp; Prenotazioni</h4>
+        <ul>
+          <li>Prenotazione Online 24/7 dal Listino</li>
+          <li>Gift Card Digitali Immediate</li>
+          <li>Assistenza Clienti WhatsApp dedicata</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>© 2026 GIULIA BEAUTY STUDIO — NAILS &amp; MAKEUP. TUTTI I DIRITTI RISERVATI.</span>
+      <span>DESIGN ATELIER SU MISURA</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
