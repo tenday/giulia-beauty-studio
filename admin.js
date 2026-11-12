@@ -126,28 +126,36 @@ async function apiFetch(endpoint, options = {}) {
    AUTHENTICATION & INITIALIZATION
    ========================================================================== */
 async function checkAuth() {
-  const loginScreen = document.getElementById('loginScreen');
+  const loginForm = document.getElementById('loginForm');
   const workspace = document.getElementById('adminWorkspace');
+  const checkingGate = document.getElementById('authCheckingOverlay');
 
   try {
     const data = await apiFetch('auth/me', { method: 'GET' });
     if (data.authenticated) {
+      if (loginForm && !workspace) {
+        window.location.replace('agenda.html');
+        return;
+      }
       STATE.admin = data.admin;
       document.getElementById('adminWelcomeLabel').textContent =
         `Ciao ${data.admin.display_name || 'Giulia'} • Agenda & Database Clienti`;
-      loginScreen.hidden = true;
-      workspace.hidden = false;
+      if (checkingGate) checkingGate.hidden = true;
+      if (workspace) workspace.hidden = false;
       await refreshAllData();
-    } else {
-      loginScreen.hidden = false;
-      workspace.hidden = true;
+    } else if (workspace) {
+      window.location.replace('admin.html');
     }
   } catch (err) {
-    loginScreen.hidden = false;
-    workspace.hidden = true;
+    if (workspace) {
+      window.location.replace('admin.html');
+      return;
+    }
     const alertEl = document.getElementById('loginAlert');
-    alertEl.hidden = false;
-    alertEl.textContent = err.message;
+    if (alertEl) {
+      alertEl.hidden = false;
+      alertEl.textContent = err.message;
+    }
   }
 }
 
@@ -378,7 +386,7 @@ function renderCalendar() {
   }
 
   const hours = [];
-  for (let h = 8; h <= 19; h++) {
+  for (let h = 8; h <= 20; h++) {
     hours.push(h);
   }
 
@@ -425,8 +433,8 @@ function renderCalendar() {
     dayAppts.forEach((appt) => {
       const [ah, am] = String(appt.start_time || '09:00').split(':').map(Number);
       const minutesFromStart = (ah - 8) * 60 + (am || 0);
-      const topPx = Math.max(2, (minutesFromStart / 60) * 54);
-      const heightPx = Math.max(36, ((Number(appt.duration_minutes) || 60) / 60) * 54 - 3);
+      const topPx = Math.max(2, (minutesFromStart / 60) * 58);
+      const heightPx = Math.max(38, ((Number(appt.duration_minutes) || 60) / 60) * 58 - 3);
 
       const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
       html += `
@@ -877,33 +885,41 @@ function exportClientsToCsv() {
    EVENT BINDINGS
    ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
-  buildCatalogPicker();
   checkAuth();
 
-  // Login Form
-  document.getElementById('loginForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const alertEl = document.getElementById('loginAlert');
-    alertEl.hidden = true;
-    try {
-      await apiFetch('auth/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: document.getElementById('loginUsername').value.trim(),
-          password: document.getElementById('loginPassword').value,
-        }),
-      });
-      await checkAuth();
-    } catch (err) {
-      alertEl.hidden = false;
-      alertEl.textContent = err.message;
-    }
-  });
+  const loginForm = document.getElementById('loginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const alertEl = document.getElementById('loginAlert');
+      alertEl.hidden = true;
+      try {
+        await apiFetch('auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: document.getElementById('loginUsername').value.trim(),
+            password: document.getElementById('loginPassword').value,
+          }),
+        });
+        window.location.href = 'agenda.html';
+      } catch (err) {
+        alertEl.hidden = false;
+        alertEl.textContent = err.message;
+      }
+    });
+  }
+
+  const workspace = document.getElementById('adminWorkspace');
+  if (!workspace) {
+    return;
+  }
+
+  buildCatalogPicker();
 
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await apiFetch('auth/logout', { method: 'POST' });
-    location.reload();
+    window.location.href = 'admin.html';
   });
 
   // Main View Tabs
