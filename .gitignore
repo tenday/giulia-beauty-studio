@@ -1,0 +1,4 @@
+# Sensitive production credentials (keep local/cPanel only, never commit to public GitHub)
+api/config.php
+.DS_Store
+Thumbs.db

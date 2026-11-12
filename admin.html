@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Agenda &amp; Database Clienti — Giulia Beauty Studio</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+
+  <!-- ====================================================================
+       LOGIN VIEW (SHOWN WHEN NOT AUTHENTICATED)
+       ==================================================================== -->
+  <section id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <img src="assets/logo-full.png" alt="Giulia Beauty Studio" class="login-logo" />
+      <span class="eyebrow">Area Riservata Titolare</span>
+      <h1>Agenda &amp; Database Clienti</h1>
+      <p class="login-subtitle">Gestione appuntamenti, schede tecniche e consensi privacy GDPR.</p>
+
+      <div id="loginAlert" class="admin-alert admin-alert-error" hidden></div>
+
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label for="loginUsername">Username o Email</label>
+          <input type="text" id="loginUsername" class="form-control" placeholder="es. giulia@giuliabeauty.it" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="btn-primary-admin btn-full" id="loginSubmitBtn">
+          Accedi al Gestionale
+        </button>
+      </form>
+
+      <div class="login-footer-links">
+        <a href="index.html">← Torna alla Boutique Pubblica</a>
+        <a href="api/setup.php">Prima configurazione DB</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       MAIN ADMIN WORKSPACE (SHOWN WHEN AUTHENTICATED)
+       ==================================================================== -->
+  <div id="adminWorkspace" class="admin-workspace" hidden>
+    <!-- Top Header -->
+    <header class="admin-header">
+      <div class="admin-header-left">
+        <img src="assets/logo-monogram.png" alt="GB" class="admin-header-logo" />
+        <div>
+          <strong class="admin-brand-title">GIULIA BEAUTY STUDIO</strong>
+          <span class="admin-brand-sub" id="adminWelcomeLabel">Gestionale Agenda &amp; CRM</span>
+        </div>
+      </div>
+
+      <nav class="admin-tabs" role="tablist" aria-label="Sezioni gestionale">
+        <button type="button" class="admin-tab-btn active" data-view="agenda">
+          📅 Agenda
+        </button>
+        <button type="button" class="admin-tab-btn" data-view="clients">
+          👩 Clienti &amp; Privacy
+        </button>
+        <button type="button" class="admin-tab-btn" data-view="settings">
+          ⚙️ Impostazioni
+        </button>
+      </nav>
+
+      <div class="admin-header-actions">
+        <button type="button" class="btn-primary-admin" id="newApptQuickBtn">
+          + Nuovo Appuntamento
+        </button>
+        <a href="index.html" class="btn-ghost-admin" title="Apri sito pubblico">Sito</a>
+        <button type="button" class="btn-ghost-admin" id="logoutBtn">Esci</button>
+      </div>
+    </header>
+
+    <!-- KPI Stats Strip -->
+    <section class="kpi-strip" aria-label="Riepilogo rapido">
+      <div class="kpi-card">
+        <span class="kpi-label">Appuntamenti Oggi</span>
+        <strong class="kpi-value" id="kpiTodayCount">0</strong>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Questa Settimana</span>
+        <strong class="kpi-value" id="kpiWeekCount">0</strong>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Da Confermare</span>
+        <strong class="kpi-value" id="kpiPendingCount">0</strong>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Clienti in Database</span>
+        <strong class="kpi-value" id="kpiClientsCount">0</strong>
+      </div>
+    </section>
+
+    <main class="admin-main">
+      <!-- ================================================================
+           VIEW 1: AGENDA (GOOGLE CALENDAR STYLE)
+           ================================================================ -->
+      <section id="viewAgenda" class="admin-view active">
+        <div class="calendar-toolbar">
+          <div class="calendar-nav-group">
+            <button type="button" class="btn-outline-sm" id="calPrevBtn">‹</button>
+            <button type="button" class="btn-outline-sm" id="calTodayBtn">Oggi</button>
+            <button type="button" class="btn-outline-sm" id="calNextBtn">›</button>
+            <h2 id="calRangeTitle" class="cal-range-title">Settimana Corrente</h2>
+          </div>
+
+          <div class="calendar-view-controls">
+            <select id="calStatusFilter" class="form-control form-control-sm" aria-label="Filtra per stato">
+              <option value="">Tutti gli stati</option>
+              <option value="pending">In attesa</option>
+              <option value="confirmed">Confermati</option>
+              <option value="completed">Completati</option>
+              <option value="cancelled">Annullati</option>
+            </select>
+
+            <div class="view-mode-pills">
+              <button type="button" class="mode-pill active" data-calmode="week">Settimana</button>
+              <button type="button" class="mode-pill" data-calmode="day">Giorno</button>
+              <button type="button" class="mode-pill" data-calmode="list">Lista</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="calendarContainer" class="calendar-surface"></div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 2: DATABASE CLIENTI (CRM + SCHEDE + GDPR)
+           ================================================================ -->
+      <section id="viewClients" class="admin-view" hidden>
+        <div class="crm-toolbar">
+          <div class="crm-search-wrap">
+            <input type="search" id="clientSearchInput" class="form-control" placeholder="Cerca cliente per nome, telefono, email o allergie..." />
+          </div>
+          <div class="crm-actions-wrap">
+            <button type="button" class="btn-outline-sm" id="exportClientsCsvBtn">Esporta CSV</button>
+            <button type="button" class="btn-primary-admin" id="newClientBtn">+ Nuova Cliente</button>
+          </div>
+        </div>
+
+        <div id="clientsListContainer" class="clients-table-card"></div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 3: IMPOSTAZIONI & SICUREZZA
+           ================================================================ -->
+      <section id="viewSettings" class="admin-view" hidden>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Sicurezza Account Titolare</h3>
+            <p class="muted-text">Modifica la password di accesso all'agenda e al database clienti.</p>
+            <form id="changePasswordForm">
+              <div class="form-group">
+                <label for="currentPasswordInput">Password Attuale</label>
+                <input type="password" id="currentPasswordInput" class="form-control" required />
+              </div>
+              <div class="form-group">
+                <label for="newPasswordInput">Nuova Password (min. 8 caratteri)</label>
+                <input type="password" id="newPasswordInput" class="form-control" minlength="8" required />
+              </div>
+              <div id="passwordChangeMsg" class="admin-alert" hidden></div>
+              <button type="submit" class="btn-primary-admin">Aggiorna Password</button>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3>Archivio &amp; Conformità GDPR</h3>
+            <p class="muted-text">
+              Ogni prenotazione dal sito pubblico e ogni inserimento con spunta privacy salva nel database MySQL lo storico dei consensi con data, ora e versione dell'informativa.
+            </p>
+            <div class="settings-action-stack">
+              <button type="button" class="btn-outline-sm" id="exportCsvSettingsBtn">Scarica Elenco Clienti (CSV)</button>
+              <a href="index.html" class="btn-outline-sm" style="text-align: center; text-decoration: none;">Apri Boutique Pubblica</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: NUOVO / MODIFICA APPUNTAMENTO
+       ==================================================================== -->
+  <div id="apptModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Agenda Studio</span>
+          <h3 id="apptModalTitle">Nuovo Appuntamento</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeApptModalBtn">✕</button>
+      </div>
+
+      <form id="apptForm" class="admin-modal-body">
+        <input type="hidden" id="apptIdInput" value="" />
+
+        <!-- Client Picker or New Client Inline -->
+        <div id="apptClientSection" class="modal-section-box">
+          <div class="client-mode-toggle">
+            <button type="button" class="mini-tab active" id="pickExistingClientTab">Cliente Esistente</button>
+            <button type="button" class="mini-tab" id="createInlineClientTab">+ Nuova Cliente</button>
+          </div>
+
+          <div id="existingClientPickGroup" class="form-group">
+            <label for="apptClientSelect">Seleziona Cliente dal Database *</label>
+            <select id="apptClientSelect" class="form-control"></select>
+          </div>
+
+          <div id="inlineClientFields" hidden>
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="apptNewClientName">Nome e Cognome *</label>
+                <input type="text" id="apptNewClientName" class="form-control" placeholder="Es. Chiara Bianchi" />
+              </div>
+              <div class="form-group">
+                <label for="apptNewClientPhone">Telefono / WhatsApp *</label>
+                <input type="tel" id="apptNewClientPhone" class="form-control" placeholder="+39 340..." />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="apptNewClientEmail">Email (opzionale)</label>
+              <input type="email" id="apptNewClientEmail" class="form-control" placeholder="cliente@email.it" />
+            </div>
+            <label class="inline-check-label">
+              <input type="checkbox" id="apptNewClientPrivacy" checked />
+              <span>Consenso Informativa Privacy GDPR raccolto</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row-3">
+          <div class="form-group">
+            <label for="apptDateInput">Data *</label>
+            <input type="date" id="apptDateInput" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label for="apptTimeInput">Ora Inizio *</label>
+            <input type="time" id="apptTimeInput" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label for="apptDurationInput">Durata (min)</label>
+            <input type="number" id="apptDurationInput" class="form-control" min="10" step="5" value="60" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Seleziona Trattamenti dal Listino (opzionale)</label>
+          <div id="apptCatalogPicker" class="catalog-picker-box"></div>
+        </div>
+
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="apptServicesSummaryInput">Riepilogo Trattamenti *</label>
+            <input type="text" id="apptServicesSummaryInput" class="form-control" placeholder="Es. Manicure + semipermanente" required />
+          </div>
+          <div class="form-group">
+            <label for="apptPriceInput">Prezzo Totale (€)</label>
+            <input type="number" id="apptPriceInput" class="form-control" min="0" step="0.5" value="0" />
+          </div>
+        </div>
+
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="apptStatusSelect">Stato Appuntamento</label>
+            <select id="apptStatusSelect" class="form-control">
+              <option value="confirmed">Confermato</option>
+              <option value="pending">In Attesa di Conferma</option>
+              <option value="completed">Completato</option>
+              <option value="cancelled">Annullato</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="apptNotesInput">Note Appuntamento</label>
+            <input type="text" id="apptNotesInput" class="form-control" placeholder="Colore scelto, note particolari..." />
+          </div>
+        </div>
+
+        <div id="apptModalAlert" class="admin-alert admin-alert-error" hidden></div>
+
+        <div class="admin-modal-footer">
+          <div class="modal-footer-left">
+            <button type="button" class="btn-danger-outline" id="deleteApptBtn" hidden>Elimina</button>
+            <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="apptWhatsappReminderBtn" hidden>💬 WhatsApp Cliente</a>
+          </div>
+          <button type="submit" class="btn-primary-admin" id="saveApptBtn">Salva Appuntamento</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: SCHEDA CLIENTE COMPLETA (CRM + NOTE TECNICHE + GDPR)
+       ==================================================================== -->
+  <div id="clientModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card admin-modal-wide">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Scheda Cliente &amp; GDPR</span>
+          <h3 id="clientModalTitle">Nuova Cliente</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeClientModalBtn">✕</button>
+      </div>
+
+      <div class="admin-modal-body">
+        <form id="clientForm">
+          <input type="hidden" id="clientIdInput" value="" />
+
+          <div class="form-row-3">
+            <div class="form-group">
+              <label for="clientFullNameInput">Nome e Cognome *</label>
+              <input type="text" id="clientFullNameInput" class="form-control" required />
+            </div>
+            <div class="form-group">
+              <label for="clientPhoneCrmInput">Telefono / WhatsApp *</label>
+              <input type="tel" id="clientPhoneCrmInput" class="form-control" required />
+            </div>
+            <div class="form-group">
+              <label for="clientEmailCrmInput">Email</label>
+              <input type="email" id="clientEmailCrmInput" class="form-control" />
+            </div>
+          </div>
+
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="clientAllergiesInput">Allergie / Sensibilità Cutanee o Oculari</label>
+              <textarea id="clientAllergiesInput" class="form-control" rows="2" placeholder="Es. Sensibilità colla ciglia, pelle reattiva, allergia nichel..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="clientPreferencesInput">Note Tecniche (Formula Colore, Forma Unghie, Preferenze)</label>
+              <textarea id="clientPreferencesInput" class="form-control" rows="2" placeholder="Es. Mandorla corta, base milky rose, curvatura L..."></textarea>
+            </div>
+          </div>
+
+          <div class="gdpr-box">
+            <label class="inline-check-label">
+              <input type="checkbox" id="clientPrivacyCrmCheck" />
+              <span><strong>Consenso Informativa Privacy (GDPR) &amp; Termini</strong> — Dichiaro che la cliente ha preso visione e accettato il trattamento dati.</span>
+            </label>
+            <label class="inline-check-label" style="margin-top: 8px;">
+              <input type="checkbox" id="clientMarketingCrmCheck" />
+              <span>Consenso facoltativo a promozioni e comunicazioni studio via WhatsApp/Email.</span>
+            </label>
+          </div>
+
+          <div id="clientModalAlert" class="admin-alert admin-alert-error" hidden></div>
+
+          <div class="admin-modal-footer">
+            <div class="modal-footer-left">
+              <button type="button" class="btn-danger-outline" id="deleteClientGdprBtn" hidden>Elimina (Diritto all'Oblio)</button>
+              <button type="button" class="btn-outline-sm" id="exportClientJsonBtn" hidden>Esporta Scheda JSON</button>
+              <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="clientWhatsappBtn" hidden>💬 WhatsApp</a>
+            </div>
+            <button type="submit" class="btn-primary-admin">Salva Scheda Cliente</button>
+          </div>
+        </form>
+
+        <!-- Client History & GDPR Consent Audit Log -->
+        <div id="clientDossierHistory" class="dossier-history-grid" hidden>
+          <div class="dossier-subcard">
+            <h4>Storico Appuntamenti</h4>
+            <div id="clientApptsHistoryList"></div>
+          </div>
+          <div class="dossier-subcard">
+            <h4>Registro Consensi Privacy (GDPR)</h4>
+            <div id="clientPrivacyLogsList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="catalog.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

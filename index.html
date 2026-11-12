@@ -594,7 +594,10 @@
             ♡ Nota: Il Martedì e la Domenica lo studio è chiuso. Seleziona un giorno tra Lunedì, Mercoledì, Giovedì, Venerdì o Sabato.
           </p>
         </div>
-        <span class="form-label">Orario Disponibile</span>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;">
+          <span class="form-label" style="margin-bottom:0;">Orario Disponibile</span>
+          <span id="slotsLiveStatus" style="font-size:0.68rem;color:var(--ink-muted);"></span>
+        </div>
         <div class="time-slots-grid" id="timeSlotsGrid">
           <button type="button" class="time-slot-btn" data-time="09:30">09:30</button>
           <button type="button" class="time-slot-btn active" data-time="11:00">11:00</button>
@@ -617,7 +620,11 @@
           <input type="tel" id="clientPhoneInput" class="form-control" placeholder="Es. +39 340 000 0000" required />
         </div>
         <div class="form-group">
-          <label class="form-label" for="clientNotesInput">Note o Richieste Particolari</label>
+          <label class="form-label" for="clientEmailInput">Email (opzionale)</label>
+          <input type="email" id="clientEmailInput" class="form-control" placeholder="Es. nome@email.it" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="clientNotesInput">Note, Allergie o Dedica</label>
           <input type="text" id="clientNotesInput" class="form-control" placeholder="Es. Rimozione semipermanente, allergie, dedica..." />
         </div>
       </div>
@@ -657,11 +664,11 @@
         <span class="drawer-total-amount" id="drawerTotalAmount">0 €</span>
       </div>
       <div class="drawer-cta-stack">
-        <button type="button" class="btn-primary-luxury btn-full-width" id="whatsappDirectBtn">
-          Invia Prenotazione su WhatsApp (+39 331 504 5135)
+        <button type="button" class="btn-primary-luxury btn-full-width" id="confirmOrderBtn">
+          Conferma e Prenota in Agenda
         </button>
-        <button type="button" class="btn-secondary-luxury btn-drawer-whatsapp" id="confirmOrderBtn">
-          Genera Ricevuta Riepilogo
+        <button type="button" class="btn-secondary-luxury btn-drawer-whatsapp" id="whatsappDirectBtn">
+          Invia Solo su WhatsApp (+39 331 504 5135)
         </button>
       </div>
     </div>
@@ -737,27 +744,31 @@
           Contatto telefonico / WhatsApp: <strong>+39 331 504 5135</strong> • Profilo Instagram ufficiale: <strong>@giuliabeautystudio_bergamo</strong>.
         </p>
 
-        <h5>2. Tipologia di Dati Trattati e Modalità Tecnica ("Zero Server Database")</h5>
+        <h5>2. Tipologia di Dati Trattati e Database Gestionale Proprietario</h5>
         <p>
-          Attraverso il configuratore del listino e della <em>Beauty Bag</em>, l’utente può inserire volontariamente: nome e cognome, recapito telefonico/WhatsApp, data e fascia oraria desiderata, ed eventuali note o dediche per Gift Card.<br />
-          <strong>Importante:</strong> Il presente sito web opera con architettura <em>client-side</em> priva di database centralizzato di profilazione. I dati inseriti nei campi del modulo vengono elaborati localmente nel browser dell’utente al solo scopo di generare il messaggio di riepilogo indirizzato all’utenza WhatsApp ufficiale dello studio (<code>+39 331 504 5135</code>) o la ricevuta riepilogativa locale.
+          Attraverso il sistema di prenotazione e richiesta trattamenti (<em>Beauty Bag</em>) o in sede presso lo studio, raccogliamo esclusivamente i dati strettamente necessari:
         </p>
-
-        <h5>3. Finalità e Base Giuridica del Trattamento</h5>
         <ul>
-          <li><strong>Gestione delle prenotazioni e richieste di acquisto/voucher:</strong> esecuzione di misure precontrattuali e contrattuali richieste dall’interessato (Art. 6, par. 1, lett. b GDPR).</li>
-          <li><strong>Comunicazioni di servizio:</strong> conferma, modifica o annullamento dell’appuntamento tramite telefono o WhatsApp.</li>
-          <li><strong>Adempimenti fiscali e di legge:</strong> connessi all’erogazione dei servizi estetici in studio (Art. 6, par. 1, lett. c GDPR).</li>
+          <li><strong>Dati anagrafici e di contatto:</strong> nome, cognome, numero di telefono/WhatsApp ed eventuale indirizzo email.</li>
+          <li><strong>Dati relativi all’appuntamento e ai servizi:</strong> data, orario, trattamenti scelti, eventuale dedica Gift Card e storico delle sedute.</li>
+          <li><strong>Note tecniche e di sicurezza estetica:</strong> eventuali allergie, sensibilità cutanee/oculari o preferenze tecniche (es. forma unghie, formula colore) segnalate dalla cliente per garantire l’esecuzione sicura dei trattamenti.</li>
+          <li><strong>Registro del consenso (Audit Log GDPR):</strong> data, ora, versione dell’informativa accettata e hash anonimizzato dell’indirizzo IP a tutela della trasparenza e conformità normativa.</li>
         </ul>
 
-        <h5>4. Conservazione dei Dati</h5>
+        <h5>3. Finalità, Base Giuridica e Conservazione</h5>
+        <ul>
+          <li><strong>Gestione agenda, prenotazioni e scheda cliente:</strong> esecuzione di misure precontrattuali e contrattuali richieste dall’interessato (Art. 6, par. 1, lett. b GDPR).</li>
+          <li><strong>Tutela della salute e sicurezza nei trattamenti estetici:</strong> gestione delle note su allergie/sensibilità fornite volontariamente dalla cliente prima della seduta.</li>
+          <li><strong>Comunicazioni di servizio e promemoria appuntamenti:</strong> conferme, modifiche o disdette tramite telefono o WhatsApp.</li>
+          <li><strong>Adempimenti fiscali e di legge:</strong> connessi all’erogazione dei servizi (Art. 6, par. 1, lett. c GDPR).</li>
+        </ul>
         <p>
-          I dati trasmessi dall’utente tramite messaggistica WhatsApp o contatto telefonico sono conservati dal Titolare per il tempo strettamente necessario alla gestione dell’appuntamento e dell’eventuale rapporto contrattuale, nel rispetto degli obblighi civili e fiscali vigenti.
+          I dati sono custoditi nel database proprietario protetto di <strong>Giulia Beauty Studio</strong> su infrastruttura server dedicata, accessibile esclusivamente al personale autorizzato tramite credenziali cifrate. I dati non vengono mai venduti né ceduti a terzi per finalità pubblicitarie e sono conservati per il tempo necessario alla gestione del rapporto con la cliente e agli obblighi fiscali di legge.
         </p>
 
-        <h5>5. Diritti dell’Interessato (Artt. 15–22 GDPR)</h5>
+        <h5>4. Diritti dell’Interessato (Artt. 15–22 GDPR)</h5>
         <p>
-          L’interessato ha il diritto di chiedere in qualunque momento al Titolare l’accesso ai propri dati personali, la rettifica, la cancellazione degli stessi (diritto all’oblio), la limitazione del trattamento o di opporsi al loro trattamento, rivolgendosi direttamente a <strong>Giulia Beauty Studio</strong> presso la sede di Via Principe Amedeo, 17 – Verdellino (BG) o al recapito <strong>+39 331 504 5135</strong>. È inoltre fatto salvo il diritto di proporre reclamo al Garante per la Protezione dei Dati Personali (<em>www.garanteprivacy.it</em>).
+          L’interessato può esercitare in ogni momento il diritto di accesso ai propri dati, di rettifica, di portabilità (esportazione scheda) o di cancellazione definitiva (<strong>Diritto all’Oblio</strong>), contattando <strong>Giulia Beauty Studio</strong> in Via Principe Amedeo, 17 – Verdellino (BG) o al numero <strong>+39 331 504 5135</strong>. È sempre fatto salvo il diritto di reclamo al Garante per la Protezione dei Dati Personali (<em>www.garanteprivacy.it</em>).
         </p>
       </div>
 
@@ -897,6 +908,7 @@
           <li><button type="button" class="footer-legal-btn" data-open-legal="privacy">🔒 Informativa Privacy (GDPR)</button></li>
           <li><button type="button" class="footer-legal-btn" data-open-legal="terms">📜 Termini e Condizioni</button></li>
           <li><button type="button" class="footer-legal-btn" data-open-legal="cookies">🍪 Cookie Policy &amp; Preferenze</button></li>
+          <li><a href="admin.html">🔐 Area Riservata Studio (Agenda)</a></li>
         </ul>
       </div>
     </div>
@@ -909,10 +921,13 @@
         <button type="button" class="footer-legal-btn" data-open-legal="terms">TERMINI E CONDIZIONI</button>
         <span>•</span>
         <button type="button" class="footer-legal-btn" data-open-legal="cookies">COOKIE POLICY</button>
+        <span>•</span>
+        <a href="admin.html" style="color:inherit;text-decoration:none;">AREA STUDIO</a>
       </div>
     </div>
   </footer>
 
+  <script src="catalog.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

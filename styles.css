@@ -2032,6 +2032,16 @@ a.bcard-line:hover {
   border-color: var(--ink-primary);
 }
 
+.time-slot-btn:disabled,
+.time-slot-btn.is-booked {
+  background: #f3ecec;
+  color: var(--ink-muted);
+  border-color: rgba(145, 78, 86, 0.2);
+  text-decoration: line-through;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .payment-methods-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
