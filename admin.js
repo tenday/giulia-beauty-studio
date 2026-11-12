@@ -170,22 +170,9 @@ async function checkAuth() {
   const workspace = document.getElementById('adminWorkspace');
   const checkingGate = document.getElementById('authCheckingOverlay');
 
+  let authData;
   try {
-    const data = await apiFetch('auth/me', { method: 'GET' });
-    if (data.authenticated) {
-      if (loginForm && !workspace) {
-        window.location.replace('agenda.html');
-        return;
-      }
-      STATE.admin = data.admin;
-      document.getElementById('adminWelcomeLabel').textContent =
-        `Ciao ${data.admin.display_name || 'Giulia'} • Agenda & Database Clienti`;
-      if (checkingGate) checkingGate.hidden = true;
-      if (workspace) workspace.hidden = false;
-      await refreshAllData();
-    } else if (workspace) {
-      window.location.replace('admin.html');
-    }
+    authData = await apiFetch('auth/me', { method: 'GET' });
   } catch (err) {
     if (workspace) {
       window.location.replace('admin.html');
@@ -195,6 +182,36 @@ async function checkAuth() {
     if (alertEl) {
       alertEl.hidden = false;
       alertEl.textContent = err.message;
+    }
+    return;
+  }
+
+  if (!authData.authenticated) {
+    if (workspace) {
+      window.location.replace('admin.html');
+    }
+    return;
+  }
+
+  if (loginForm && !workspace) {
+    window.location.replace('agenda.html');
+    return;
+  }
+
+  STATE.admin = authData.admin;
+  const welcomeEl = document.getElementById('adminWelcomeLabel');
+  if (welcomeEl) {
+    welcomeEl.textContent = `Ciao ${authData.admin.display_name || 'Giulia'} • Agenda & Database Clienti`;
+  }
+  if (checkingGate) checkingGate.hidden = true;
+  if (workspace) workspace.hidden = false;
+
+  try {
+    await refreshAllData();
+  } catch (err) {
+    console.error('[Giulia Beauty Studio] Errore caricamento dati gestionale:', err);
+    if (err.status === 401 && workspace) {
+      window.location.replace('admin.html');
     }
   }
 }
@@ -2011,9 +2028,9 @@ function renderInventoryView() {
   if (!kpiStrip || !prodBox || !supBox || !movBox) return;
 
   const query = (document.getElementById('invSearchInput')?.value || '').trim().toLowerCase();
-  const products = STATE.inventory.products || [];
-  const suppliers = STATE.inventory.suppliers || [];
-  const movements = STATE.inventory.movements || [];
+  const products = STATE.products || [];
+  const suppliers = STATE.suppliers || [];
+  const movements = STATE.movements || [];
 
   const lowCount = products.filter((p) => Number(p.stock_qty) <= Number(p.min_stock_qty)).length;
   const stockValue = products.reduce((acc, p) => acc + Number(p.stock_qty || 0) * Number(p.cost_price || 0), 0);
@@ -2118,7 +2135,7 @@ function openProductModal(prod) {
   const supSel = document.getElementById('prodSupplierSelect');
   if (supSel) {
     supSel.innerHTML = '<option value="">— Nessun fornitore —</option>';
-    (STATE.inventory.suppliers || []).forEach((s) => {
+    (STATE.suppliers || []).forEach((s) => {
       const opt = document.createElement('option');
       opt.value = s.id;
       opt.textContent = s.name;
@@ -2154,7 +2171,7 @@ function openSupplierModal(sup) {
 }
 
 function openMovementModal(productId, defaultType = 'sale') {
-  const prod = (STATE.inventory.products || []).find((p) => Number(p.id) === Number(productId));
+  const prod = (STATE.products || []).find((p) => Number(p.id) === Number(productId));
   if (!prod) return;
   const cliSel = document.getElementById('movClientSelect');
   if (cliSel) {
@@ -2214,7 +2231,7 @@ function renderMessagesView() {
 
   const prevTpl = tplSel.value;
   tplSel.innerHTML = '';
-  (STATE.messages.templates || []).forEach((t) => {
+  (STATE.messageTemplates || []).forEach((t) => {
     const opt = document.createElement('option');
     opt.value = t.code;
     opt.textContent = t.title;
@@ -2223,7 +2240,7 @@ function renderMessagesView() {
   if (prevTpl) tplSel.value = prevTpl;
   syncQuickMessagePreview();
 
-  edList.innerHTML = (STATE.messages.templates || [])
+  edList.innerHTML = (STATE.messageTemplates || [])
     .map(
       (t) => `<form class="msg-tpl-editor-form rec-item" data-code="${escapeHtml(t.code)}" style="margin-bottom:10px;">
         <div class="admin-field" style="margin-bottom:6px;">
@@ -2255,7 +2272,7 @@ function renderMessagesView() {
     });
   });
 
-  const logs = STATE.messages.logs || [];
+  const logs = STATE.messageLogs || [];
   logsBox.innerHTML =
     logs.length === 0
       ? '<p class="muted-text">Nessun messaggio registrato nello storico invii.</p>'
@@ -2377,7 +2394,7 @@ function renderSettingsView() {
             <strong>${escapeHtml(u.display_name)}</strong> <span class="muted-text">(${escapeHtml(u.username)} • ${escapeHtml(u.role)})</span>
           </div>
           ${
-            STATE.user && Number(u.id) !== Number(STATE.user.id)
+            STATE.admin && Number(u.id) !== Number(STATE.admin.id)
               ? `<button type="button" class="btn-outline-sm del-user-btn" data-id="${u.id}" style="color:#a12a2e;border-color:#e0b5b5;">Elimina</button>`
               : '<span class="muted-text" style="font-size:0.76rem;">Sessione attiva</span>'
           }
