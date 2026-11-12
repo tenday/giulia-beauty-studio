@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Firma Informativa Privacy GDPR — Giulia Beauty Studio</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #fdfaf8;
+      --card: #ffffff;
+      --ink: #2b2126;
+      --ink-soft: #6f5d66;
+      --rose: #d47491;
+      --rose-deep: #b85675;
+      --border: #eddde3;
+      --ok-bg: #eefaf3;
+      --ok-ink: #1f7a4c;
+      --err-bg: #fdf0f3;
+      --err-ink: #b22b4b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Montserrat', sans-serif;
+      background: linear-gradient(160deg, #fdfaf8 0%, #f9eff3 100%);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: 20px 14px 40px;
+    }
+    .sign-wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 26px 22px;
+      box-shadow: 0 22px 48px rgba(43, 33, 38, 0.08);
+    }
+    .brand-head {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .brand-head img {
+      width: 56px;
+      height: 56px;
+      object-fit: contain;
+      margin-bottom: 6px;
+    }
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.95rem;
+      margin: 4px 0;
+    }
+    .eyebrow {
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--rose-deep);
+      font-weight: 700;
+    }
+    .gdpr-scroll {
+      background: #fdf9fa;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: var(--ink-soft);
+      margin-bottom: 18px;
+    }
+    .form-group { margin-bottom: 14px; }
+    label {
+      display: block;
+      font-size: 0.74rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 11px 13px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+    .otp-input {
+      letter-spacing: 0.3em;
+      font-size: 1.25rem !important;
+      font-weight: 700;
+      text-align: center;
+    }
+    .sig-pad-wrap {
+      border: 1.5px dashed #d8bec7;
+      border-radius: 12px;
+      background: #fff;
+      position: relative;
+      touch-action: none;
+    }
+    canvas#sigCanvas {
+      width: 100%;
+      height: 150px;
+      display: block;
+      border-radius: 12px;
+      cursor: crosshair;
+    }
+    .sig-clear-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: #fdf4f7;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.7rem;
+      padding: 4px 9px;
+      cursor: pointer;
+      color: var(--ink-soft);
+      font-family: inherit;
+    }
+    .check-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      margin-bottom: 10px;
+      cursor: pointer;
+    }
+    .check-row input { margin-top: 3px; accent-color: var(--rose-deep); }
+    .btn-submit {
+      width: 100%;
+      border: none;
+      background: linear-gradient(135deg, var(--rose), var(--rose-deep));
+      color: #fff;
+      font-family: inherit;
+      font-weight: 700;
+      font-size: 0.9rem;
+      padding: 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn-submit:disabled { opacity: 0.6; cursor: wait; }
+    .alert {
+      padding: 11px 13px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      margin-bottom: 14px;
+    }
+    .alert-err { background: var(--err-bg); color: var(--err-ink); }
+    .alert-ok { background: var(--ok-bg); color: var(--ok-ink); text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="sign-wrap">
+    <div class="brand-head">
+      <img src="assets/logo-monogram.png" alt="Giulia Beauty Studio" />
+      <div class="eyebrow">Firma Digitale Sicura con OTP</div>
+      <h1>Informativa Privacy GDPR</h1>
+      <p id="clientSub" style="font-size:0.82rem;color:var(--ink-soft);margin:4px 0 0;">Caricamento richiesta...</p>
+    </div>
+
+    <div id="statusBox" class="alert alert-err" hidden></div>
+
+    <div id="signFormContainer" hidden>
+      <div class="gdpr-scroll">
+        <strong>Titolare del Trattamento: Giulia Beauty Studio</strong> — Via Principe Amedeo 17, Verdellino (BG).<br /><br />
+        Ai sensi del Regolamento UE 2016/679 (GDPR), i tuoi dati anagrafici, recapiti WhatsApp/email e le eventuali informazioni su allergie, sensibilità cutanee/oculari o schede trattamenti sono trattati esclusivamente per l'erogazione dei servizi estetici richiesti, gestione appuntamenti, promemoria e adempimenti fiscali.<br /><br />
+        Puoi esercitare in qualsiasi momento i diritti di accesso, rettifica, limitazione e cancellazione scrivendo allo studio. La versione corrente del documento è indicata qui sotto ed è verificata tramite firma elettronica con codice OTP personale.
+      </div>
+
+      <form id="privacySignForm">
+        <div class="form-group">
+          <label for="otpInput">Codice OTP a 6 cifre (ricevuto su WhatsApp / SMS) *</label>
+          <input type="text" id="otpInput" class="otp-input" maxlength="6" inputmode="numeric" placeholder="000000" required />
+        </div>
+
+        <div class="form-group">
+          <label for="signatureNameInput">Nome e Cognome del firmatario *</label>
+          <input type="text" id="signatureNameInput" placeholder="Es. Elena Rossi" required />
+        </div>
+
+        <div class="form-group">
+          <label>Firma qui con il dito o mouse *</label>
+          <div class="sig-pad-wrap">
+            <canvas id="sigCanvas" width="500" height="160"></canvas>
+            <button type="button" class="sig-clear-btn" id="clearSigBtn">Pulisci</button>
+          </div>
+        </div>
+
+        <label class="check-row">
+          <input type="checkbox" id="acceptPrivacyCheck" required />
+          <span><strong>Accetto l'Informativa Privacy (GDPR) e i Termini e Condizioni</strong> dello studio. *</span>
+        </label>
+
+        <label class="check-row">
+          <input type="checkbox" id="acceptMarketingCheck" />
+          <span>Acconsento facoltativamente a ricevere comunicazioni e promozioni studio su WhatsApp/Email.</span>
+        </label>
+
+        <button type="submit" class="btn-submit" id="submitSignBtn">Conferma e Firma con OTP</button>
+      </form>
+    </div>
+
+    <div id="signedDoneBox" class="alert alert-ok" hidden></div>
+  </div>
+
+  <script>
+    (function () {
+      const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000/api' : `${window.location.origin}/api`;
+      const params = new URLSearchParams(window.location.search);
+      const token = (params.get('token') || '').trim();
+
+      const clientSubEl = document.getElementById('clientSub');
+      const statusBoxEl = document.getElementById('statusBox');
+      const formContainerEl = document.getElementById('signFormContainer');
+      const doneBoxEl = document.getElementById('signedDoneBox');
+
+      const canvas = document.getElementById('sigCanvas');
+      const ctx = canvas.getContext('2d');
+      let drawing = false;
+      let hasDrawn = false;
+
+      function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: ((clientX - rect.left) / rect.width) * canvas.width,
+          y: ((clientY - rect.top) / rect.height) * canvas.height,
+        };
+      }
+
+      function startDraw(e) {
+        drawing = true;
+        hasDrawn = true;
+        const p = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+      }
+      function moveDraw(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        const p = getPos(e);
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#2b2126';
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+      function endDraw() { drawing = false; }
+
+      canvas.addEventListener('mousedown', startDraw);
+      canvas.addEventListener('mousemove', moveDraw);
+      window.addEventListener('mouseup', endDraw);
+      canvas.addEventListener('touchstart', startDraw, { passive: false });
+      canvas.addEventListener('touchmove', moveDraw, { passive: false });
+      window.addEventListener('touchend', endDraw);
+
+      document.getElementById('clearSigBtn').addEventListener('click', () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hasDrawn = false;
+      });
+
+      function showError(msg) {
+        statusBoxEl.textContent = msg;
+        statusBoxEl.hidden = false;
+      }
+
+      async function loadRequest() {
+        if (!token) {
+          clientSubEl.textContent = 'Link non valido';
+          showError('Link mancante o incompleto. Richiedi un nuovo collegamento allo studio.');
+          return;
+        }
+        try {
+          const res = await fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`);
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Richiesta non trovata.');
+          const r = data.request;
+          clientSubEl.textContent = `Cliente: ${r.client_name} (${r.client_phone_masked}) • Versione ${r.privacy_version}`;
+          document.getElementById('signatureNameInput').value = r.client_name || '';
+
+          if (r.status === 'signed') {
+            doneBoxEl.innerHTML = `✅ <strong>Modulo Privacy già firmato</strong> in data ${r.signed_at}. Grazie!`;
+            doneBoxEl.hidden = false;
+            return;
+          }
+          formContainerEl.hidden = false;
+        } catch (err) {
+          clientSubEl.textContent = 'Impossibile caricare il modulo';
+          showError(err.message);
+        }
+      }
+
+      document.getElementById('privacySignForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        statusBoxEl.hidden = true;
+        if (!hasDrawn) {
+          showError('Disegna la tua firma nel riquadro prima di confermare.');
+          return;
+        }
+        const btn = document.getElementById('submitSignBtn');
+        btn.disabled = true;
+        btn.textContent = 'Verifica OTP & Salvataggio...';
+        try {
+          const res = await fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              otp_code: document.getElementById('otpInput').value.trim(),
+              signature_name: document.getElementById('signatureNameInput').value.trim(),
+              signature_data: canvas.toDataURL('image/png'),
+              privacy_accepted: document.getElementById('acceptPrivacyCheck').checked,
+              marketing_consent: document.getElementById('acceptMarketingCheck').checked,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Errore durante la firma.');
+          formContainerEl.hidden = true;
+          doneBoxEl.innerHTML = `✅ <strong>Informativa Privacy firmata con successo!</strong><br />Registrata alle ${data.signed_at} (versione ${data.privacy_version}). Puoi chiudere questa pagina.`;
+          doneBoxEl.hidden = false;
+        } catch (err) {
+          showError(err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Conferma e Firma con OTP';
+        }
+      });
+
+      loadRequest();
+    })();
+  </script>
+</body>
+</html>

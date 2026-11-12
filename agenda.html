@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Agenda &amp; Database Clienti — Giulia Beauty Studio</title>
+  <title>Agenda &amp; Gestionale Completo — Giulia Beauty Studio</title>
   <meta name="robots" content="noindex, nofollow" />
   <link rel="icon" type="image/png" href="assets/favicon.png" />
 
@@ -24,7 +24,7 @@
   </div>
 
   <!-- ====================================================================
-       DEDICATED FULL-PAGE AGENDA & CRM WORKSPACE
+       DEDICATED FULL-PAGE STUDIO MANAGEMENT WORKSPACE
        ==================================================================== -->
   <div id="adminWorkspace" class="admin-workspace" hidden>
     <!-- Top Header -->
@@ -44,11 +44,17 @@
         <button type="button" class="admin-tab-btn" data-view="clients">
           👩 Clienti &amp; Privacy
         </button>
+        <button type="button" class="admin-tab-btn" data-view="inventory">
+          📦 Magazzino
+        </button>
+        <button type="button" class="admin-tab-btn" data-view="messages">
+          💬 Messaggi
+        </button>
         <button type="button" class="admin-tab-btn" data-view="insights">
           ✨ AI &amp; Report
         </button>
         <button type="button" class="admin-tab-btn" data-view="settings">
-          ⚙️ Impostazioni
+          ⚙️ Staff &amp; Impostazioni
         </button>
       </nav>
 
@@ -86,7 +92,7 @@
 
     <main class="admin-main">
       <!-- ================================================================
-           VIEW 1: AGENDA (GOOGLE CALENDAR STYLE - SCROLLABLE)
+           VIEW 1: AGENDA (MULTI-OPERATORE - SCORREVOLE)
            ================================================================ -->
       <section id="viewAgenda" class="admin-view active">
         <div class="calendar-toolbar">
@@ -98,6 +104,10 @@
           </div>
 
           <div class="calendar-view-controls">
+            <select id="calOperatorFilter" class="form-control form-control-sm" aria-label="Filtra per operatore">
+              <option value="0">Tutti gli operatori</option>
+            </select>
+
             <select id="calStatusFilter" class="form-control form-control-sm" aria-label="Filtra per stato">
               <option value="">Tutti gli stati</option>
               <option value="pending">In attesa</option>
@@ -124,7 +134,7 @@
       </section>
 
       <!-- ================================================================
-           VIEW 2: DATABASE CLIENTI (CRM + SCHEDE + GDPR)
+           VIEW 2: DATABASE CLIENTI (CRM + CARTE + MORFOLOGIA + PRIVACY OTP)
            ================================================================ -->
       <section id="viewClients" class="admin-view" hidden>
         <div class="crm-toolbar">
@@ -141,7 +151,95 @@
       </section>
 
       <!-- ================================================================
-           VIEW 3: ASSISTENTE AI & REPORT STUDIO
+           VIEW 3: MAGAZZINO PRODOTTI, VENDITE & FORNITORI
+           ================================================================ -->
+      <section id="viewInventory" class="admin-view" hidden>
+        <div class="crm-toolbar">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="status-badge badge-birthday">📦 Magazzino, Scorte &amp; Fornitori</span>
+            <input type="search" id="invSearchInput" class="form-control form-control-sm" placeholder="Cerca prodotto o SKU..." style="min-width:210px;" />
+          </div>
+          <div class="crm-actions-wrap">
+            <button type="button" class="btn-outline-sm" id="newSupplierBtn">+ Nuovo Fornitore</button>
+            <button type="button" class="btn-primary-admin" id="newProductBtn">+ Nuovo Prodotto</button>
+          </div>
+        </div>
+
+        <div id="invKpiStrip" class="insights-kpi-grid"></div>
+
+        <div class="clients-table-card" style="margin-bottom:18px;">
+          <div class="insights-section-head">
+            <div>
+              <h3>Catalogo Prodotti &amp; Giacenze</h3>
+              <p class="muted-text" style="margin:0;">Registra carichi da fornitore, vendite alle clienti (per statistiche incrociate) e consumi cabina.</p>
+            </div>
+          </div>
+          <div id="productsListContainer"></div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Fornitori Studio</h3>
+            <p class="muted-text">Rubrica fornitori collegata al riordino automatico prodotti.</p>
+            <div id="suppliersListContainer"></div>
+          </div>
+          <div class="settings-card">
+            <h3>Ultimi Movimenti di Magazzino</h3>
+            <p class="muted-text">Vendite, carichi e consumi cabina registrati.</p>
+            <div id="movementsListContainer"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 4: CENTRO MESSAGGI & TEMPLATE WHATSAPP
+           ================================================================ -->
+      <section id="viewMessages" class="admin-view" hidden>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Invia Messaggio Rapido con Template</h3>
+            <p class="muted-text">Seleziona la cliente e il modello salvato: puoi personalizzare il testo prima di aprire WhatsApp e registrare l'invio nello storico.</p>
+            <form id="quickMessageForm">
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="msgClientSelect">Cliente Destinataria *</label>
+                  <select id="msgClientSelect" class="form-control"></select>
+                </div>
+                <div class="form-group">
+                  <label for="msgTemplateSelect">Template Messaggio</label>
+                  <select id="msgTemplateSelect" class="form-control"></select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="msgPreviewText">Anteprima Testo Messaggio *</label>
+                <textarea id="msgPreviewText" class="form-control" rows="4" required></textarea>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="submit" class="btn-primary-admin">📲 Apri WhatsApp &amp; Registra Invio</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3>Modelli (Template) Personalizzabili</h3>
+            <p class="muted-text">Variabili supportate: <code>{nome}</code>, <code>{data}</code>, <code>{ora}</code>, <code>{trattamenti}</code>, <code>{operatore}</code>, <code>{giorni_assenza}</code>.</p>
+            <div id="msgTemplatesEditorList"></div>
+          </div>
+        </div>
+
+        <div class="clients-table-card" style="margin-top:18px;">
+          <div class="insights-section-head">
+            <div>
+              <h3>Storico Messaggi Inviati</h3>
+              <p class="muted-text" style="margin:0;">Registro cronologico delle comunicazioni inviate alle clienti.</p>
+            </div>
+          </div>
+          <div id="messageLogsContainer"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 5: ASSISTENTE AI & REPORT STUDIO
            ================================================================ -->
       <section id="viewInsights" class="admin-view" hidden>
         <div class="crm-toolbar">
@@ -173,19 +271,20 @@
           <div class="ai-quick-prompts">
             <button type="button" class="ai-prompt-chip" data-question="Quante clienti non vengono da più di 30 giorni e chi sono?">🔍 Chi non viene da un po'?</button>
             <button type="button" class="ai-prompt-chip" data-question="Fammi il report completo di questo mese">📊 Report mensile studio</button>
+            <button type="button" class="ai-prompt-chip" data-question="Analisi magazzino, scorte, riordini e vendite incrociate">📦 Riordini &amp; Cross-sell</button>
+            <button type="button" class="ai-prompt-chip" data-question="Come vanno gli operatori dello studio?">👩‍🎨 Rendimento operatori</button>
+            <button type="button" class="ai-prompt-chip" data-question="Chi sono le clienti migliori VIP e il valore nel tempo?">👑 Clienti VIP &amp; LTV</button>
             <button type="button" class="ai-prompt-chip" data-question="Quali trattamenti sono più richiesti?">💅 Trattamenti top</button>
-            <button type="button" class="ai-prompt-chip" data-question="Chi sono le clienti migliori VIP?">👑 Clienti VIP</button>
-            <button type="button" class="ai-prompt-chip" data-question="Ci sono compleanni o promemoria per domani?">🎂 Compleanni &amp; Domani</button>
           </div>
 
           <div id="aiChatMessages" class="ai-chat-messages">
             <div class="ai-msg ai-msg-bot">
-              Ciao Giulia ♡ Analizzo automaticamente agenda, clienti, note e fatturato reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.
+              Ciao Giulia ♡ Analizzo automaticamente agenda, operatori, clienti, LTV, magazzino e riordini reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.
             </div>
           </div>
 
           <form id="aiChatForm" class="ai-chat-form">
-            <input type="text" id="aiQuestionInput" class="form-control" placeholder="Es. Chi non viene da più di 45 giorni? / Report incassi..." required />
+            <input type="text" id="aiQuestionInput" class="form-control" placeholder="Es. Chi non viene da più di 45 giorni? / Cosa devo riordinare?" required />
             <button type="submit" class="btn-primary-admin" id="aiSendBtn">Chiedi all'AI</button>
           </form>
         </div>
@@ -205,30 +304,144 @@
           <div id="inactiveClientsContainer"></div>
         </div>
 
-        <!-- Reports Grid: Top Services + VIP Clients -->
-        <div class="settings-grid">
+        <!-- Reports Grid: Top Services + VIP/LTV + Operators + Reorder Forecasts -->
+        <div class="settings-grid" style="margin-bottom:18px;">
           <div class="settings-card">
             <h3>Trattamenti più Richiesti</h3>
             <p class="muted-text">Classifica per numero di prenotazioni e ricavo generato.</p>
             <div id="topServicesReportList"></div>
           </div>
           <div class="settings-card">
-            <h3>Clienti più Fedeli (VIP)</h3>
-            <p class="muted-text">Classifica per frequenza visite e spesa complessiva in studio.</p>
+            <h3>Valore nel Tempo Clienti (VIP &amp; LTV)</h3>
+            <p class="muted-text">Servizi + acquisti prodotti per singola cliente.</p>
             <div id="vipClientsReportList"></div>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Rendimento Operatori Studio</h3>
+            <p class="muted-text">Appuntamenti, ore lavorate e incassi per operatore.</p>
+            <div id="operatorStatsReportList"></div>
+          </div>
+          <div class="settings-card">
+            <h3>Previsioni Riordino &amp; Vendite Incrociate</h3>
+            <p class="muted-text">Stima esaurimento scorte (consumo ultimi 60 gg) e abbinamenti servizio/prodotto.</p>
+            <div id="inventoryReorderReportList"></div>
           </div>
         </div>
       </section>
 
       <!-- ================================================================
-           VIEW 4: IMPOSTAZIONI & SICUREZZA
+           VIEW 6: STAFF (OPERATORI, ORARI, ASSENZE) & IMPOSTAZIONI
            ================================================================ -->
       <section id="viewSettings" class="admin-view" hidden>
+        <!-- Operators & Schedules -->
+        <div class="clients-table-card" style="margin-bottom:18px;">
+          <div class="insights-section-head">
+            <div>
+              <h3>Operatori &amp; Orari di Lavoro</h3>
+              <p class="muted-text" style="margin:0;">Ogni operatore ha turni e pause settimanali: agenda e prenotazioni online mostrano solo i posti davvero liberi.</p>
+            </div>
+            <button type="button" class="btn-primary-admin" id="newOperatorBtn">+ Nuovo Operatore</button>
+          </div>
+          <div id="operatorsListContainer"></div>
+        </div>
+
+        <!-- Operator Absences (Ferie / Permessi) -->
+        <div class="settings-grid" style="margin-bottom:18px;">
+          <div class="settings-card">
+            <h3>Registra Ferie / Permessi / Assenze</h3>
+            <p class="muted-text">Blocca automaticamente la disponibilità dell'operatore nell'agenda e sul sito.</p>
+            <form id="absenceForm">
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="absOperatorSelect">Operatore *</label>
+                  <select id="absOperatorSelect" class="form-control" required></select>
+                </div>
+                <div class="form-group">
+                  <label for="absTypeSelect">Tipologia</label>
+                  <select id="absTypeSelect" class="form-control">
+                    <option value="ferie">Ferie</option>
+                    <option value="permesso">Permesso Orario</option>
+                    <option value="malattia">Malattia</option>
+                    <option value="formazione">Corso / Formazione</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="absStartDateInput">Dal giorno *</label>
+                  <input type="date" id="absStartDateInput" class="form-control" required />
+                </div>
+                <div class="form-group">
+                  <label for="absEndDateInput">Al giorno *</label>
+                  <input type="date" id="absEndDateInput" class="form-control" required />
+                </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="absStartTimeInput">Dalle ore (vuoto = tutto il giorno)</label>
+                  <input type="time" id="absStartTimeInput" class="form-control" />
+                </div>
+                <div class="form-group">
+                  <label for="absEndTimeInput">Alle ore</label>
+                  <input type="time" id="absEndTimeInput" class="form-control" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="absNotesInput">Note assenza (opzionale)</label>
+                <input type="text" id="absNotesInput" class="form-control" placeholder="Es. Visita medica o ferie estive" />
+              </div>
+              <button type="submit" class="btn-primary-admin">Salva Assenza / Ferie</button>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3>Calendario Assenze &amp; Ferie Programmate</h3>
+            <p class="muted-text">Assenze attive che filtrano gli slot disponibili.</p>
+            <div id="absencesListContainer"></div>
+          </div>
+        </div>
+
+        <!-- Admin Users & Security & GDPR -->
         <div class="settings-grid">
           <div class="settings-card">
-            <h3>Sicurezza Account Titolare</h3>
-            <p class="muted-text">Modifica la password di accesso all'agenda e al database clienti.</p>
-            <form id="changePasswordForm">
+            <h3>Utenti Amministrazione &amp; Ruoli</h3>
+            <p class="muted-text">Aggiungi account collaboratori per accedere al gestionale.</p>
+            <div id="adminUsersListContainer" style="margin-bottom:14px;"></div>
+            <form id="newAdminUserForm">
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="newAdminUsername">Email / Username *</label>
+                  <input type="text" id="newAdminUsername" class="form-control" placeholder="staff@studio.it" required />
+                </div>
+                <div class="form-group">
+                  <label for="newAdminDisplayName">Nome Visualizzato</label>
+                  <input type="text" id="newAdminDisplayName" class="form-control" placeholder="Es. Sofia" />
+                </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="newAdminPassword">Password (min. 8 caratteri) *</label>
+                  <input type="password" id="newAdminPassword" class="form-control" minlength="8" required />
+                </div>
+                <div class="form-group">
+                  <label for="newAdminRole">Ruolo</label>
+                  <select id="newAdminRole" class="form-control">
+                    <option value="staff">Operatore / Staff</option>
+                    <option value="owner">Titolare / Admin</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" class="btn-outline-sm">+ Crea Account Accesso</button>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3>Sicurezza Account &amp; Archivio GDPR</h3>
+            <p class="muted-text">Modifica la tua password di accesso e scarica i dati studio.</p>
+            <form id="changePasswordForm" style="margin-bottom:16px;">
               <div class="form-group">
                 <label for="currentPasswordInput">Password Attuale</label>
                 <input type="password" id="currentPasswordInput" class="form-control" required />
@@ -240,13 +453,6 @@
               <div id="passwordChangeMsg" class="admin-alert" hidden></div>
               <button type="submit" class="btn-primary-admin">Aggiorna Password</button>
             </form>
-          </div>
-
-          <div class="settings-card">
-            <h3>Archivio &amp; Conformità GDPR</h3>
-            <p class="muted-text">
-              Ogni prenotazione dal sito pubblico e ogni inserimento con spunta privacy salva nel database lo storico dei consensi con data, ora e versione dell'informativa.
-            </p>
             <div class="settings-action-stack">
               <button type="button" class="btn-outline-sm" id="exportCsvSettingsBtn">Scarica Elenco Clienti (CSV)</button>
               <a href="index.html" class="btn-outline-sm" style="text-align: center; text-decoration: none;">Apri Boutique Pubblica</a>
@@ -333,6 +539,11 @@
         </div>
 
         <div class="form-group">
+          <label for="apptOperatorSelect">Operatore Assegnato</label>
+          <select id="apptOperatorSelect" class="form-control"></select>
+        </div>
+
+        <div class="form-group">
           <label>Seleziona Trattamenti dal Listino (opzionale)</label>
           <div id="apptCatalogPicker" class="catalog-picker-box"></div>
         </div>
@@ -378,19 +589,26 @@
   </div>
 
   <!-- ====================================================================
-       MODAL: SCHEDA CLIENTE COMPLETA (CRM + NOTE TECNICHE + GDPR)
+       MODAL: SCHEDA CLIENTE COMPLETA (CRM + CARTE + MORFOLOGIA + PRIVACY OTP)
        ==================================================================== -->
   <div id="clientModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
     <div class="admin-modal-card admin-modal-wide">
       <div class="admin-modal-header">
         <div>
-          <span class="eyebrow">Scheda Cliente &amp; GDPR</span>
+          <span class="eyebrow">Scheda Cliente, Carte &amp; GDPR</span>
           <h3 id="clientModalTitle">Nuova Cliente</h3>
         </div>
         <button type="button" class="btn-close-modal" id="closeClientModalBtn">✕</button>
       </div>
 
       <div class="admin-modal-body">
+        <div id="clientQuickToolsBar" class="client-quick-tools" hidden>
+          <button type="button" class="btn-outline-sm" id="openMorphoModalBtn">📏 Scheda Morfologica &amp; Misure</button>
+          <button type="button" class="btn-outline-sm" id="sendPrivacyOtpBtn">📲 Invia Privacy da Firmare (OTP)</button>
+        </div>
+
+        <div id="privacyOtpResultBox" class="admin-alert admin-alert-ok" style="margin-bottom:14px;" hidden></div>
+
         <form id="clientForm">
           <input type="hidden" id="clientIdInput" value="" />
 
@@ -419,11 +637,11 @@
           <div class="form-row-2">
             <div class="form-group">
               <label for="clientAllergiesInput">Allergie / Sensibilità Cutanee o Oculari</label>
-              <textarea id="clientAllergiesInput" class="form-control" rows="3" placeholder="Es. Sensibilità colla ciglia, pelle reattiva, allergia nichel..."></textarea>
+              <textarea id="clientAllergiesInput" class="form-control" rows="2" placeholder="Es. Sensibilità colla ciglia, pelle reattiva, allergia nichel..."></textarea>
             </div>
             <div class="form-group">
               <label for="clientPreferencesInput">Note Personali, Colori &amp; Storico Tecnico 📝</label>
-              <textarea id="clientPreferencesInput" class="form-control" rows="3" placeholder="Es. Mandorla corta, base milky rose, curvatura L, preferisce appuntamenti al mattino..."></textarea>
+              <textarea id="clientPreferencesInput" class="form-control" rows="2" placeholder="Es. Mandorla corta, base milky rose, curvatura L..."></textarea>
             </div>
           </div>
 
@@ -442,26 +660,349 @@
 
           <div class="admin-modal-footer">
             <div class="modal-footer-left">
-              <button type="button" class="btn-danger-outline" id="deleteClientGdprBtn" hidden>Elimina (Diritto all'Oblio)</button>
-              <button type="button" class="btn-outline-sm" id="exportClientJsonBtn" hidden>Esporta Scheda JSON</button>
+              <button type="button" class="btn-danger-outline" id="deleteClientGdprBtn" hidden>Elimina (Oblio GDPR)</button>
+              <button type="button" class="btn-outline-sm" id="exportClientJsonBtn" hidden>Esporta JSON</button>
               <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="clientWhatsappBtn" hidden>💬 WhatsApp</a>
             </div>
             <button type="submit" class="btn-primary-admin">Salva Scheda Cliente</button>
           </div>
         </form>
 
-        <!-- Client History & GDPR Consent Audit Log -->
-        <div id="clientDossierHistory" class="dossier-history-grid" hidden>
-          <div class="dossier-subcard">
-            <h4>Storico Appuntamenti</h4>
-            <div id="clientApptsHistoryList"></div>
+        <!-- Client Cards & Packages + History + Privacy Logs -->
+        <div id="clientDossierHistory" hidden>
+          <div class="dossier-subcard" style="margin-top:16px;">
+            <h4>🎟️ Carte, Abbonamenti &amp; Pacchetti</h4>
+            <div id="clientCardsList"></div>
+            <form id="newClientCardForm" class="card-inline-form">
+              <input type="text" id="cardTitleInput" class="form-control form-control-sm" placeholder="Es. Pacchetto 5 Refill Gel" required />
+              <select id="cardTypeSelect" class="form-control form-control-sm">
+                <option value="package">Pacchetto Sedute</option>
+                <option value="prepaid">Prepagata Credito (€)</option>
+                <option value="fidelity">Fidelity Card</option>
+              </select>
+              <input type="number" id="cardSessionsInput" class="form-control form-control-sm" min="0" placeholder="Sedute (es. 5)" style="max-width:120px;" />
+              <input type="number" id="cardCreditInput" class="form-control form-control-sm" min="0" step="1" placeholder="Credito €" style="max-width:110px;" />
+              <button type="submit" class="btn-outline-sm">+ Aggiungi Carta</button>
+            </form>
           </div>
-          <div class="dossier-subcard">
-            <h4>Registro Consensi Privacy (GDPR)</h4>
-            <div id="clientPrivacyLogsList"></div>
+
+          <div class="dossier-history-grid">
+            <div class="dossier-subcard">
+              <h4>Storico Appuntamenti</h4>
+              <div id="clientApptsHistoryList"></div>
+            </div>
+            <div class="dossier-subcard">
+              <h4>Registro Consensi Privacy (GDPR)</h4>
+              <div id="clientPrivacyLogsList"></div>
+            </div>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: SCHEDA MORFOLOGICA, MAPPA CORPO & MISURE + FOTO
+       ==================================================================== -->
+  <div id="morphoModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card admin-modal-wide" style="max-width: 920px;">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Scheda Morfologica &amp; Antropometrica</span>
+          <h3 id="morphoModalTitle">Mappa Corpo &amp; Misure</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeMorphoModalBtn">✕</button>
+      </div>
+      <div class="admin-modal-body">
+        <div class="morpho-grid">
+          <!-- Left: Interactive Body Silhouette Map -->
+          <div class="morpho-map-panel">
+            <div class="morpho-controls-row">
+              <div class="view-mode-pills">
+                <button type="button" class="mode-pill active" id="morphoGenderFemaleBtn">Donna</button>
+                <button type="button" class="mode-pill" id="morphoGenderMaleBtn">Uomo</button>
+              </div>
+              <div class="view-mode-pills">
+                <button type="button" class="mode-pill active" id="morphoSideFrontBtn">Fronte</button>
+                <button type="button" class="mode-pill" id="morphoSideBackBtn">Retro</button>
+              </div>
+            </div>
+            <p class="muted-text" style="font-size:0.72rem;margin:6px 0;">Tocca qualsiasi zona della sagoma per aggiungere un'annotazione tecnica.</p>
+            <div id="morphoSvgStage" class="morpho-svg-stage"></div>
+            <div id="morphoPinsList" class="morpho-pins-list"></div>
+          </div>
+
+          <!-- Right: Measurements & Photos Form -->
+          <form id="morphoForm" class="morpho-form-panel">
+            <div class="form-row-3">
+              <div class="form-group">
+                <label for="morphoDateInput">Data Rilevazione *</label>
+                <input type="date" id="morphoDateInput" class="form-control" required />
+              </div>
+              <div class="form-group">
+                <label for="morphoWeightInput">Peso (kg)</label>
+                <input type="number" id="morphoWeightInput" class="form-control" step="0.1" min="20" max="250" placeholder="60.5" />
+              </div>
+              <div class="form-group">
+                <label for="morphoHeightInput">Altezza (cm)</label>
+                <input type="number" id="morphoHeightInput" class="form-control" step="0.5" min="100" max="230" placeholder="165" />
+              </div>
+            </div>
+            <div id="morphoBmiBadge" class="status-badge badge-confirmed" style="margin-bottom:10px;display:inline-block;" hidden></div>
+
+            <div class="form-row-3">
+              <div class="form-group">
+                <label for="morphoChestInput">Torace / Seno (cm)</label>
+                <input type="number" id="morphoChestInput" class="form-control" step="0.5" />
+              </div>
+              <div class="form-group">
+                <label for="morphoWaistInput">Vita (cm)</label>
+                <input type="number" id="morphoWaistInput" class="form-control" step="0.5" />
+              </div>
+              <div class="form-group">
+                <label for="morphoHipsInput">Fianchi (cm)</label>
+                <input type="number" id="morphoHipsInput" class="form-control" step="0.5" />
+              </div>
+            </div>
+            <div class="form-row-3">
+              <div class="form-group">
+                <label for="morphoThighRInput">Coscia Dx (cm)</label>
+                <input type="number" id="morphoThighRInput" class="form-control" step="0.5" />
+              </div>
+              <div class="form-group">
+                <label for="morphoThighLInput">Coscia Sx (cm)</label>
+                <input type="number" id="morphoThighLInput" class="form-control" step="0.5" />
+              </div>
+              <div class="form-group">
+                <label for="morphoArmInput">Braccio (cm)</label>
+                <input type="number" id="morphoArmInput" class="form-control" step="0.5" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="morphoPhotosInput">Allega Foto Prima/Dopo (max 4, compresse automaticamente)</label>
+              <input type="file" id="morphoPhotosInput" class="form-control" accept="image/*" multiple />
+              <div id="morphoPhotosPreview" class="morpho-photos-preview"></div>
+            </div>
+            <div class="form-group">
+              <label for="morphoNotesInput">Note Morfologiche &amp; Protocollo Consigliato</label>
+              <textarea id="morphoNotesInput" class="form-control" rows="2" placeholder="Ritenzione idrica, zona critica, trattamento consigliato..."></textarea>
+            </div>
+            <button type="submit" class="btn-primary-admin" style="width:100%;">Salva Nuova Rilevazione Morfologica</button>
+          </form>
+        </div>
+
+        <div class="dossier-subcard" style="margin-top:16px;">
+          <h4>Storico Rilevazioni, Confronto &amp; Foto</h4>
+          <div id="morphoHistoryList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: OPERATORE & ORARIO SETTIMANALE
+       ==================================================================== -->
+  <div id="operatorModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Staff &amp; Turni</span>
+          <h3 id="operatorModalTitle">Nuovo Operatore</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeOperatorModalBtn">✕</button>
+      </div>
+      <form id="operatorForm" class="admin-modal-body">
+        <input type="hidden" id="opIdInput" value="" />
+        <div class="form-row-3">
+          <div class="form-group" style="grid-column: span 2;">
+            <label for="opNameInput">Nome Operatore *</label>
+            <input type="text" id="opNameInput" class="form-control" placeholder="Es. Sofia" required />
+          </div>
+          <div class="form-group">
+            <label for="opColorInput">Colore Agenda</label>
+            <input type="color" id="opColorInput" class="form-control" value="#d47491" style="height:40px;padding:3px;" />
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="opRoleInput">Ruolo / Specialità</label>
+            <input type="text" id="opRoleInput" class="form-control" placeholder="Es. Onicotecnica &amp; Estetista" />
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end;">
+            <label class="inline-check-label" style="margin-bottom:8px;">
+              <input type="checkbox" id="opActiveCheck" checked />
+              <span>Operatore attivo per prenotazioni</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Orari Settimanali di Servizio</label>
+          <div id="opScheduleGrid" class="op-schedule-grid"></div>
+        </div>
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-danger-outline" id="deleteOperatorBtn" hidden>Elimina</button>
+          <button type="submit" class="btn-primary-admin">Salva Operatore</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: PRODOTTO / FORNITORE / MOVIMENTO MAGAZZINO
+       ==================================================================== -->
+  <div id="productModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Magazzino Studio</span>
+          <h3 id="productModalTitle">Nuovo Prodotto</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeProductModalBtn">✕</button>
+      </div>
+      <form id="productForm" class="admin-modal-body">
+        <input type="hidden" id="prodIdInput" value="" />
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="prodNameInput">Nome Prodotto *</label>
+            <input type="text" id="prodNameInput" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label for="prodSkuInput">Codice / SKU</label>
+            <input type="text" id="prodSkuInput" class="form-control" placeholder="Es. OIL-CUT-15" />
+          </div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label for="prodCategorySelect">Categoria</label>
+            <select id="prodCategorySelect" class="form-control">
+              <option value="Rivendita">Rivendita Cliente</option>
+              <option value="Uso Cabina">Uso Cabina</option>
+              <option value="Unghie">Unghie / Gel</option>
+              <option value="Ciglia">Ciglia / Laminazione</option>
+              <option value="Skincare">Skincare / Corpo</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="prodSupplierSelect">Fornitore</label>
+            <select id="prodSupplierSelect" class="form-control"></select>
+          </div>
+          <div class="form-group">
+            <label for="prodUnitInput">Unità</label>
+            <input type="text" id="prodUnitInput" class="form-control" value="pz" />
+          </div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label for="prodCostInput">Costo (€)</label>
+            <input type="number" id="prodCostInput" class="form-control" step="0.5" min="0" value="0" />
+          </div>
+          <div class="form-group">
+            <label for="prodSellInput">Prezzo Vendita (€)</label>
+            <input type="number" id="prodSellInput" class="form-control" step="0.5" min="0" value="0" />
+          </div>
+          <div class="form-group">
+            <label for="prodStockInput">Giacenza Attuale</label>
+            <input type="number" id="prodStockInput" class="form-control" step="1" value="0" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="prodMinStockInput">Scorta Minima Alert Riordino</label>
+          <input type="number" id="prodMinStockInput" class="form-control" min="0" value="2" style="max-width:160px;" />
+        </div>
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-danger-outline" id="deleteProductBtn" hidden>Elimina</button>
+          <button type="submit" class="btn-primary-admin">Salva Prodotto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="supplierModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Magazzino Studio</span>
+          <h3 id="supplierModalTitle">Fornitore</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeSupplierModalBtn">✕</button>
+      </div>
+      <form id="supplierForm" class="admin-modal-body">
+        <input type="hidden" id="supIdInput" value="" />
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="supNameInput">Ragione Sociale / Nome *</label>
+            <input type="text" id="supNameInput" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label for="supContactInput">Referente</label>
+            <input type="text" id="supContactInput" class="form-control" />
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="supPhoneInput">Telefono / WhatsApp</label>
+            <input type="tel" id="supPhoneInput" class="form-control" />
+          </div>
+          <div class="form-group">
+            <label for="supEmailInput">Email Ordini</label>
+            <input type="email" id="supEmailInput" class="form-control" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="supNotesInput">Note (listini, tempi consegna)</label>
+          <textarea id="supNotesInput" class="form-control" rows="2"></textarea>
+        </div>
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-danger-outline" id="deleteSupplierBtn" hidden>Elimina</button>
+          <button type="submit" class="btn-primary-admin">Salva Fornitore</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="movementModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Movimento Scorte</span>
+          <h3 id="movementModalTitle">Registra Movimento</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeMovementModalBtn">✕</button>
+      </div>
+      <form id="movementForm" class="admin-modal-body">
+        <input type="hidden" id="movProductIdInput" value="" />
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="movTypeSelect">Tipo Movimento *</label>
+            <select id="movTypeSelect" class="form-control">
+              <option value="sale">Vendita a Cliente (-)</option>
+              <option value="cabin_use">Uso Interno Cabina (-)</option>
+              <option value="restock">Carico da Fornitore (+)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="movQtyInput">Quantità *</label>
+            <input type="number" id="movQtyInput" class="form-control" min="1" value="1" required />
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="movUnitPriceInput">Prezzo Unitario (€)</label>
+            <input type="number" id="movUnitPriceInput" class="form-control" step="0.5" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="movClientSelect">Cliente Acquirente (opzionale, x cross-sell)</label>
+            <select id="movClientSelect" class="form-control"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="movNotesInput">Note</label>
+          <input type="text" id="movNotesInput" class="form-control" placeholder="Es. Fattura n.12 o consiglio post-trattamento" />
+        </div>
+        <div class="admin-modal-footer">
+          <button type="submit" class="btn-primary-admin">Conferma Movimento</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -487,6 +1028,7 @@
   </div>
 
   <script src="catalog.js"></script>
+  <script src="morpho.js"></script>
   <script src="admin.js"></script>
 </body>
 </html>

@@ -362,10 +362,13 @@ async function refreshAvailableSlots(dateStr) {
   if (!slotsGrid || !dateStr) return;
 
   const totalMin = selectedBag.reduce((acc, item) => acc + (item.duration || 0), 0) || 60;
+  const operatorId = Number.parseInt(document.getElementById('bookingOperatorSelect')?.value || '0', 10) || 0;
   const buttons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
 
   try {
-    const res = await fetch(`${API_BASE}/public/slots?date=${encodeURIComponent(dateStr)}&duration=${totalMin}`);
+    const res = await fetch(
+      `${API_BASE}/public/slots?date=${encodeURIComponent(dateStr)}&duration=${totalMin}&operator_id=${operatorId}`
+    );
     if (!res.ok) throw new Error('API offline');
     const data = await res.json();
     if (!data.ok) throw new Error('API error');
@@ -410,7 +413,38 @@ async function refreshAvailableSlots(dateStr) {
   }
 }
 
+async function loadPublicOperators() {
+  const groupEl = document.getElementById('bookingOperatorGroup');
+  const selEl = document.getElementById('bookingOperatorSelect');
+  if (!groupEl || !selEl) return;
+  try {
+    const res = await fetch(`${API_BASE}/public/operators`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const ops = data.operators || [];
+    if (ops.length > 1) {
+      selEl.innerHTML = `<option value="0">Qualsiasi disponibile (consigliato)</option>${ops
+        .map((o) => `<option value="${o.id}">${o.name}${o.role ? ` (${o.role})` : ''}</option>`)
+        .join('')}`;
+      groupEl.hidden = false;
+    } else {
+      groupEl.hidden = true;
+    }
+  } catch (_) {
+    // Graceful fallback when API offline
+  }
+}
+
 function initApp() {
+  loadPublicOperators();
+  const opSel = document.getElementById('bookingOperatorSelect');
+  if (opSel) {
+    opSel.addEventListener('change', () => {
+      const d = document.getElementById('bookingDateInput')?.value;
+      if (d) refreshAvailableSlots(d);
+    });
+  }
+
   // Set default date in booking calendar to next open studio day (skipping Tuesday & Sunday)
   const dateInput = document.getElementById('bookingDateInput');
   const closedWarningEl = document.getElementById('closedDayWarning');
@@ -703,6 +737,7 @@ function initApp() {
     const clientEmail = document.getElementById('clientEmailInput')?.value.trim() || '';
     const clientNotes = document.getElementById('clientNotesInput').value.trim();
     const bookingDate = document.getElementById('bookingDateInput').value;
+    const operatorId = Number.parseInt(document.getElementById('bookingOperatorSelect')?.value || '0', 10) || 0;
 
     if (!clientName) {
       alert('Inserisci Nome e Cognome per completare la prenotazione.');
@@ -712,10 +747,6 @@ function initApp() {
     if (!clientPhone) {
       alert('Inserisci il tuo numero di Telefono / WhatsApp.');
       document.getElementById('clientPhoneInput').focus();
-      return;
-    }
-    if (purchaseMode === 'booking' && isClosedDay(bookingDate)) {
-      alert('Nota: Il Martedì e la Domenica lo studio è chiuso. Seleziona un giorno di apertura (Lun, Mer, Gio, Ven, Sab).');
       return;
     }
     if (!validateCheckoutLegalConsent()) {
@@ -740,6 +771,7 @@ function initApp() {
           appointment_date: bookingDate,
           start_time: selectedTimeSlot,
           duration_minutes: totalMin,
+          operator_id: operatorId,
           services: selectedBag,
           total_price: totalEuro,
           client_name: clientName,

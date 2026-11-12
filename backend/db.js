@@ -52,23 +52,6 @@ async function ensureColumn(targetPool, tableName, columnName, alterSql) {
   }
 }
 
-async function ensureSchemaMigrations(targetPool = getPool()) {
-  if (migrationsChecked) return;
-  await ensureColumn(
-    targetPool,
-    'clients',
-    'birth_date',
-    'ALTER TABLE `clients` ADD COLUMN `birth_date` DATE NULL DEFAULT NULL AFTER `email`'
-  );
-  await ensureColumn(
-    targetPool,
-    'appointments',
-    'reminder_sent_at',
-    'ALTER TABLE `appointments` ADD COLUMN `reminder_sent_at` DATETIME NULL DEFAULT NULL AFTER `notes`'
-  );
-  migrationsChecked = true;
-}
-
 async function applySchema(targetPool = getPool()) {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const raw = fs.readFileSync(schemaPath, 'utf8');
@@ -80,7 +63,37 @@ async function applySchema(targetPool = getPool()) {
   for (const stmt of statements) {
     await targetPool.query(stmt);
   }
-  await ensureSchemaMigrations(targetPool);
+}
+
+async function ensureSchemaMigrations(targetPool = getPool()) {
+  if (migrationsChecked) return;
+  // Ensure new tables exist on pre-existing MySQL databases via CREATE TABLE IF NOT EXISTS
+  await applySchema(targetPool);
+  await ensureColumn(
+    targetPool,
+    'admin_users',
+    'role',
+    "ALTER TABLE `admin_users` ADD COLUMN `role` VARCHAR(40) NOT NULL DEFAULT 'owner' AFTER `display_name`"
+  );
+  await ensureColumn(
+    targetPool,
+    'clients',
+    'birth_date',
+    'ALTER TABLE `clients` ADD COLUMN `birth_date` DATE NULL DEFAULT NULL AFTER `email`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'operator_id',
+    'ALTER TABLE `appointments` ADD COLUMN `operator_id` INT UNSIGNED NULL DEFAULT NULL AFTER `client_id`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'reminder_sent_at',
+    'ALTER TABLE `appointments` ADD COLUMN `reminder_sent_at` DATETIME NULL DEFAULT NULL AFTER `notes`'
+  );
+  migrationsChecked = true;
 }
 
 module.exports = {

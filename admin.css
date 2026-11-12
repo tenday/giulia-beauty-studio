@@ -1169,7 +1169,197 @@ body {
   font-size: 0.83rem;
 }
 
+/* Client Cards, Morpho Body Map, Inventory, Messages, Operators */
+.client-quick-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.card-inline-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.client-card-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #fdf8f7;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+}
+
+.morpho-grid {
+  display: grid;
+  grid-template-columns: 270px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.morpho-controls-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.morpho-svg-stage {
+  margin-top: 8px;
+}
+
+.morpho-body-svg {
+  width: 100%;
+  max-width: 240px;
+  display: block;
+  margin: 0 auto;
+  cursor: crosshair;
+}
+
+.morpho-pins-list {
+  margin-top: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.morpho-pin-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  padding: 4px 6px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-bottom: 4px;
+}
+
+.btn-icon-tiny {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.morpho-photos-preview,
+.morpho-hist-photos {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.morpho-photo-thumb {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+}
+
+.morpho-photo-thumb img,
+.morpho-hist-img {
+  width: 68px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.morpho-photo-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(42, 10, 15, 0.75);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.morpho-history-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fdf9f9;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+}
+
+.morpho-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tag-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fbe8ec;
+  color: #8c2f44;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.op-schedule-grid {
+  display: grid;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.op-sched-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.78rem;
+}
+
+.op-color-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.cal-absence-pill {
+  font-size: 0.64rem;
+  background: #fff4df;
+  color: #8c590a;
+  padding: 2px 5px;
+  border-radius: 6px;
+  margin-top: 2px;
+  display: inline-block;
+}
+
+.badge-low-stock {
+  background: #fde9ed;
+  color: #b22b4b;
+}
+
 @media (max-width: 820px) {
+  .morpho-grid {
+    grid-template-columns: 1fr;
+  }
   .kpi-strip {
     grid-template-columns: 1fr 1fr;
     padding: 0 14px;

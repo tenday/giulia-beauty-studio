@@ -10,14 +10,26 @@ const STATE = {
   calMode: 'week', // 'week' | 'day' | 'list'
   anchorDate: new Date(),
   statusFilter: '',
+  operatorFilter: 0,
   appointments: [],
   tomorrowAppointments: [],
   clients: [],
+  operators: [],
+  absences: [],
+  suppliers: [],
+  products: [],
+  movements: [],
+  messageTemplates: [],
+  messageLogs: [],
+  adminUsers: [],
+  privacyVersion: 'v2.0-2026-11',
   insights: null,
   geminiEnabled: false,
   inactiveDaysFilter: 30,
   clientPickerMode: 'existing', // 'existing' | 'new'
   selectedCatalogIds: new Set(),
+  currentDossierClient: null,
+  morphoManager: null,
 };
 
 const DAYS_IT = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
@@ -79,16 +91,41 @@ function formatWaNumber(phone) {
   return clean.startsWith('39') ? clean : `39${clean}`;
 }
 
+function renderMessageTemplate(code, vars = {}) {
+  const found = (STATE.messageTemplates || []).find((t) => t.code === code);
+  const fallbacks = {
+    reminder_tomorrow:
+      'Ciao {nome} ♡ Ti ricordiamo il tuo appuntamento da *Giulia Beauty Studio* (Via Principe Amedeo 17, Verdellino) per domani *{data}* alle *{ora}* con {operatore} ({trattamenti}). A domani!',
+    birthday_wishes:
+      'Tanti Auguri di Buon Compleanno {nome} ♡🎂 Da *Giulia Beauty Studio* ti auguriamo una giornata splendida! Ti aspettiamo presto in studio!',
+    winback_inactive:
+      'Ciao {nome} ♡ È da un po\' ({giorni_assenza} giorni) che non ci vediamo da *Giulia Beauty Studio*! Quando hai voglia di concederti una coccola o un ritocco, scrivimi pure qui.',
+    privacy_sign:
+      'Ciao {nome} ♡ Completa la firma Privacy GDPR dal telefono qui: {link}\nCodice OTP: *{otp}*',
+  };
+  let text = found?.body_template || fallbacks[code] || '';
+  for (const [k, v] of Object.entries(vars)) {
+    text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v ?? ''));
+  }
+  return text;
+}
+
 function buildTomorrowReminderUrl(appt) {
   const waNum = formatWaNumber(appt.client_phone);
   const dateLabel = formatShortItDate(appt.appointment_date);
-  const msg = `Ciao ${appt.client_name} ♡ Ti ricordiamo il tuo appuntamento da *Giulia Beauty Studio* (Via Principe Amedeo 17, Verdellino) per domani *${dateLabel}* alle ore *${appt.start_time}* (${appt.services_summary}). Per qualsiasi variazione scrivici pure qui su WhatsApp. A domani!`;
+  const msg = renderMessageTemplate('reminder_tomorrow', {
+    nome: appt.client_name,
+    data: dateLabel,
+    ora: appt.start_time,
+    trattamenti: appt.services_summary,
+    operatore: appt.operator_name || 'Giulia',
+  });
   return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
 }
 
 function buildBirthdayWishUrl(client) {
   const waNum = formatWaNumber(client.phone);
-  const msg = `Tanti Auguri di Buon Compleanno ${client.full_name} ♡🎂 Da *Giulia Beauty Studio* ti auguriamo una giornata splendida! Ti aspettiamo presto in studio per coccolarti un po'!`;
+  const msg = renderMessageTemplate('birthday_wishes', { nome: client.full_name });
   return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
 }
 
@@ -163,12 +200,73 @@ async function checkAuth() {
 }
 
 async function refreshAllData() {
-  await Promise.all([loadClients(), loadAppointments(), loadTomorrowReminders(), loadInsights()]);
+  await Promise.all([
+    loadClients(),
+    loadOperators(),
+    loadAppointments(),
+    loadTomorrowReminders(),
+    loadInventoryData(),
+    loadMessagesData(),
+    loadAdminUsers(),
+    loadInsights(),
+  ]);
   updateKpis();
   renderSmartAssistBar();
   renderCalendar();
   renderClientsTable();
+  renderInventoryView();
+  renderMessagesView();
   renderInsightsView();
+  renderSettingsView();
+}
+
+async function loadOperators() {
+  const data = await apiFetch('admin/operators', { method: 'GET' });
+  STATE.operators = data.operators || [];
+  STATE.absences = data.absences || [];
+  populateOperatorDropdowns();
+}
+
+function populateOperatorDropdowns() {
+  const calSel = document.getElementById('calOperatorFilter');
+  const apptSel = document.getElementById('apptOperatorSelect');
+  const absSel = document.getElementById('absOperatorSelect');
+  if (calSel) {
+    calSel.innerHTML = `<option value="0">Tutti gli operatori</option>${STATE.operators
+      .map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`)
+      .join('')}`;
+    calSel.value = String(STATE.operatorFilter || 0);
+  }
+  const activeOps = STATE.operators.filter((o) => Number(o.active) !== 0);
+  const opsList = activeOps.length > 0 ? activeOps : STATE.operators;
+  if (apptSel) {
+    apptSel.innerHTML = opsList
+      .map((o) => `<option value="${o.id}">${escapeHtml(o.name)} (${escapeHtml(o.role || 'Staff')})</option>`)
+      .join('');
+  }
+  if (absSel) {
+    absSel.innerHTML = STATE.operators
+      .map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`)
+      .join('');
+  }
+}
+
+async function loadInventoryData() {
+  const data = await apiFetch('admin/inventory', { method: 'GET' });
+  STATE.suppliers = data.suppliers || [];
+  STATE.products = data.products || [];
+  STATE.movements = data.movements || [];
+}
+
+async function loadMessagesData() {
+  const data = await apiFetch('admin/messages', { method: 'GET' });
+  STATE.messageTemplates = data.templates || [];
+  STATE.messageLogs = data.logs || [];
+}
+
+async function loadAdminUsers() {
+  const data = await apiFetch('admin/users', { method: 'GET' });
+  STATE.adminUsers = data.users || [];
 }
 
 async function loadInsights() {
@@ -176,6 +274,7 @@ async function loadInsights() {
   const data = await apiFetch(`admin/insights?days=${days}`, { method: 'GET' });
   STATE.insights = data.insights || null;
   STATE.geminiEnabled = Boolean(data.gemini_enabled);
+  if (data.privacy_version) STATE.privacyVersion = data.privacy_version;
 }
 
 async function loadTomorrowReminders() {
@@ -206,6 +305,9 @@ async function loadAppointments() {
   }
   if (STATE.statusFilter) {
     params.set('status', STATE.statusFilter);
+  }
+  if (STATE.operatorFilter > 0) {
+    params.set('operator_id', String(STATE.operatorFilter));
   }
 
   const data = await apiFetch(`admin/appointments?${params.toString()}`, { method: 'GET' });
@@ -412,11 +514,16 @@ function renderCalendar() {
     const dow = d.getDay();
     const isClosed = dow === 0 || dow === 2;
     const isToday = iso === todayIso;
+    const dayAbsences = (STATE.absences || []).filter((abs) => iso >= abs.start_date && iso <= abs.end_date);
+    const absHtml = dayAbsences
+      .map((abs) => `<div class="cal-absence-pill">🏖️ ${escapeHtml(abs.operator_name)} (${escapeHtml(abs.type)})</div>`)
+      .join('');
     html += `
       <div class="cal-day-header ${isToday ? 'is-today' : ''} ${isClosed ? 'is-closed' : ''}">
         <span class="cal-day-name">${DAYS_IT[dow]}</span>
         <span class="cal-day-num">${d.getDate()}</span>
         ${isClosed ? '<span class="cal-closed-tag">Chiuso</span>' : ''}
+        ${absHtml}
       </div>
     `;
   });
@@ -448,11 +555,13 @@ function renderCalendar() {
       const heightPx = Math.max(38, ((Number(appt.duration_minutes) || 60) / 60) * 58 - 3);
 
       const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
+      const opColor = appt.operator_color || '#d47491';
+      const opName = appt.operator_name || 'Giulia';
       html += `
         <div class="cal-event-card status-${escapeHtml(appt.status)}"
              data-appt-id="${appt.id}"
-             style="top:${topPx}px; height:${heightPx}px;">
-          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ ${appt.reminder_sent_at ? '📲' : ''}</div>
+             style="top:${topPx}px; height:${heightPx}px; border-left: 4px solid ${escapeHtml(opColor)};">
+          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
           ${hasAnyNote ? `<div class="cal-event-note-flag">📝 ${escapeHtml(appt.notes || appt.allergies_notes)}</div>` : ''}
@@ -648,6 +757,8 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptDateInput').value = appt.appointment_date;
     document.getElementById('apptTimeInput').value = appt.start_time;
     document.getElementById('apptDurationInput').value = appt.duration_minutes;
+    const opSel = document.getElementById('apptOperatorSelect');
+    if (opSel && appt.operator_id) opSel.value = String(appt.operator_id);
     document.getElementById('apptServicesSummaryInput').value = appt.services_summary;
     document.getElementById('apptPriceInput').value = appt.total_price;
     document.getElementById('apptStatusSelect').value = appt.status;
@@ -700,9 +811,12 @@ function renderClientsTable() {
   let rows = '';
   STATE.clients.forEach((c) => {
     const privacyOk = Number(c.privacy_accepted) === 1;
+    const needsReSign = privacyOk && c.privacy_version && c.privacy_version !== STATE.privacyVersion;
     const privacyDate = c.privacy_accepted_at ? String(c.privacy_accepted_at).slice(0, 10) : '';
     const hasAllergy = c.allergies_notes && c.allergies_notes.trim() !== '';
     const hasNotes = c.preferences_notes && c.preferences_notes.trim() !== '';
+    const activeCards = Number(c.active_cards_count || 0);
+    const morphoCount = Number(c.morpho_count || 0);
     const daysBday = getDaysUntilBirthday(c.birth_date);
     let bdayHtml = '—';
     if (c.birth_date) {
@@ -716,11 +830,19 @@ function renderClientsTable() {
       }
     }
 
+    const privBadge = !privacyOk
+      ? '<span class="status-badge badge-privacy-no">Da firmare</span>'
+      : needsReSign
+        ? `<span class="status-badge badge-pending">⚠ Rifirmare (${escapeHtml(c.privacy_version)})</span>`
+        : `<span class="status-badge badge-privacy-ok">✓ Firmata ${escapeHtml(privacyDate)}</span>`;
+
     rows += `
       <tr data-client-id="${c.id}" style="cursor: pointer;">
         <td>
           <strong>${escapeHtml(c.full_name)}</strong>
           ${hasAllergy ? '<span class="status-badge badge-allergy">⚠ Allergie</span>' : ''}
+          ${activeCards > 0 ? `<span class="status-badge badge-confirmed" style="margin-left:4px;">🎟️ ${activeCards}</span>` : ''}
+          ${morphoCount > 0 ? `<span class="status-badge" style="background:#eef6fb;color:#1f5878;margin-left:4px;">📏 ${morphoCount}</span>` : ''}
           ${hasNotes ? '<span class="status-badge" style="background:#f7eceb;color:var(--ink-soft);">📝 Note</span>' : ''}
           ${c.email ? `<br /><span style="font-size:0.74rem;color:var(--ink-muted);">${escapeHtml(c.email)}</span>` : ''}
           ${hasNotes ? `<br /><span style="font-size:0.73rem;color:var(--ink-muted);">${escapeHtml(c.preferences_notes.slice(0, 58))}${c.preferences_notes.length > 58 ? '…' : ''}</span>` : ''}
@@ -730,11 +852,7 @@ function renderClientsTable() {
         <td>${Number(c.appointments_count || 0)}</td>
         <td><strong>${Number(c.total_spent || 0).toFixed(0)} €</strong></td>
         <td>${c.last_visit ? escapeHtml(c.last_visit) : '—'}</td>
-        <td>
-          <span class="status-badge ${privacyOk ? 'badge-privacy-ok' : 'badge-privacy-no'}">
-            ${privacyOk ? `✓ Accettata ${escapeHtml(privacyDate)}` : 'Da raccogliere'}
-          </span>
-        </td>
+        <td>${privBadge}</td>
         <td><button type="button" class="btn-outline-sm">Scheda</button></td>
       </tr>
     `;
@@ -765,17 +883,91 @@ function renderClientsTable() {
   });
 }
 
+function renderClientCardsList(cards = []) {
+  const listEl = document.getElementById('clientCardsList');
+  if (!listEl) return;
+  if (cards.length === 0) {
+    listEl.innerHTML = '<p class="muted-text" style="font-size:0.78rem;">Nessuna carta o pacchetto attivo per questa cliente.</p>';
+    return;
+  }
+  listEl.innerHTML = cards
+    .map((card) => {
+      const remSessions = Math.max(0, Number(card.total_sessions || 0) - Number(card.used_sessions || 0));
+      const detail =
+        Number(card.total_sessions || 0) > 0
+          ? `Sedute: <strong>${remSessions}/${card.total_sessions} rimaste</strong>`
+          : `Credito residuo: <strong>${Number(card.remaining_credit || 0).toFixed(2)} €</strong>`;
+      return `
+        <div class="client-card-item">
+          <div>
+            <strong>${escapeHtml(card.title)}</strong>
+            <span class="status-badge ${card.status === 'active' ? 'badge-confirmed' : 'badge-completed'}" style="margin-left:6px;">${escapeHtml(card.status)}</span>
+            <div style="font-size:0.74rem;color:var(--ink-soft);margin-top:2px;">${detail}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${Number(card.total_sessions || 0) > 0 && card.status === 'active'
+              ? `<button type="button" class="btn-outline-sm js-use-card" data-card-id="${card.id}" data-sessions="1" data-credit="0">-1 Seduta</button>`
+              : ''}
+            ${Number(card.remaining_credit || 0) > 0 && card.status === 'active'
+              ? `<button type="button" class="btn-outline-sm js-use-card" data-card-id="${card.id}" data-sessions="0" data-credit="10">Scala €</button>`
+              : ''}
+            <button type="button" class="btn-danger-outline js-del-card" data-card-id="${card.id}" style="padding:4px 8px;font-size:0.7rem;">✕</button>
+          </div>
+        </div>`;
+    })
+    .join('');
+
+  listEl.querySelectorAll('.js-use-card').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      let creditDelta = Number(btn.dataset.credit || 0);
+      if (creditDelta > 0) {
+        const val = window.prompt('Importo in € da scalare dalla prepagata:', '10');
+        if (val === null) return;
+        creditDelta = Number(val) || 0;
+      }
+      await apiFetch(`admin/cards/${btn.dataset.cardId}/use`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sessions_delta: Number(btn.dataset.sessions || 0),
+          credit_delta: creditDelta,
+        }),
+      });
+      if (STATE.currentDossierClient) {
+        await openClientModal(STATE.currentDossierClient.id);
+      }
+    });
+  });
+
+  listEl.querySelectorAll('.js-del-card').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Eliminare questa carta/pacchetto?')) return;
+      await apiFetch(`admin/cards/${btn.dataset.cardId}/use`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete' }),
+      });
+      if (STATE.currentDossierClient) {
+        await openClientModal(STATE.currentDossierClient.id);
+      }
+    });
+  });
+}
+
 async function openClientModal(clientId = null) {
   const modal = document.getElementById('clientModal');
   const alertEl = document.getElementById('clientModalAlert');
   const historyGrid = document.getElementById('clientDossierHistory');
+  const quickTools = document.getElementById('clientQuickToolsBar');
+  const otpBox = document.getElementById('privacyOtpResultBox');
   const delBtn = document.getElementById('deleteClientGdprBtn');
   const exportBtn = document.getElementById('exportClientJsonBtn');
   const waBtn = document.getElementById('clientWhatsappBtn');
 
   alertEl.hidden = true;
+  if (otpBox) otpBox.hidden = true;
 
   if (!clientId) {
+    STATE.currentDossierClient = null;
+    if (quickTools) quickTools.hidden = true;
     document.getElementById('clientModalTitle').textContent = 'Nuova Cliente nel Database';
     document.getElementById('clientIdInput').value = '';
     document.getElementById('clientFullNameInput').value = '';
@@ -797,6 +989,9 @@ async function openClientModal(clientId = null) {
   try {
     const data = await apiFetch(`admin/clients?id=${clientId}`, { method: 'GET' });
     const c = data.client;
+    STATE.currentDossierClient = c;
+    if (quickTools) quickTools.hidden = false;
+
     document.getElementById('clientModalTitle').textContent = `Scheda Cliente • ${c.full_name}`;
     document.getElementById('clientIdInput').value = c.id;
     document.getElementById('clientFullNameInput').value = c.full_name || '';
@@ -808,11 +1003,13 @@ async function openClientModal(clientId = null) {
     document.getElementById('clientPrivacyCrmCheck').checked = Number(c.privacy_accepted) === 1;
     document.getElementById('clientMarketingCrmCheck').checked = Number(c.marketing_consent) === 1;
 
+    renderClientCardsList(data.cards || []);
+
     const apptsHtml = (data.appointments || []).length
       ? data.appointments
           .map(
             (a) => `<div class="history-row">
-              <strong>${escapeHtml(a.appointment_date)} (${escapeHtml(a.start_time)})</strong> — ${Number(a.total_price).toFixed(0)} €
+              <strong>${escapeHtml(a.appointment_date)} (${escapeHtml(a.start_time)})</strong> • ${escapeHtml(a.operator_name || 'Giulia')} — ${Number(a.total_price).toFixed(0)} €
               <span class="status-badge badge-${escapeHtml(a.status)}" style="float:right;">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span><br />
               <span>${escapeHtml(a.services_summary)}</span>
             </div>`
@@ -926,6 +1123,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   buildCatalogPicker();
+  STATE.morphoManager = window.MorphoManager
+    ? window.MorphoManager.init(apiFetch, () => toIsoDate(new Date()), escapeHtml)
+    : null;
 
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -934,18 +1134,20 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Main View Tabs
+  const allViews = ['agenda', 'clients', 'inventory', 'messages', 'insights', 'settings'];
   document.querySelectorAll('.admin-tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.admin-tab-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       STATE.activeView = btn.dataset.view;
-      document.getElementById('viewAgenda').hidden = STATE.activeView !== 'agenda';
-      document.getElementById('viewClients').hidden = STATE.activeView !== 'clients';
-      document.getElementById('viewInsights').hidden = STATE.activeView !== 'insights';
-      document.getElementById('viewSettings').hidden = STATE.activeView !== 'settings';
-      if (STATE.activeView === 'insights') {
-        renderInsightsView();
-      }
+      allViews.forEach((v) => {
+        const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
+        if (el) el.hidden = STATE.activeView !== v;
+      });
+      if (STATE.activeView === 'inventory') renderInventoryView();
+      if (STATE.activeView === 'messages') renderMessagesView();
+      if (STATE.activeView === 'insights') renderInsightsView();
+      if (STATE.activeView === 'settings') renderSettingsView();
     });
   });
 
@@ -979,6 +1181,15 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCalendar();
   });
 
+  const opFilterEl = document.getElementById('calOperatorFilter');
+  if (opFilterEl) {
+    opFilterEl.addEventListener('change', async (e) => {
+      STATE.operatorFilter = Number(e.target.value) || 0;
+      await loadAppointments();
+      renderCalendar();
+    });
+  }
+
   document.querySelectorAll('.mode-pill').forEach((pill) => {
     pill.addEventListener('click', async () => {
       document.querySelectorAll('.mode-pill').forEach((p) => p.classList.remove('active'));
@@ -1011,9 +1222,11 @@ document.addEventListener('DOMContentLoaded', () => {
     alertEl.hidden = true;
 
     const id = document.getElementById('apptIdInput').value;
+    const opSelect = document.getElementById('apptOperatorSelect');
     const payload = {
       action: id ? 'update' : 'create',
       id: id ? Number(id) : undefined,
+      operator_id: opSelect && opSelect.value ? Number(opSelect.value) : undefined,
       appointment_date: document.getElementById('apptDateInput').value,
       start_time: document.getElementById('apptTimeInput').value,
       duration_minutes: Number(document.getElementById('apptDurationInput').value) || 60,
@@ -1177,6 +1390,310 @@ document.addEventListener('DOMContentLoaded', () => {
   if (jsonReportBtn) {
     jsonReportBtn.addEventListener('click', downloadReportJson);
   }
+
+  // Client Dossier: Morpho, Privacy Link+OTP, Client Cards
+  const openMorphoBtn = document.getElementById('openMorphoModalBtn');
+  if (openMorphoBtn) {
+    openMorphoBtn.addEventListener('click', async () => {
+      const clientId = Number(document.getElementById('clientIdInput').value);
+      const client = STATE.clients.find((c) => Number(c.id) === clientId);
+      if (client && STATE.morphoManager) {
+        await STATE.morphoManager.openForClient(client);
+      }
+    });
+  }
+
+  const sendPrivacyOtpBtn = document.getElementById('sendPrivacyOtpBtn');
+  if (sendPrivacyOtpBtn) {
+    sendPrivacyOtpBtn.addEventListener('click', async () => {
+      const clientId = Number(document.getElementById('clientIdInput').value);
+      const box = document.getElementById('privacyOtpResultBox');
+      if (!clientId || !box) return;
+      sendPrivacyOtpBtn.disabled = true;
+      try {
+        const res = await apiFetch(`admin/clients/${clientId}/privacy-request`, { method: 'POST', body: JSON.stringify({}) });
+        const req = res.request;
+        const signUrl = `${window.location.origin}/privacy-sign.html?token=${encodeURIComponent(req.token)}`;
+        const waNum = formatWaNumber(req.client.phone);
+        const msg = renderMessageTemplate('privacy_sign', {
+          nome: req.client.full_name,
+          link: signUrl,
+          otp: req.otp_code,
+        });
+        const waUrl = `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
+        box.hidden = false;
+        box.innerHTML = `
+          <div><strong>Link firma generato</strong> • Codice OTP SMS/WA: <strong style="font-size:1.05rem;letter-spacing:2px;">${escapeHtml(req.otp_code)}</strong></div>
+          <div style="margin-top:6px;word-break:break-all;font-size:0.78rem;"><a href="${escapeHtml(signUrl)}" target="_blank" rel="noopener">${escapeHtml(signUrl)}</a></div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <a href="${waUrl}" target="_blank" rel="noopener" class="btn-outline-sm" style="background:#fff;">📲 Invia Modulo + OTP su WhatsApp</a>
+          </div>
+        `;
+      } catch (err) {
+        box.hidden = false;
+        box.textContent = `Errore generazione link privacy: ${err.message}`;
+      } finally {
+        sendPrivacyOtpBtn.disabled = false;
+      }
+    });
+  }
+
+  const newCardForm = document.getElementById('newClientCardForm');
+  if (newCardForm) {
+    newCardForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const clientId = Number(document.getElementById('clientIdInput').value);
+      if (!clientId) return;
+      await apiFetch(`admin/clients/${clientId}/cards`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: document.getElementById('cardTitleInput').value.trim(),
+          card_type: document.getElementById('cardTypeSelect').value,
+          total_sessions: Number(document.getElementById('cardSessionsInput').value) || 0,
+          remaining_credit: Number(document.getElementById('cardCreditInput').value) || 0,
+        }),
+      });
+      newCardForm.reset();
+      await loadClients();
+      renderClientsTable();
+      const updated = STATE.clients.find((c) => Number(c.id) === clientId);
+      if (updated) renderClientCardsList(updated);
+    });
+  }
+
+  // Inventory Controls & Modals
+  const invSearch = document.getElementById('invSearchInput');
+  if (invSearch) invSearch.addEventListener('input', () => renderInventoryView());
+  const newSupBtn = document.getElementById('newSupplierBtn');
+  if (newSupBtn) newSupBtn.addEventListener('click', () => openSupplierModal(null));
+  const newProdBtn = document.getElementById('newProductBtn');
+  if (newProdBtn) newProdBtn.addEventListener('click', () => openProductModal(null));
+
+  const closeProdBtn = document.getElementById('closeProductModalBtn');
+  if (closeProdBtn) closeProdBtn.addEventListener('click', () => document.getElementById('productModal').classList.remove('open'));
+  const closeSupBtn = document.getElementById('closeSupplierModalBtn');
+  if (closeSupBtn) closeSupBtn.addEventListener('click', () => document.getElementById('supplierModal').classList.remove('open'));
+  const closeMovBtn = document.getElementById('closeMovementModalBtn');
+  if (closeMovBtn) closeMovBtn.addEventListener('click', () => document.getElementById('movementModal').classList.remove('open'));
+
+  const prodForm = document.getElementById('productForm');
+  if (prodForm) {
+    prodForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/inventory/products', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'save',
+          id: Number(document.getElementById('prodIdInput').value) || 0,
+          name: document.getElementById('prodNameInput').value.trim(),
+          sku: document.getElementById('prodSkuInput').value.trim(),
+          category: document.getElementById('prodCategorySelect').value,
+          supplier_id: Number(document.getElementById('prodSupplierSelect').value) || null,
+          unit: document.getElementById('prodUnitInput').value.trim() || 'pz',
+          cost_price: Number(document.getElementById('prodCostInput').value) || 0,
+          sell_price: Number(document.getElementById('prodSellInput').value) || 0,
+          stock_qty: Number(document.getElementById('prodStockInput').value) || 0,
+          min_stock_qty: Number(document.getElementById('prodMinStockInput').value) || 2,
+        }),
+      });
+      document.getElementById('productModal').classList.remove('open');
+      await refreshAllData();
+      renderInventoryView();
+    });
+  }
+
+  const delProdBtn = document.getElementById('deleteProductBtn');
+  if (delProdBtn) {
+    delProdBtn.addEventListener('click', async () => {
+      const id = Number(document.getElementById('prodIdInput').value);
+      if (!id || !confirm('Eliminare questo prodotto dal magazzino?')) return;
+      await apiFetch('admin/inventory/products', { method: 'POST', body: JSON.stringify({ action: 'delete', id }) });
+      document.getElementById('productModal').classList.remove('open');
+      await refreshAllData();
+      renderInventoryView();
+    });
+  }
+
+  const supForm = document.getElementById('supplierForm');
+  if (supForm) {
+    supForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/inventory/suppliers', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'save',
+          id: Number(document.getElementById('supIdInput').value) || 0,
+          name: document.getElementById('supNameInput').value.trim(),
+          contact_name: document.getElementById('supContactInput').value.trim(),
+          phone: document.getElementById('supPhoneInput').value.trim(),
+          email: document.getElementById('supEmailInput').value.trim(),
+          notes: document.getElementById('supNotesInput').value.trim(),
+        }),
+      });
+      document.getElementById('supplierModal').classList.remove('open');
+      await loadInventoryData();
+      renderInventoryView();
+    });
+  }
+
+  const delSupBtn = document.getElementById('deleteSupplierBtn');
+  if (delSupBtn) {
+    delSupBtn.addEventListener('click', async () => {
+      const id = Number(document.getElementById('supIdInput').value);
+      if (!id || !confirm('Eliminare questo fornitore?')) return;
+      await apiFetch('admin/inventory/suppliers', { method: 'POST', body: JSON.stringify({ action: 'delete', id }) });
+      document.getElementById('supplierModal').classList.remove('open');
+      await loadInventoryData();
+      renderInventoryView();
+    });
+  }
+
+  const movForm = document.getElementById('movementForm');
+  if (movForm) {
+    movForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/inventory/movements', {
+        method: 'POST',
+        body: JSON.stringify({
+          product_id: Number(document.getElementById('movProductIdInput').value),
+          movement_type: document.getElementById('movTypeSelect').value,
+          quantity: Number(document.getElementById('movQtyInput').value) || 1,
+          unit_price: Number(document.getElementById('movUnitPriceInput').value) || 0,
+          client_id: Number(document.getElementById('movClientSelect').value) || null,
+          notes: document.getElementById('movNotesInput').value.trim(),
+        }),
+      });
+      document.getElementById('movementModal').classList.remove('open');
+      await refreshAllData();
+      renderInventoryView();
+    });
+  }
+
+  // Message Center
+  const msgClientSel = document.getElementById('msgClientSelect');
+  const msgTplSel = document.getElementById('msgTemplateSelect');
+  if (msgClientSel) msgClientSel.addEventListener('change', syncQuickMessagePreview);
+  if (msgTplSel) msgTplSel.addEventListener('change', syncQuickMessagePreview);
+
+  const quickMsgForm = document.getElementById('quickMessageForm');
+  if (quickMsgForm) {
+    quickMsgForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const clientId = Number(document.getElementById('msgClientSelect').value);
+      const client = STATE.clients.find((c) => Number(c.id) === clientId);
+      const text = document.getElementById('msgPreviewText').value.trim();
+      if (!client || !text) return;
+      await apiFetch('admin/messages/logs', {
+        method: 'POST',
+        body: JSON.stringify({
+          client_id: client.id,
+          recipient_phone: client.phone,
+          recipient_name: client.full_name,
+          channel: 'whatsapp',
+          template_code: document.getElementById('msgTemplateSelect').value,
+          message_text: text,
+        }),
+      });
+      const waNum = formatWaNumber(client.phone);
+      window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+      await loadMessagesData();
+      renderMessagesView();
+    });
+  }
+
+  // Operators, Absences & Admin Users
+  const newOpBtn = document.getElementById('newOperatorBtn');
+  if (newOpBtn) newOpBtn.addEventListener('click', () => openOperatorModal(null));
+  const closeOpBtn = document.getElementById('closeOperatorModalBtn');
+  if (closeOpBtn) closeOpBtn.addEventListener('click', () => document.getElementById('operatorModal').classList.remove('open'));
+
+  const opForm = document.getElementById('operatorForm');
+  if (opForm) {
+    opForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const schedule = {};
+      document.querySelectorAll('.op-sched-row').forEach((row) => {
+        const day = row.dataset.day;
+        schedule[day] = {
+          enabled: row.querySelector('.op-sched-enabled').checked,
+          start: row.querySelector('.op-sched-start').value,
+          end: row.querySelector('.op-sched-end').value,
+          break_start: row.querySelector('.op-sched-bstart').value,
+          break_end: row.querySelector('.op-sched-bend').value,
+        };
+      });
+      await apiFetch('admin/operators', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'save',
+          id: Number(document.getElementById('opIdInput').value) || 0,
+          name: document.getElementById('opNameInput').value.trim(),
+          role: document.getElementById('opRoleInput').value.trim(),
+          color: document.getElementById('opColorInput').value,
+          active: document.getElementById('opActiveCheck').checked,
+          weekly_schedule: schedule,
+        }),
+      });
+      document.getElementById('operatorModal').classList.remove('open');
+      await refreshAllData();
+      renderSettingsView();
+    });
+  }
+
+  const delOpBtn = document.getElementById('deleteOperatorBtn');
+  if (delOpBtn) {
+    delOpBtn.addEventListener('click', async () => {
+      const id = Number(document.getElementById('opIdInput').value);
+      if (!id || !confirm('Eliminare questo operatore dallo studio?')) return;
+      await apiFetch('admin/operators', { method: 'POST', body: JSON.stringify({ action: 'delete', id }) });
+      document.getElementById('operatorModal').classList.remove('open');
+      await refreshAllData();
+      renderSettingsView();
+    });
+  }
+
+  const absForm = document.getElementById('absenceForm');
+  if (absForm) {
+    absForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/absences', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create',
+          operator_id: Number(document.getElementById('absOperatorSelect').value),
+          type: document.getElementById('absTypeSelect').value,
+          start_date: document.getElementById('absStartDateInput').value,
+          end_date: document.getElementById('absEndDateInput').value || document.getElementById('absStartDateInput').value,
+          start_time: document.getElementById('absStartTimeInput').value.trim(),
+          end_time: document.getElementById('absEndTimeInput').value.trim(),
+          notes: document.getElementById('absNotesInput').value.trim(),
+        }),
+      });
+      absForm.reset();
+      await refreshAllData();
+      renderSettingsView();
+    });
+  }
+
+  const newUserForm = document.getElementById('newAdminUserForm');
+  if (newUserForm) {
+    newUserForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create',
+          username: document.getElementById('newAdminUsername').value.trim(),
+          display_name: document.getElementById('newAdminDisplayName').value.trim(),
+          password: document.getElementById('newAdminPassword').value,
+          role: document.getElementById('newAdminRole').value,
+        }),
+      });
+      newUserForm.reset();
+      await loadAdminUsers();
+      renderSettingsView();
+    });
+  }
 });
 
 /* ==========================================================================
@@ -1191,7 +1708,10 @@ function formatAiTextToSafeHtml(rawText) {
 
 function buildWinBackWhatsAppUrl(client) {
   const waNum = formatWaNumber(client.phone);
-  const msg = `Ciao ${client.full_name} ♡ È da un po' (${client.days_since} giorni) che non ci vediamo da *Giulia Beauty Studio*! Quando hai voglia di concederti una coccola o un ritocco, scrivimi pure qui per trovare insieme l'orario più comodo. Ti aspetto!`;
+  const msg = renderMessageTemplate('winback_inactive', {
+    nome: client.full_name,
+    giorni_assenza: client.days_since,
+  });
   return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
 }
 
@@ -1315,13 +1835,63 @@ function renderInsightsView() {
           <div class="report-bar-row">
             <div class="report-bar-label">
               <span><strong>${escapeHtml(c.full_name)}</strong></span>
-              <span>${c.visits_count} visite • ${Number(c.total_spent).toFixed(0)} €</span>
+              <span>${c.visits_count} visite • ${Number(c.total_spent).toFixed(0)} € LTV</span>
             </div>
             <div class="report-bar-track"><div class="report-bar-fill" style="width:${pct}%;"></div></div>
           </div>
         `;
       })
       .join('');
+  }
+
+  const opBox = document.getElementById('operatorStatsReportList');
+  if (opBox) {
+    const ops = ins.operator_stats || [];
+    if (ops.length === 0) {
+      opBox.innerHTML = '<p class="muted-text">Nessun dato operatore disponibile.</p>';
+    } else {
+      const maxOpRev = Math.max(1, ...ops.map((o) => Number(o.revenue || 0)));
+      opBox.innerHTML = ops
+        .map((o) => {
+          const pct = Math.round((Number(o.revenue || 0) / maxOpRev) * 100);
+          return `
+            <div class="report-bar-row">
+              <div class="report-bar-label">
+                <span><span class="op-dot" style="background:${escapeHtml(o.color || '#b85675')}"></span><strong>${escapeHtml(o.operator_name)}</strong> (${o.appointments_count} app.)</span>
+                <span>${Number(o.revenue || 0).toFixed(0)} € • media ${Number(o.avg_ticket || 0).toFixed(0)} €</span>
+              </div>
+              <div class="report-bar-track"><div class="report-bar-fill" style="width:${pct}%;background:${escapeHtml(o.color || 'var(--rose-gold)')};"></div></div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+  }
+
+  const invBox = document.getElementById('inventoryReorderReportList');
+  if (invBox) {
+    const forecasts = ins.reorder_forecasts || [];
+    const crossSell = ins.cross_sell || [];
+    let html = '';
+    if (forecasts.length === 0) {
+      html += '<p class="muted-text">Scorte magazzino regolari: nessun prodotto sotto soglia.</p>';
+    } else {
+      html += forecasts
+        .map(
+          (f) => `<div class="rec-item" style="margin-bottom:8px;">
+            <strong>${f.needs_reorder ? '⚠️ Riordino consigliato' : '📦 Monitoraggio'}: ${escapeHtml(f.name)}</strong><br />
+            <span class="muted-text">Scorta: ${f.stock_qty} (min ${f.min_stock_qty}) • Consumo 60gg: ${f.used_last_60d} • Autonomia: ${f.days_left === null ? 'n.d.' : `${f.days_left} gg`}${f.supplier_name ? ` • Fornitore: ${escapeHtml(f.supplier_name)}` : ''}</span>
+          </div>`
+        )
+        .join('');
+    }
+    if (crossSell.length > 0) {
+      html += `<div style="margin-top:12px;"><strong>Vendite incrociate più frequenti (Servizio + Prodotto):</strong></div>`;
+      html += crossSell
+        .map((c) => `<div style="font-size:0.84rem;padding:4px 0;">• ${escapeHtml(c.pair)} <strong>(${c.count}×)</strong></div>`)
+        .join('');
+    }
+    invBox.innerHTML = html;
   }
 }
 
@@ -1428,4 +1998,399 @@ function printStudioReport() {
 </body>
 </html>`);
   win.document.close();
+}
+
+/* ==========================================================================
+   INVENTORY (MAGAZZINO, PRODOTTI, FORNITORI & MOVIMENTI)
+   ========================================================================== */
+function renderInventoryView() {
+  const kpiStrip = document.getElementById('invKpiStrip');
+  const prodBox = document.getElementById('productsListContainer');
+  const supBox = document.getElementById('suppliersListContainer');
+  const movBox = document.getElementById('movementsListContainer');
+  if (!kpiStrip || !prodBox || !supBox || !movBox) return;
+
+  const query = (document.getElementById('invSearchInput')?.value || '').trim().toLowerCase();
+  const products = STATE.inventory.products || [];
+  const suppliers = STATE.inventory.suppliers || [];
+  const movements = STATE.inventory.movements || [];
+
+  const lowCount = products.filter((p) => Number(p.stock_qty) <= Number(p.min_stock_qty)).length;
+  const stockValue = products.reduce((acc, p) => acc + Number(p.stock_qty || 0) * Number(p.cost_price || 0), 0);
+
+  kpiStrip.innerHTML = `
+    <div class="kpi-card"><span class="kpi-label">Prodotti a Catalogo</span><strong class="kpi-value">${products.length}</strong></div>
+    <div class="kpi-card"><span class="kpi-label">Sotto Scorta Minima</span><strong class="kpi-value" style="color:${lowCount > 0 ? '#a12a2e' : 'var(--ink)'};">${lowCount}</strong></div>
+    <div class="kpi-card"><span class="kpi-label">Valore Magazzino (Costo)</span><strong class="kpi-value">${stockValue.toFixed(0)} €</strong></div>
+    <div class="kpi-card"><span class="kpi-label">Fornitori Attivi</span><strong class="kpi-value">${suppliers.length}</strong></div>
+  `;
+
+  const filtered = query
+    ? products.filter(
+        (p) =>
+          (p.name || '').toLowerCase().includes(query) ||
+          (p.sku || '').toLowerCase().includes(query) ||
+          (p.category || '').toLowerCase().includes(query)
+      )
+    : products;
+
+  if (filtered.length === 0) {
+    prodBox.innerHTML = '<div style="padding:26px;text-align:center;color:var(--ink-soft);">Nessun prodotto registrato. Clicca <strong>+ Nuovo Prodotto</strong> per iniziare.</div>';
+  } else {
+    prodBox.innerHTML = `
+      <table class="admin-table">
+        <thead>
+          <tr><th>Prodotto</th><th>Categoria</th><th>Giacenza</th><th>Prezzi (Acq / Vend)</th><th>Fornitore</th><th>Azioni</th></tr>
+        </thead>
+        <tbody>
+          ${filtered
+            .map((p) => {
+              const low = Number(p.stock_qty) <= Number(p.min_stock_qty);
+              const badgeClass = low ? 'stock-low' : 'stock-ok';
+              return `<tr>
+                <td><strong>${escapeHtml(p.name)}</strong>${p.sku ? `<br /><span class="muted-text">SKU: ${escapeHtml(p.sku)}</span>` : ''}</td>
+                <td>${escapeHtml(p.category === 'cabin' ? 'Cabina' : 'Rivendita')}</td>
+                <td><span class="stock-badge ${badgeClass}">${Number(p.stock_qty)} ${escapeHtml(p.unit || 'pz')}</span><div class="muted-text" style="font-size:0.72rem;">Min: ${Number(p.min_stock_qty)}</div></td>
+                <td>${Number(p.cost_price || 0).toFixed(2)} € / <strong>${Number(p.sell_price || 0).toFixed(2)} €</strong></td>
+                <td>${escapeHtml(p.supplier_name || '—')}</td>
+                <td>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" class="btn-outline-sm inv-mov-btn" data-id="${p.id}" data-type="sale">🛍️ Vendi</button>
+                    <button type="button" class="btn-outline-sm inv-mov-btn" data-id="${p.id}" data-type="restock">📥 Carica</button>
+                    <button type="button" class="btn-outline-sm inv-edit-prod-btn" data-id="${p.id}">Modifica</button>
+                  </div>
+                </td>
+              </tr>`;
+            })
+            .join('')}
+        </tbody>
+      </table>
+    `;
+    prodBox.querySelectorAll('.inv-mov-btn').forEach((btn) => {
+      btn.addEventListener('click', () => openMovementModal(Number(btn.dataset.id), btn.dataset.type));
+    });
+    prodBox.querySelectorAll('.inv-edit-prod-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const prod = products.find((p) => Number(p.id) === Number(btn.dataset.id));
+        if (prod) openProductModal(prod);
+      });
+    });
+  }
+
+  supBox.innerHTML =
+    suppliers.length === 0
+      ? '<p class="muted-text">Nessun fornitore ancora salvato.</p>'
+      : suppliers
+          .map(
+            (s) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;">
+              <div><strong>${escapeHtml(s.name)}</strong><div class="muted-text">${escapeHtml(s.contact_name || '')} ${s.phone ? `• ${escapeHtml(s.phone)}` : ''} ${s.email ? `• ${escapeHtml(s.email)}` : ''}</div></div>
+              <button type="button" class="btn-outline-sm inv-edit-sup-btn" data-id="${s.id}">Modifica</button>
+            </div>`
+          )
+          .join('');
+  supBox.querySelectorAll('.inv-edit-sup-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const sup = suppliers.find((s) => Number(s.id) === Number(btn.dataset.id));
+      if (sup) openSupplierModal(sup);
+    });
+  });
+
+  const typeLabel = { sale: '🛍️ Vendita', restock: '📥 Carico', cabin_use: '🧴 Uso Cabina', adjustment: '⚖️ Rettifica' };
+  movBox.innerHTML =
+    movements.length === 0
+      ? '<p class="muted-text">Nessun movimento registrato.</p>'
+      : movements
+          .slice(0, 20)
+          .map(
+            (m) => `<div class="rec-item" style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;">
+                <strong>${typeLabel[m.movement_type] || escapeHtml(m.movement_type)} • ${escapeHtml(m.product_name || '')}</strong>
+                <span>${m.quantity} pz${Number(m.total_amount) > 0 ? ` • ${Number(m.total_amount).toFixed(2)} €` : ''}</span>
+              </div>
+              <div class="muted-text" style="font-size:0.75rem;">${escapeHtml((m.created_at || '').slice(0, 16).replace('T', ' '))}${m.client_name ? ` • Cliente: ${escapeHtml(m.client_name)}` : ''}${m.notes ? ` • ${escapeHtml(m.notes)}` : ''}</div>
+            </div>`
+          )
+          .join('');
+}
+
+function openProductModal(prod) {
+  const modal = document.getElementById('productModal');
+  const supSel = document.getElementById('prodSupplierSelect');
+  if (supSel) {
+    supSel.innerHTML = '<option value="">— Nessun fornitore —</option>';
+    (STATE.inventory.suppliers || []).forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name;
+      supSel.appendChild(opt);
+    });
+  }
+  document.getElementById('productModalTitle').textContent = prod ? 'Modifica Prodotto' : 'Nuovo Prodotto';
+  document.getElementById('prodIdInput').value = prod ? prod.id : '';
+  document.getElementById('prodNameInput').value = prod ? prod.name : '';
+  document.getElementById('prodSkuInput').value = prod ? prod.sku || '' : '';
+  document.getElementById('prodCategorySelect').value = prod ? prod.category || 'retail' : 'retail';
+  if (supSel) supSel.value = prod && prod.supplier_id ? String(prod.supplier_id) : '';
+  document.getElementById('prodUnitInput').value = prod ? prod.unit || 'pz' : 'pz';
+  document.getElementById('prodCostInput').value = prod ? Number(prod.cost_price || 0) : 0;
+  document.getElementById('prodSellInput').value = prod ? Number(prod.sell_price || 0) : 0;
+  document.getElementById('prodStockInput').value = prod ? Number(prod.stock_qty || 0) : 0;
+  document.getElementById('prodMinStockInput').value = prod ? Number(prod.min_stock_qty || 2) : 2;
+  document.getElementById('deleteProductBtn').hidden = !prod;
+  modal.classList.add('open');
+}
+
+function openSupplierModal(sup) {
+  const modal = document.getElementById('supplierModal');
+  document.getElementById('supplierModalTitle').textContent = sup ? 'Modifica Fornitore' : 'Nuovo Fornitore';
+  document.getElementById('supIdInput').value = sup ? sup.id : '';
+  document.getElementById('supNameInput').value = sup ? sup.name : '';
+  document.getElementById('supContactInput').value = sup ? sup.contact_name || '' : '';
+  document.getElementById('supPhoneInput').value = sup ? sup.phone || '' : '';
+  document.getElementById('supEmailInput').value = sup ? sup.email || '' : '';
+  document.getElementById('supNotesInput').value = sup ? sup.notes || '' : '';
+  document.getElementById('deleteSupplierBtn').hidden = !sup;
+  modal.classList.add('open');
+}
+
+function openMovementModal(productId, defaultType = 'sale') {
+  const prod = (STATE.inventory.products || []).find((p) => Number(p.id) === Number(productId));
+  if (!prod) return;
+  const cliSel = document.getElementById('movClientSelect');
+  if (cliSel) {
+    cliSel.innerHTML = '<option value="">— Nessuna cliente (movimento interno) —</option>';
+    (STATE.clients || []).forEach((c) => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = `${c.full_name} (${c.phone})`;
+      cliSel.appendChild(opt);
+    });
+  }
+  document.getElementById('movementModalTitle').textContent = `Movimento: ${prod.name} (giacenza ${prod.stock_qty})`;
+  document.getElementById('movProductIdInput').value = prod.id;
+  document.getElementById('movTypeSelect').value = defaultType;
+  document.getElementById('movQtyInput').value = 1;
+  document.getElementById('movUnitPriceInput').value = defaultType === 'restock' ? Number(prod.cost_price || 0) : Number(prod.sell_price || 0);
+  document.getElementById('movNotesInput').value = '';
+  document.getElementById('movementModal').classList.add('open');
+}
+
+/* ==========================================================================
+   MESSAGE CENTER (TEMPLATE PERSONALIZZABILI & STORICO INVII)
+   ========================================================================== */
+function syncQuickMessagePreview() {
+  const cliSel = document.getElementById('msgClientSelect');
+  const tplSel = document.getElementById('msgTemplateSelect');
+  const preview = document.getElementById('msgPreviewText');
+  if (!cliSel || !tplSel || !preview) return;
+  const client = STATE.clients.find((c) => Number(c.id) === Number(cliSel.value));
+  preview.value = renderMessageTemplate(tplSel.value, {
+    nome: client ? client.full_name : 'Cliente',
+    data: toIsoDate(new Date()),
+    ora: '10:00',
+    servizi: 'Trattamento Beauty',
+    giorni_assenza: '45',
+    link: `${window.location.origin}/privacy-sign.html`,
+    otp: '123456',
+  });
+}
+
+function renderMessagesView() {
+  const cliSel = document.getElementById('msgClientSelect');
+  const tplSel = document.getElementById('msgTemplateSelect');
+  const edList = document.getElementById('msgTemplatesEditorList');
+  const logsBox = document.getElementById('messageLogsContainer');
+  if (!cliSel || !tplSel || !edList || !logsBox) return;
+
+  const prevCli = cliSel.value;
+  cliSel.innerHTML = '';
+  (STATE.clients || []).forEach((c) => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = `${c.full_name} (${c.phone})`;
+    cliSel.appendChild(opt);
+  });
+  if (prevCli) cliSel.value = prevCli;
+
+  const prevTpl = tplSel.value;
+  tplSel.innerHTML = '';
+  (STATE.messages.templates || []).forEach((t) => {
+    const opt = document.createElement('option');
+    opt.value = t.code;
+    opt.textContent = t.title;
+    tplSel.appendChild(opt);
+  });
+  if (prevTpl) tplSel.value = prevTpl;
+  syncQuickMessagePreview();
+
+  edList.innerHTML = (STATE.messages.templates || [])
+    .map(
+      (t) => `<form class="msg-tpl-editor-form rec-item" data-code="${escapeHtml(t.code)}" style="margin-bottom:10px;">
+        <div class="admin-field" style="margin-bottom:6px;">
+          <label>Titolo Template (${escapeHtml(t.code)})</label>
+          <input type="text" class="tpl-title-input" value="${escapeHtml(t.title)}" required />
+        </div>
+        <div class="admin-field" style="margin-bottom:8px;">
+          <label>Testo Messaggio (variabili: {nome}, {data}, {ora}, {servizi}, {giorni_assenza}, {link}, {otp})</label>
+          <textarea rows="2" class="tpl-body-input" required>${escapeHtml(t.body_template)}</textarea>
+        </div>
+        <button type="submit" class="btn-outline-sm">💾 Salva Template</button>
+      </form>`
+    )
+    .join('');
+
+  edList.querySelectorAll('.msg-tpl-editor-form').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await apiFetch('admin/messages/templates', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: form.dataset.code,
+          title: form.querySelector('.tpl-title-input').value.trim(),
+          body_template: form.querySelector('.tpl-body-input').value.trim(),
+        }),
+      });
+      await loadMessagesData();
+      renderMessagesView();
+    });
+  });
+
+  const logs = STATE.messages.logs || [];
+  logsBox.innerHTML =
+    logs.length === 0
+      ? '<p class="muted-text">Nessun messaggio registrato nello storico invii.</p>'
+      : logs
+          .map(
+            (l) => `<div class="rec-item" style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;font-size:0.84rem;">
+                <strong>📲 ${escapeHtml(l.recipient_name || l.recipient_phone)}</strong>
+                <span class="muted-text">${escapeHtml((l.sent_at || '').slice(0, 16).replace('T', ' '))}</span>
+              </div>
+              <div class="muted-text" style="margin-top:4px;font-size:0.82rem;">${escapeHtml(l.message_text)}</div>
+            </div>`
+          )
+          .join('');
+}
+
+/* ==========================================================================
+   SETTINGS: OPERATORI, ORARI SETTIMANALI, ASSENZE & UTENTI ADMIN
+   ========================================================================== */
+const DAY_NAMES_IT = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+
+function renderScheduleGrid(scheduleObj) {
+  const grid = document.getElementById('opScheduleGrid');
+  if (!grid) return;
+  const order = ['1', '2', '3', '4', '5', '6', '0'];
+  grid.innerHTML = order
+    .map((day) => {
+      const cfg = (scheduleObj && (scheduleObj[day] || scheduleObj[Number(day)])) || {
+        enabled: day !== '0',
+        start: '09:00',
+        end: '19:30',
+        break_start: '',
+        break_end: '',
+      };
+      return `
+        <div class="op-sched-row" data-day="${day}">
+          <label class="op-sched-day"><input type="checkbox" class="op-sched-enabled" ${cfg.enabled ? 'checked' : ''} /> ${DAY_NAMES_IT[Number(day)]}</label>
+          <input type="text" class="op-sched-start" value="${escapeHtml(cfg.start || '09:00')}" placeholder="09:00" />
+          <input type="text" class="op-sched-end" value="${escapeHtml(cfg.end || '19:30')}" placeholder="19:30" />
+          <input type="text" class="op-sched-bstart" value="${escapeHtml(cfg.break_start || '')}" placeholder="Pausa inizio" />
+          <input type="text" class="op-sched-bend" value="${escapeHtml(cfg.break_end || '')}" placeholder="Pausa fine" />
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function openOperatorModal(op) {
+  const modal = document.getElementById('operatorModal');
+  document.getElementById('operatorModalTitle').textContent = op ? `Operatore: ${op.name}` : 'Nuovo Operatore';
+  document.getElementById('opIdInput').value = op ? op.id : '';
+  document.getElementById('opNameInput').value = op ? op.name : '';
+  document.getElementById('opRoleInput').value = op ? op.role || '' : 'Estetista / Beauty Specialist';
+  document.getElementById('opColorInput').value = op ? op.color || '#b85675' : '#b85675';
+  document.getElementById('opActiveCheck').checked = op ? Boolean(op.active) : true;
+  document.getElementById('deleteOperatorBtn').hidden = !op;
+  renderScheduleGrid(op ? op.weekly_schedule : null);
+  modal.classList.add('open');
+}
+
+function renderSettingsView() {
+  const opsBox = document.getElementById('operatorsListContainer');
+  const absBox = document.getElementById('absencesListContainer');
+  const usersBox = document.getElementById('adminUsersListContainer');
+
+  if (opsBox) {
+    opsBox.innerHTML =
+      STATE.operators.length === 0
+        ? '<p class="muted-text">Nessun operatore configurato.</p>'
+        : STATE.operators
+            .map(
+              (op) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div>
+                  <span class="op-dot" style="background:${escapeHtml(op.color || '#b85675')}"></span>
+                  <strong>${escapeHtml(op.name)}</strong> ${!op.active ? '<span class="muted-text">(Disattivo)</span>' : ''}
+                  <div class="muted-text" style="font-size:0.78rem;">${escapeHtml(op.role || '')}</div>
+                </div>
+                <button type="button" class="btn-outline-sm edit-op-btn" data-id="${op.id}">Orari &amp; Modifica</button>
+              </div>`
+            )
+            .join('');
+    opsBox.querySelectorAll('.edit-op-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const op = STATE.operators.find((o) => Number(o.id) === Number(btn.dataset.id));
+        if (op) openOperatorModal(op);
+      });
+    });
+  }
+
+  if (absBox) {
+    absBox.innerHTML =
+      STATE.absences.length === 0
+        ? '<p class="muted-text">Nessuna assenza/ferie pianificata.</p>'
+        : STATE.absences
+            .map(
+              (a) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div>
+                  <strong>${escapeHtml(a.operator_name || 'Operatore')}</strong> • <span style="text-transform:capitalize;">${escapeHtml(a.type)}</span>
+                  <div class="muted-text" style="font-size:0.78rem;">${escapeHtml(a.start_date)} → ${escapeHtml(a.end_date)}${a.start_time ? ` (${escapeHtml(a.start_time)}-${escapeHtml(a.end_time)})` : ' (Tutto il giorno)'}${a.notes ? ` • ${escapeHtml(a.notes)}` : ''}</div>
+                </div>
+                <button type="button" class="btn-outline-sm del-abs-btn" data-id="${a.id}" style="color:#a12a2e;border-color:#e0b5b5;">Rimuovi</button>
+              </div>`
+            )
+            .join('');
+    absBox.querySelectorAll('.del-abs-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await apiFetch('admin/absences', { method: 'POST', body: JSON.stringify({ action: 'delete', id: Number(btn.dataset.id) }) });
+        await refreshAllData();
+        renderSettingsView();
+      });
+    });
+  }
+
+  if (usersBox) {
+    usersBox.innerHTML = (STATE.adminUsers || [])
+      .map(
+        (u) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <strong>${escapeHtml(u.display_name)}</strong> <span class="muted-text">(${escapeHtml(u.username)} • ${escapeHtml(u.role)})</span>
+          </div>
+          ${
+            STATE.user && Number(u.id) !== Number(STATE.user.id)
+              ? `<button type="button" class="btn-outline-sm del-user-btn" data-id="${u.id}" style="color:#a12a2e;border-color:#e0b5b5;">Elimina</button>`
+              : '<span class="muted-text" style="font-size:0.76rem;">Sessione attiva</span>'
+          }
+        </div>`
+      )
+      .join('');
+    usersBox.querySelectorAll('.del-user-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Eliminare questa utenza gestionale?')) return;
+        await apiFetch('admin/users', { method: 'POST', body: JSON.stringify({ action: 'delete', id: Number(btn.dataset.id) }) });
+        await loadAdminUsers();
+        renderSettingsView();
+      });
+    });
+  }
 }
