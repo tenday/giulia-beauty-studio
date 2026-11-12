@@ -86,7 +86,7 @@ async function checkAuth() {
   const workspace = document.getElementById('adminWorkspace');
 
   try {
-    const data = await apiFetch('auth.php?action=me', { method: 'GET' });
+    const data = await apiFetch('auth/me', { method: 'GET' });
     if (data.authenticated) {
       STATE.admin = data.admin;
       document.getElementById('adminWelcomeLabel').textContent =
@@ -116,7 +116,7 @@ async function refreshAllData() {
 
 async function loadClients(query = '') {
   const qParam = query ? `?q=${encodeURIComponent(query)}` : '';
-  const data = await apiFetch(`admin_clients.php${qParam}`, { method: 'GET' });
+  const data = await apiFetch(`admin/clients${qParam}`, { method: 'GET' });
   STATE.clients = data.clients || [];
   populateClientSelect();
 }
@@ -138,7 +138,7 @@ async function loadAppointments() {
     params.set('status', STATE.statusFilter);
   }
 
-  const data = await apiFetch(`admin_appointments.php?${params.toString()}`, { method: 'GET' });
+  const data = await apiFetch(`admin/appointments?${params.toString()}`, { method: 'GET' });
   STATE.appointments = data.appointments || [];
 }
 
@@ -518,7 +518,7 @@ async function openClientModal(clientId = null) {
   }
 
   try {
-    const data = await apiFetch(`admin_clients.php?id=${clientId}`, { method: 'GET' });
+    const data = await apiFetch(`admin/clients?id=${clientId}`, { method: 'GET' });
     const c = data.client;
     document.getElementById('clientModalTitle').textContent = `Scheda Cliente • ${c.full_name}`;
     document.getElementById('clientIdInput').value = c.id;
@@ -626,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const alertEl = document.getElementById('loginAlert');
     alertEl.hidden = true;
     try {
-      await apiFetch('auth.php?action=login', {
+      await apiFetch('auth/login', {
         method: 'POST',
         body: JSON.stringify({
           username: document.getElementById('loginUsername').value.trim(),
@@ -642,7 +642,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
-    await apiFetch('auth.php?action=logout', { method: 'POST' });
+    await apiFetch('auth/logout', { method: 'POST' });
     location.reload();
   });
 
@@ -737,7 +737,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      await apiFetch('admin_appointments.php', { method: 'POST', body: JSON.stringify(payload) });
+      await apiFetch('admin/appointments', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('apptModal').classList.remove('open');
       await refreshAllData();
     } catch (err) {
@@ -750,7 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('deleteApptBtn').addEventListener('click', async () => {
     const id = Number(document.getElementById('apptIdInput').value);
     if (!id || !confirm('Eliminare definitivamente questo appuntamento dall\'agenda?')) return;
-    await apiFetch('admin_appointments.php', {
+    await apiFetch('admin/appointments', {
       method: 'POST',
       body: JSON.stringify({ action: 'delete', id }),
     });
@@ -792,7 +792,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     try {
-      await apiFetch('admin_clients.php', { method: 'POST', body: JSON.stringify(payload) });
+      await apiFetch('admin/clients', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('clientModal').classList.remove('open');
       await refreshAllData();
     } catch (err) {
@@ -804,7 +804,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('deleteClientGdprBtn').addEventListener('click', async () => {
     const id = Number(document.getElementById('clientIdInput').value);
     if (!id || !confirm('Attenzione: verranno eliminati definitivamente tutti i dati anagrafici, gli appuntamenti e i log della cliente (Diritto all\'Oblio GDPR). Procedere?')) return;
-    await apiFetch('admin_clients.php', {
+    await apiFetch('admin/clients', {
       method: 'POST',
       body: JSON.stringify({ action: 'delete', id }),
     });
@@ -821,7 +821,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const msgEl = document.getElementById('passwordChangeMsg');
     msgEl.hidden = true;
     try {
-      const res = await apiFetch('auth.php?action=change_password', {
+      const res = await apiFetch('auth/change-password', {
         method: 'POST',
         body: JSON.stringify({
           current_password: document.getElementById('currentPasswordInput').value,

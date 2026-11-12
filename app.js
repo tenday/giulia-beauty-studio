@@ -365,7 +365,7 @@ async function refreshAvailableSlots(dateStr) {
   const buttons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
 
   try {
-    const res = await fetch(`${API_BASE}/public_slots.php?date=${encodeURIComponent(dateStr)}&duration=${totalMin}`);
+    const res = await fetch(`${API_BASE}/public/slots?date=${encodeURIComponent(dateStr)}&duration=${totalMin}`);
     if (!res.ok) throw new Error('API offline');
     const data = await res.json();
     if (!data.ok) throw new Error('API error');
@@ -732,7 +732,7 @@ function initApp() {
     confirmBtn.textContent = 'Salvataggio in corso...';
 
     try {
-      const res = await fetch(`${API_BASE}/public_book.php`, {
+      const res = await fetch(`${API_BASE}/public/book`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

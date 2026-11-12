@@ -1,71 +1,74 @@
-# Guida al Deploy su cPanel (MySQL + PHP) — Giulia Beauty Studio
+# Guida al Deploy su cPanel (Solo Node.js + MySQL) — Giulia Beauty Studio
 
-Questa guida spiega passo passo come attivare il backend proprietario (Agenda stile Google Calendar, Database Clienti / CRM e Log Consensi Privacy GDPR) sull'hosting **cPanel** con database **MySQL**.
+Questa guida spiega passo passo come attivare il backend proprietario **100% Node.js + Express + MySQL** (zero PHP) sull'hosting **cPanel** con database **MySQL**.
 
 ---
 
 ## 1. Crea il Database MySQL in cPanel
 
 1. Accedi a **cPanel** del tuo hosting.
-2. Apri **Database MySQL®** (oppure *Creazione guidata database MySQL*).
+2. Apri **Database MySQL®** (o *Creazione guidata database MySQL*).
 3. Crea un nuovo database (es. `nomeutente_giuliabeauty`).
 4. Crea un nuovo utente MySQL con una **password sicura** e annota:
-   - Host (`localhost` nella maggior parte dei server cPanel)
-   - Nome database
-   - Username database
-   - Password database
+   - `DB_HOST` (`localhost` nella maggior parte dei server cPanel)
+   - `DB_NAME` (nome database)
+   - `DB_USER` (username database)
+   - `DB_PASS` (password database)
 5. Assegna l'utente al database selezionando **TUTTI I PRIVILEGI**.
 
 ---
 
-## 2. Carica i file su cPanel (`public_html`)
+## 2. Carica il progetto & configura Node.js in cPanel
 
-Carica tutti i file del repository nella cartella pubblica del dominio (di solito `public_html/`, oppure una sottocartella come `public_html/studio/`):
-
-- `index.html`, `styles.css`, `app.js`, `catalog.js`
-- `admin.html`, `admin.css`, `admin.js`
-- Cartella `assets/`
-- Cartella `api/`
-- Cartella `backend/`
-
-> **Nota importante su GitHub Pages:** GitHub Pages serve solo file statici e non esegue PHP. Caricando l'intero sito su cPanel avrai sia il sito pubblico che il pannello `admin.html` e le API PHP sotto lo stesso dominio (consigliato per cookie di sessione e zero problemi CORS).  
-> Se invece vuoi mantenere il frontend su GitHub Pages e solo `/api/` su cPanel, aggiorna `API_BASE` in `app.js` e `admin.js` con l'URL completo di cPanel (es. `https://tuodominio.it/api`) e aggiungi il dominio GitHub Pages in `allowed_origins` dentro `api/config.php`.
+1. Carica tutti i file del repository in una cartella del tuo account cPanel (es. `giulia-beauty-studio/`, fuori o dentro la root come previsto dal selettore Node.js del tuo hosting — con **Setup Node.js App** puoi metterlo in `/home/utente/giulia-beauty-studio`).
+2. Apri **Setup Node.js App** (o *Application Manager*) in cPanel e clicca **Create Application**:
+   - **Node.js version:** `18.x`, `20.x` o `22.x`
+   - **Application mode:** `Production`
+   - **Application root:** `giulia-beauty-studio`
+   - **Application URL:** il tuo dominio/sottodominio (es. `giuliabeautystudio.it`)
+   - **Application startup file:** `server.js`
+3. Nella stessa schermata clicca **Run NPM Install** per installare `express`, `mysql2` e `dotenv` (oppure esegui `npm install` da Terminale cPanel).
 
 ---
 
-## 3. Configura `api/config.php`
+## 3. Configura le variabili d'ambiente (`.env`)
 
-1. Nel File Manager di cPanel entra nella cartella `api/`.
-2. Duplica `config.example.php` e rinomina la copia in `config.php` (questo file è escluso da Git tramite `.gitignore` per non esporre mai le password su GitHub).
-3. Modifica `api/config.php` inserendo i dati del database creato al punto 1:
-   - `host`, `name`, `user`, `pass`
-   - `ip_hash_salt`: una stringa casuale lunga e segreta per anonimizzare gli IP nei log GDPR (`privacy_logs`).
-   - `allowed_origins`: il tuo dominio `https://...`.
+1. Nella cartella dell'app (`giulia-beauty-studio/`) duplica `.env.example` e rinominalo in `.env` (file escluso da Git tramite `.gitignore` per non esporre mai credenziali su GitHub).
+2. Compila `.env` con i dati del database MySQL creati al punto 1:
+   - `DB_HOST=localhost`
+   - `DB_NAME=...`
+   - `DB_USER=...`
+   - `DB_PASS=...`
+   - `SESSION_SECRET=...` (stringa casuale lunga 32+ caratteri)
+   - `IP_HASH_SALT=...` (stringa casuale per anonimizzare gli IP nei log GDPR)
+   - `COOKIE_SECURE=true` (se il dominio usa HTTPS/SSL)
+   - `ALLOWED_ORIGINS=https://tuodominio.it,https://www.tuodominio.it`
+3. Torna in **Setup Node.js App** e clicca **Restart**.
 
----
-
-## 4. Inizializza Tabelle e Primo Utente Admin
-
-Hai due modi (consigliato il Metodo A):
-
-### Metodo A — Procedura guidata automatica (`api/setup.php`)
-1. Apri nel browser `https://tuodominio.it/api/setup.php`.
-2. Inserisci nome, email di accesso (es. `giulia@giuliabeautystudio.it`) e password amministratore.
-3. Premi **Inizializza Database e Crea Admin**: lo script eseguirà `backend/schema.sql` creando le tabelle `admin_users`, `clients`, `appointments`, `privacy_logs` e creerà l'account admin.
-4. Una volta completato, `setup.php` si blocca automaticamente se esiste già un admin; per massima sicurezza puoi anche eliminarlo dal File Manager dopo il primo accesso.
-
-### Metodo B — Import manuale via phpMyAdmin
-1. Apri **phpMyAdmin** da cPanel, seleziona il tuo database e importa `backend/schema.sql`.
-2. Poi apri `api/setup.php` per creare solo il primo utente amministratore.
+> **Verifica veloce:** apri `https://tuodominio.it/api/health` e controlla che risponda `{"ok":true,"runtime":"nodejs","db_connected":true}`.
 
 ---
 
-## 5. Accesso all'Agenda e al Database Clienti
+## 4. Inizializza Tabelle MySQL e Primo Utente Admin
 
-- **Sito pubblico clienti:** `https://tuodominio.it/`
-- **Agenda Giulia & CRM Clienti:** `https://tuodominio.it/admin.html`
+### Metodo A — Procedura guidata web (`/api/setup`)
+1. Apri nel browser `https://tuodominio.it/api/setup`.
+2. Inserisci nome titolare, username/email (es. `giulia@giuliabeautystudio.it`) e password (min. 8 caratteri).
+3. Premi **Crea Database e Account Titolare**: Node.js eseguirà automaticamente `backend/schema.sql` (`admin_users`, `admin_sessions`, `clients`, `appointments`, `privacy_logs`) e creerà l'account di Giulia.
+4. Una volta creato il primo admin, `/api/setup` blocca automaticamente la creazione di nuovi account.
 
-Funzionalità incluse nel pannello riservato:
-- **Agenda stile Google Calendar:** viste **Settimana**, **Giorno** ed **Elenco**, creazione/modifica rapida appuntamenti con selettore trattamenti dal listino, cambio stato (`Confermato`, `In attesa`, `Completato`, `Annullato`, `No-show`), blocco automatico degli orari già occupati sul sito pubblico (inclusi martedì e domenica chiusi) e link rapido **Promemoria WhatsApp**.
-- **Database Clienti (CRM):** anagrafica completa persistente su MySQL, storico trattamenti e spesa, campo dedicato per **Allergie / Sensibilità / Note Tecniche**, esportazione CSV/JSON.
-- **Conformità Privacy GDPR:** ogni prenotazione registra in `privacy_logs` la versione dell'informativa accettata (`v2.0-2026-11`), timestamp, canale e hash IP anonimizzato, con funzione di **Cancellazione GDPR (Diritto all'oblio)** dalla scheda cliente.
+### Metodo B — Terminale + phpMyAdmin
+- Puoi anche eseguire `npm run init-db` dal Terminale cPanel (o importare `backend/schema.sql` da phpMyAdmin) e poi visitare `/api/setup` per creare l'account admin.
+
+---
+
+## 5. Avvio in Locale (Test Sviluppo)
+
+```bash
+cp .env.example .env
+# Inserisci le tue credenziali MySQL locali in .env
+npm install
+npm start
+```
+
+Poi apri `http://localhost:3000/` per la boutique pubblica e `http://localhost:3000/admin.html` per l'Agenda & Database Clienti.

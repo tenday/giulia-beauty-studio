@@ -1,0 +1,18 @@
+{
+  "name": "giulia-beauty-studio",
+  "version": "2.0.0",
+  "description": "Giulia Beauty Studio - Boutique prenotazioni, Agenda stile Google Calendar, CRM Clienti & Log Privacy GDPR (Node.js + MySQL)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "init-db": "node backend/init-db.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "mysql2": "^3.11.4"
+  }
+}

@@ -1,4 +1,12 @@
-# Sensitive production credentials (keep local/cPanel only, never commit to public GitHub)
-api/config.php
+# Environment & Secrets (NEVER commit real DB credentials)
+.env
+.env.local
+.env.*.local
+
+# Node.js dependencies & logs
+node_modules/
+npm-debug.log*
+
+# OS / Editor junk
 .DS_Store
 Thumbs.db
