@@ -8,6 +8,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const express = require('express');
 const { getStore } = require('./backend/store');
+const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
 const {
   SESSION_COOKIE_NAME,
   SESSION_TTL_HOURS,
@@ -629,6 +630,54 @@ app.post('/api/admin/clients', requireAdmin, async (req, res, next) => {
     });
 
     return res.status(result.status).json({ ok: true, id: result.id });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ============================================================================
+   ADMIN AI INSIGHTS & STUDIO REPORTS API
+   ============================================================================ */
+app.get('/api/admin/insights', requireAdmin, async (req, res, next) => {
+  try {
+    const days = Math.max(7, Math.min(365, Number.parseInt(req.query.days || '30', 10) || 30));
+    const store = getStore();
+    const [clients, appointments] = await Promise.all([
+      store.listClients(''),
+      store.listAppointments({ startDate: '', endDate: '', status: '', clientId: 0 }),
+    ]);
+
+    const insights = computeStudioInsights(clients, appointments, getRomeToday(), days);
+    return res.json({
+      ok: true,
+      gemini_enabled: Boolean(String(process.env.GEMINI_API_KEY || '').trim()),
+      insights,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/ai-chat', requireAdmin, async (req, res, next) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    if (!question) {
+      return sendError(res, 'Scrivi una domanda per l\'Assistente AI.', 400);
+    }
+
+    const store = getStore();
+    const [clients, appointments] = await Promise.all([
+      store.listClients(''),
+      store.listAppointments({ startDate: '', endDate: '', status: '', clientId: 0 }),
+    ]);
+
+    const reply = await answerStudioQuestion(question, clients, appointments, getRomeToday());
+    return res.json({
+      ok: true,
+      engine: reply.engine,
+      answer: reply.answer,
+      insights: reply.insights,
+    });
   } catch (err) {
     return next(err);
   }

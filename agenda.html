@@ -44,6 +44,9 @@
         <button type="button" class="admin-tab-btn" data-view="clients">
           👩 Clienti &amp; Privacy
         </button>
+        <button type="button" class="admin-tab-btn" data-view="insights">
+          ✨ AI &amp; Report
+        </button>
         <button type="button" class="admin-tab-btn" data-view="settings">
           ⚙️ Impostazioni
         </button>
@@ -138,7 +141,87 @@
       </section>
 
       <!-- ================================================================
-           VIEW 3: IMPOSTAZIONI & SICUREZZA
+           VIEW 3: ASSISTENTE AI & REPORT STUDIO
+           ================================================================ -->
+      <section id="viewInsights" class="admin-view" hidden>
+        <div class="crm-toolbar">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="status-badge badge-birthday" id="aiEngineBadge">✨ Assistente AI Studio • Dati Reali</span>
+            <label for="inactiveDaysFilter" style="font-size:0.74rem;font-weight:600;color:var(--ink-soft);">Soglia assenza clienti:</label>
+            <select id="inactiveDaysFilter" class="form-control form-control-sm">
+              <option value="30">Oltre 30 giorni</option>
+              <option value="45">Oltre 45 giorni</option>
+              <option value="60">Oltre 60 giorni</option>
+              <option value="90">Oltre 90 giorni</option>
+            </select>
+          </div>
+          <div class="crm-actions-wrap">
+            <button type="button" class="btn-outline-sm" id="downloadReportJsonBtn">📥 Esporta Report JSON</button>
+            <button type="button" class="btn-primary-admin" id="printStudioReportBtn">🖨️ Genera / Stampa Report PDF</button>
+          </div>
+        </div>
+
+        <!-- Conversational AI Assistant -->
+        <div class="ai-assistant-card">
+          <div class="ai-assistant-header">
+            <div>
+              <span class="eyebrow">Intelligenza Artificiale Gestionale</span>
+              <h2 style="font-family:var(--font-serif);font-size:1.6rem;">Chiedi all'Assistente di Giulia</h2>
+            </div>
+          </div>
+
+          <div class="ai-quick-prompts">
+            <button type="button" class="ai-prompt-chip" data-question="Quante clienti non vengono da più di 30 giorni e chi sono?">🔍 Chi non viene da un po'?</button>
+            <button type="button" class="ai-prompt-chip" data-question="Fammi il report completo di questo mese">📊 Report mensile studio</button>
+            <button type="button" class="ai-prompt-chip" data-question="Quali trattamenti sono più richiesti?">💅 Trattamenti top</button>
+            <button type="button" class="ai-prompt-chip" data-question="Chi sono le clienti migliori VIP?">👑 Clienti VIP</button>
+            <button type="button" class="ai-prompt-chip" data-question="Ci sono compleanni o promemoria per domani?">🎂 Compleanni &amp; Domani</button>
+          </div>
+
+          <div id="aiChatMessages" class="ai-chat-messages">
+            <div class="ai-msg ai-msg-bot">
+              Ciao Giulia ♡ Analizzo automaticamente agenda, clienti, note e fatturato reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.
+            </div>
+          </div>
+
+          <form id="aiChatForm" class="ai-chat-form">
+            <input type="text" id="aiQuestionInput" class="form-control" placeholder="Es. Chi non viene da più di 45 giorni? / Report incassi..." required />
+            <button type="submit" class="btn-primary-admin" id="aiSendBtn">Chiedi all'AI</button>
+          </form>
+        </div>
+
+        <!-- Recommendations & Economic Summary -->
+        <div id="aiKpiHighlights" class="insights-kpi-grid"></div>
+        <div id="aiRecommendationsBox" class="settings-card" style="margin-bottom:18px;"></div>
+
+        <!-- Inactive Clients Table (Win-Back) -->
+        <div class="clients-table-card" style="margin-bottom:18px;">
+          <div class="insights-section-head">
+            <div>
+              <h3>Clienti che non tornano da un po'</h3>
+              <p class="muted-text" style="margin:0;">Elenco automatico delle clienti senza appuntamento futuro la cui ultima visita supera la soglia selezionata.</p>
+            </div>
+          </div>
+          <div id="inactiveClientsContainer"></div>
+        </div>
+
+        <!-- Reports Grid: Top Services + VIP Clients -->
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Trattamenti più Richiesti</h3>
+            <p class="muted-text">Classifica per numero di prenotazioni e ricavo generato.</p>
+            <div id="topServicesReportList"></div>
+          </div>
+          <div class="settings-card">
+            <h3>Clienti più Fedeli (VIP)</h3>
+            <p class="muted-text">Classifica per frequenza visite e spesa complessiva in studio.</p>
+            <div id="vipClientsReportList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 4: IMPOSTAZIONI & SICUREZZA
            ================================================================ -->
       <section id="viewSettings" class="admin-view" hidden>
         <div class="settings-grid">

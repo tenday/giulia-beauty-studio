@@ -13,6 +13,9 @@ const STATE = {
   appointments: [],
   tomorrowAppointments: [],
   clients: [],
+  insights: null,
+  geminiEnabled: false,
+  inactiveDaysFilter: 30,
   clientPickerMode: 'existing', // 'existing' | 'new'
   selectedCatalogIds: new Set(),
 };
@@ -160,11 +163,19 @@ async function checkAuth() {
 }
 
 async function refreshAllData() {
-  await Promise.all([loadClients(), loadAppointments(), loadTomorrowReminders()]);
+  await Promise.all([loadClients(), loadAppointments(), loadTomorrowReminders(), loadInsights()]);
   updateKpis();
   renderSmartAssistBar();
   renderCalendar();
   renderClientsTable();
+  renderInsightsView();
+}
+
+async function loadInsights() {
+  const days = Number(STATE.inactiveDaysFilter || 30);
+  const data = await apiFetch(`admin/insights?days=${days}`, { method: 'GET' });
+  STATE.insights = data.insights || null;
+  STATE.geminiEnabled = Boolean(data.gemini_enabled);
 }
 
 async function loadTomorrowReminders() {
@@ -930,7 +941,11 @@ document.addEventListener('DOMContentLoaded', () => {
       STATE.activeView = btn.dataset.view;
       document.getElementById('viewAgenda').hidden = STATE.activeView !== 'agenda';
       document.getElementById('viewClients').hidden = STATE.activeView !== 'clients';
+      document.getElementById('viewInsights').hidden = STATE.activeView !== 'insights';
       document.getElementById('viewSettings').hidden = STATE.activeView !== 'settings';
+      if (STATE.activeView === 'insights') {
+        renderInsightsView();
+      }
     });
   });
 
@@ -1124,4 +1139,293 @@ document.addEventListener('DOMContentLoaded', () => {
       msgEl.hidden = false;
     }
   });
+
+  // AI Insights & Studio Reports Controls
+  const inactiveFilterEl = document.getElementById('inactiveDaysFilter');
+  if (inactiveFilterEl) {
+    inactiveFilterEl.addEventListener('change', async (e) => {
+      STATE.inactiveDaysFilter = Number(e.target.value) || 30;
+      await loadInsights();
+      renderInsightsView();
+    });
+  }
+
+  document.querySelectorAll('.ai-prompt-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      sendAiQuestion(chip.dataset.question);
+    });
+  });
+
+  const aiForm = document.getElementById('aiChatForm');
+  if (aiForm) {
+    aiForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('aiQuestionInput');
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = '';
+      sendAiQuestion(q);
+    });
+  }
+
+  const printReportBtn = document.getElementById('printStudioReportBtn');
+  if (printReportBtn) {
+    printReportBtn.addEventListener('click', printStudioReport);
+  }
+
+  const jsonReportBtn = document.getElementById('downloadReportJsonBtn');
+  if (jsonReportBtn) {
+    jsonReportBtn.addEventListener('click', downloadReportJson);
+  }
 });
+
+/* ==========================================================================
+   AI INSIGHTS, INACTIVE CLIENTS & REPORTS RENDERER
+   ========================================================================== */
+function formatAiTextToSafeHtml(rawText) {
+  let safe = escapeHtml(rawText || '');
+  safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  safe = safe.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  return safe;
+}
+
+function buildWinBackWhatsAppUrl(client) {
+  const waNum = formatWaNumber(client.phone);
+  const msg = `Ciao ${client.full_name} ♡ È da un po' (${client.days_since} giorni) che non ci vediamo da *Giulia Beauty Studio*! Quando hai voglia di concederti una coccola o un ritocco, scrivimi pure qui per trovare insieme l'orario più comodo. Ti aspetto!`;
+  return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
+}
+
+function renderInsightsView() {
+  const ins = STATE.insights;
+  const kpiGrid = document.getElementById('aiKpiHighlights');
+  const recBox = document.getElementById('aiRecommendationsBox');
+  const inactiveBox = document.getElementById('inactiveClientsContainer');
+  const svcBox = document.getElementById('topServicesReportList');
+  const vipBox = document.getElementById('vipClientsReportList');
+  const badge = document.getElementById('aiEngineBadge');
+
+  if (!ins || !kpiGrid) return;
+
+  if (badge) {
+    badge.textContent = STATE.geminiEnabled
+      ? '✨ AI Potenziata da Gemini + Dati Reali'
+      : '✨ Assistente AI Studio • Dati Reali';
+  }
+
+  const s = ins.summary;
+  const deltaText =
+    s.revenue_delta_pct === null
+      ? `Mese prec.: ${s.prev_month_revenue.toFixed(0)} €`
+      : `${s.revenue_delta_pct >= 0 ? '+' : ''}${s.revenue_delta_pct}% vs mese scorso`;
+
+  kpiGrid.innerHTML = `
+    <div class="kpi-card">
+      <span class="kpi-label">Fatturato Mese (${escapeHtml(ins.current_month)})</span>
+      <strong class="kpi-value">${s.month_revenue.toFixed(0)} €</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">${escapeHtml(deltaText)}</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Ticket Medio Studio</span>
+      <strong class="kpi-value">${s.avg_ticket.toFixed(0)} €</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Su ${s.total_active_appointments} appuntamenti</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Assenti 30+ / 60+ Giorni</span>
+      <strong class="kpi-value">${s.inactive_30_plus} / ${s.inactive_60_plus}</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">90+ gg: ${s.inactive_90_plus} • Mai tornate: ${s.never_visited_count}</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Conformità Privacy GDPR</span>
+      <strong class="kpi-value">${s.privacy_accepted_clients}/${s.total_clients}</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Clienti con consenso salvato</span>
+    </div>
+  `;
+
+  recBox.innerHTML = `
+    <h3 style="margin-bottom:10px;">Analisi &amp; Consigli AI di Oggi</h3>
+    ${(ins.recommendations || [])
+      .map((r) => `<div class="rec-item"><strong>${escapeHtml(r.icon)}</strong> ${escapeHtml(r.text)}</div>`)
+      .join('')}
+  `;
+
+  const inactiveList = ins.inactive_clients || [];
+  if (inactiveList.length === 0) {
+    inactiveBox.innerHTML = `<div style="padding:26px;text-align:center;color:var(--ink-soft);">Nessuna cliente assente da oltre ${ins.inactive_threshold_days} giorni. Ottimo lavoro!</div>`;
+  } else {
+    inactiveBox.innerHTML = `
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>Ultima Visita</th>
+            <th>Giorni di Assenza</th>
+            <th>Ultimo Trattamento</th>
+            <th>Spesa Totale</th>
+            <th>Richiamo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${inactiveList
+            .map(
+              (c) => `<tr>
+                <td><strong>${escapeHtml(c.full_name)}</strong><br /><span style="font-size:0.74rem;color:var(--ink-muted);">${escapeHtml(c.phone)}</span></td>
+                <td>${escapeHtml(c.last_visit)}</td>
+                <td><span class="status-badge badge-birthday">${c.days_since} giorni fa</span></td>
+                <td>${escapeHtml(c.last_services || '—')}</td>
+                <td><strong>${Number(c.total_spent || 0).toFixed(0)} €</strong> (${c.visits_count} visite)</td>
+                <td><a href="${buildWinBackWhatsAppUrl(c)}" target="_blank" rel="noopener" class="btn-outline-sm">💬 Richiama WhatsApp</a></td>
+              </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  const topServices = ins.top_services || [];
+  if (topServices.length === 0) {
+    svcBox.innerHTML = '<p class="muted-text">Nessun trattamento registrato negli appuntamenti.</p>';
+  } else {
+    const maxCount = Math.max(1, topServices[0].count);
+    svcBox.innerHTML = topServices
+      .map((t) => {
+        const pct = Math.round((t.count / maxCount) * 100);
+        return `
+          <div class="report-bar-row">
+            <div class="report-bar-label">
+              <span><strong>${escapeHtml(t.name)}</strong></span>
+              <span>${t.count}× • ${Number(t.revenue).toFixed(0)} €</span>
+            </div>
+            <div class="report-bar-track"><div class="report-bar-fill" style="width:${pct}%;"></div></div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  const vipClients = ins.vip_clients || [];
+  if (vipClients.length === 0) {
+    vipBox.innerHTML = '<p class="muted-text">Nessuna cliente con visite attive ancora registrate.</p>';
+  } else {
+    const maxSpent = Math.max(1, vipClients[0].total_spent);
+    vipBox.innerHTML = vipClients
+      .map((c) => {
+        const pct = Math.round((c.total_spent / maxSpent) * 100);
+        return `
+          <div class="report-bar-row">
+            <div class="report-bar-label">
+              <span><strong>${escapeHtml(c.full_name)}</strong></span>
+              <span>${c.visits_count} visite • ${Number(c.total_spent).toFixed(0)} €</span>
+            </div>
+            <div class="report-bar-track"><div class="report-bar-fill" style="width:${pct}%;"></div></div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+}
+
+async function sendAiQuestion(question) {
+  const messagesBox = document.getElementById('aiChatMessages');
+  const sendBtn = document.getElementById('aiSendBtn');
+  if (!messagesBox) return;
+
+  const userDiv = document.createElement('div');
+  userDiv.className = 'ai-msg ai-msg-user';
+  userDiv.textContent = question;
+  messagesBox.appendChild(userDiv);
+
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'ai-msg ai-msg-bot';
+  loadingDiv.textContent = 'Sto analizzando i dati aggiornati dello studio...';
+  messagesBox.appendChild(loadingDiv);
+  messagesBox.scrollTop = messagesBox.scrollHeight;
+
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    const res = await apiFetch('admin/ai-chat', {
+      method: 'POST',
+      body: JSON.stringify({ question }),
+    });
+    loadingDiv.innerHTML = formatAiTextToSafeHtml(res.answer);
+    if (res.insights) {
+      STATE.insights = res.insights;
+      renderInsightsView();
+    }
+  } catch (err) {
+    loadingDiv.textContent = `Errore durante l'analisi: ${err.message}`;
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    messagesBox.scrollTop = messagesBox.scrollHeight;
+  }
+}
+
+function downloadReportJson() {
+  if (!STATE.insights) return;
+  const blob = new Blob([JSON.stringify(STATE.insights, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `report-giulia-beauty-${toIsoDate(new Date())}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function printStudioReport() {
+  const ins = STATE.insights;
+  if (!ins) return;
+  const s = ins.summary;
+  const win = window.open('', '_blank', 'width=900,height=720');
+  if (!win) {
+    alert('Consenti i popup per aprire il report stampabile.');
+    return;
+  }
+
+  const inactiveRows = (ins.inactive_all_30_plus || [])
+    .map(
+      (c) => `<tr><td>${escapeHtml(c.full_name)}</td><td>${escapeHtml(c.phone)}</td><td>${escapeHtml(c.last_visit)}</td><td>${c.days_since} gg</td><td>${escapeHtml(c.last_services)}</td></tr>`
+    )
+    .join('');
+
+  const servicesRows = (ins.top_services || [])
+    .map((t) => `<tr><td>${escapeHtml(t.name)}</td><td>${t.count}</td><td>${Number(t.revenue).toFixed(2)} €</td></tr>`)
+    .join('');
+
+  win.document.write(`<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>Report Gestionale — Giulia Beauty Studio (${escapeHtml(ins.generated_at)})</title>
+  <style>
+    body { font-family: Georgia, serif; color: #3d1218; padding: 32px; max-width: 820px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 26px; }
+    .sub { color: #6e3b42; font-family: Arial, sans-serif; font-size: 13px; margin-bottom: 24px; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; font-family: Arial, sans-serif; }
+    .kpi { border: 1px solid #d9b6b9; border-radius: 10px; padding: 12px; }
+    .kpi span { display: block; font-size: 11px; text-transform: uppercase; color: #6e3b42; }
+    .kpi strong { font-size: 20px; }
+    h2 { font-size: 18px; border-bottom: 1px solid #d9b6b9; padding-bottom: 6px; margin-top: 26px; }
+    table { width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: 13px; margin-top: 10px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #f0dede; }
+    th { background: #fdf6f5; }
+    @media print { .no-print { display: none; } }
+  </style>
+</head>
+<body>
+  <button class="no-print" onclick="window.print()" style="float:right;padding:8px 16px;cursor:pointer;">Stampa / Salva PDF</button>
+  <h1>Giulia Beauty Studio — Report Gestionale AI</h1>
+  <div class="sub">Via Principe Amedeo, 17 - Verdellino (BG) • Generato il ${escapeHtml(ins.generated_at)}</div>
+  <div class="kpis">
+    <div class="kpi"><span>Clienti Totali</span><strong>${s.total_clients}</strong></div>
+    <div class="kpi"><span>Fatturato Mese</span><strong>${s.month_revenue.toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Ticket Medio</span><strong>${s.avg_ticket.toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Assenti 30+ gg</span><strong>${s.inactive_30_plus}</strong></div>
+  </div>
+  <h2>Clienti che non vengono da 30+ giorni</h2>
+  ${inactiveRows ? `<table><thead><tr><th>Cliente</th><th>Telefono</th><th>Ultima Visita</th><th>Assenza</th><th>Ultimo Trattamento</th></tr></thead><tbody>${inactiveRows}</tbody></table>` : '<p style="font-family:Arial,sans-serif;font-size:13px;">Nessuna cliente assente da oltre 30 giorni.</p>'}
+  <h2>Classifica Trattamenti</h2>
+  ${servicesRows ? `<table><thead><tr><th>Trattamento</th><th>Prenotazioni</th><th>Ricavo</th></tr></thead><tbody>${servicesRows}</tbody></table>` : '<p style="font-family:Arial,sans-serif;font-size:13px;">Nessun trattamento registrato.</p>'}
+</body>
+</html>`);
+  win.document.close();
+}
