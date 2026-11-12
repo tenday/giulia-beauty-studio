@@ -75,6 +75,9 @@
       </nav>
 
       <div class="admin-header-actions">
+        <button type="button" class="btn-outline-sm" id="openRemindersModalBtn" title="Invia promemoria WhatsApp per gli appuntamenti di domani">
+          📲 Promemoria Domani (<span id="tomorrowRemindersBadge">0</span>)
+        </button>
         <button type="button" class="btn-primary-admin" id="newApptQuickBtn">
           + Nuovo Appuntamento
         </button>
@@ -132,6 +135,8 @@
             </div>
           </div>
         </div>
+
+        <div id="smartAssistBar" class="smart-assist-bar" hidden></div>
 
         <div id="calendarContainer" class="calendar-surface"></div>
       </section>
@@ -216,6 +221,7 @@
           <div id="existingClientPickGroup" class="form-group">
             <label for="apptClientSelect">Seleziona Cliente dal Database *</label>
             <select id="apptClientSelect" class="form-control"></select>
+            <div id="apptSelectedClientInfo" class="client-note-preview" hidden></div>
           </div>
 
           <div id="inlineClientFields" hidden>
@@ -229,9 +235,19 @@
                 <input type="tel" id="apptNewClientPhone" class="form-control" placeholder="+39 340..." />
               </div>
             </div>
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="apptNewClientEmail">Email (opzionale)</label>
+                <input type="email" id="apptNewClientEmail" class="form-control" placeholder="cliente@email.it" />
+              </div>
+              <div class="form-group">
+                <label for="apptNewClientBirthDate">Compleanno 🎂 (opzionale)</label>
+                <input type="date" id="apptNewClientBirthDate" class="form-control" />
+              </div>
+            </div>
             <div class="form-group">
-              <label for="apptNewClientEmail">Email (opzionale)</label>
-              <input type="email" id="apptNewClientEmail" class="form-control" placeholder="cliente@email.it" />
+              <label for="apptNewClientPrefNotes">Note Cliente / Preferenze (opzionale)</label>
+              <input type="text" id="apptNewClientPrefNotes" class="form-control" placeholder="Es. Forma mandorla, colore preferito, allergie..." />
             </div>
             <label class="inline-check-label">
               <input type="checkbox" id="apptNewClientPrivacy" checked />
@@ -282,8 +298,8 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="apptNotesInput">Note Appuntamento</label>
-            <input type="text" id="apptNotesInput" class="form-control" placeholder="Colore scelto, note particolari..." />
+            <label for="apptNotesInput">Note Appuntamento 📝</label>
+            <textarea id="apptNotesInput" class="form-control" rows="2" placeholder="Colore scelto, note tecniche seduta, richieste particolari..."></textarea>
           </div>
         </div>
 
@@ -317,7 +333,7 @@
         <form id="clientForm">
           <input type="hidden" id="clientIdInput" value="" />
 
-          <div class="form-row-3">
+          <div class="form-row-2">
             <div class="form-group">
               <label for="clientFullNameInput">Nome e Cognome *</label>
               <input type="text" id="clientFullNameInput" class="form-control" required />
@@ -326,20 +342,27 @@
               <label for="clientPhoneCrmInput">Telefono / WhatsApp *</label>
               <input type="tel" id="clientPhoneCrmInput" class="form-control" required />
             </div>
+          </div>
+
+          <div class="form-row-2">
             <div class="form-group">
               <label for="clientEmailCrmInput">Email</label>
               <input type="email" id="clientEmailCrmInput" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label for="clientBirthDateInput">Data di Compleanno 🎂</label>
+              <input type="date" id="clientBirthDateInput" class="form-control" />
             </div>
           </div>
 
           <div class="form-row-2">
             <div class="form-group">
               <label for="clientAllergiesInput">Allergie / Sensibilità Cutanee o Oculari</label>
-              <textarea id="clientAllergiesInput" class="form-control" rows="2" placeholder="Es. Sensibilità colla ciglia, pelle reattiva, allergia nichel..."></textarea>
+              <textarea id="clientAllergiesInput" class="form-control" rows="3" placeholder="Es. Sensibilità colla ciglia, pelle reattiva, allergia nichel..."></textarea>
             </div>
             <div class="form-group">
-              <label for="clientPreferencesInput">Note Tecniche (Formula Colore, Forma Unghie, Preferenze)</label>
-              <textarea id="clientPreferencesInput" class="form-control" rows="2" placeholder="Es. Mandorla corta, base milky rose, curvatura L..."></textarea>
+              <label for="clientPreferencesInput">Note Personali, Colori &amp; Storico Tecnico 📝</label>
+              <textarea id="clientPreferencesInput" class="form-control" rows="3" placeholder="Es. Mandorla corta, base milky rose, curvatura L, preferisce appuntamenti al mattino..."></textarea>
             </div>
           </div>
 
@@ -377,6 +400,27 @@
             <div id="clientPrivacyLogsList"></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: PROMEMORIA GIORNO DOPO & COMPLEANNI
+       ==================================================================== -->
+  <div id="remindersModal" class="admin-modal-overlay" role="dialog" aria-modal="true">
+    <div class="admin-modal-card admin-modal-wide">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">WhatsApp Studio Assistant</span>
+          <h3 id="remindersModalTitle">Promemoria per Domani</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closeRemindersModalBtn">✕</button>
+      </div>
+      <div class="admin-modal-body">
+        <p class="muted-text" id="remindersDateSubtitle">
+          Invia con un clic il promemoria WhatsApp personalizzato alle clienti con appuntamento previsto per domani.
+        </p>
+        <div id="remindersListContainer"></div>
       </div>
     </div>
   </div>

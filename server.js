@@ -8,7 +8,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
-const { isDbConfigured, getPool, applySchema } = require('./backend/db');
+const { isDbConfigured, getPool, ensureSchemaMigrations, applySchema } = require('./backend/db');
 const {
   SESSION_COOKIE_NAME,
   SESSION_TTL_HOURS,
@@ -147,6 +147,7 @@ async function requireAdmin(req, res, next) {
     if (!admin) {
       return sendError(res, 'Accesso riservato. Effettua il login.', 401, 'UNAUTHORIZED');
     }
+    await ensureSchemaMigrations(getPool());
     req.admin = admin;
     return next();
   } catch (err) {
@@ -703,12 +704,14 @@ app.get('/api/admin/appointments', requireAdmin, async (req, res, next) => {
           a.payment_method,
           a.status,
           a.notes,
+          a.reminder_sent_at,
           a.privacy_accepted,
           a.privacy_accepted_at,
           a.created_at,
           c.full_name AS client_name,
           c.phone AS client_phone,
           c.email AS client_email,
+          c.birth_date AS client_birth_date,
           c.allergies_notes,
           c.preferences_notes,
           c.privacy_version
@@ -737,6 +740,14 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
       if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
       await pool.query('DELETE FROM appointments WHERE id = ?', [id]);
       return res.json({ ok: true, deleted_id: id });
+    }
+
+    if (action === 'mark_reminder') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
+      const sentAt = body.reset ? null : formatRomeNow();
+      await pool.query('UPDATE appointments SET reminder_sent_at = ? WHERE id = ?', [sentAt, id]);
+      return res.json({ ok: true, id, reminder_sent_at: sentAt });
     }
 
     if (action === 'update') {
@@ -782,6 +793,9 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
     const clientName = String(body.client_name || '').trim();
     const clientPhone = String(body.client_phone || '').trim();
     const clientEmail = String(body.client_email || '').trim();
+    const clientBirthDateRaw = String(body.client_birth_date || '').trim();
+    const clientBirthDate = isValidIsoDate(clientBirthDateRaw) ? clientBirthDateRaw : null;
+    const clientNotes = String(body.client_notes || '').trim();
     const privacyAccepted = body.privacy_accepted ? 1 : 0;
 
     const date = String(body.appointment_date || '').trim();
@@ -821,13 +835,16 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
         clientId = Number(found[0].id);
       } else {
         const [insC] = await conn.query(
-          `INSERT INTO clients (full_name, phone, phone_normalized, email, privacy_accepted, privacy_accepted_at, privacy_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO clients
+           (full_name, phone, phone_normalized, email, birth_date, preferences_notes, privacy_accepted, privacy_accepted_at, privacy_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             clientName,
             clientPhone,
             phoneNorm,
             clientEmail || null,
+            clientBirthDate,
+            clientNotes || null,
             privacyAccepted,
             privacyAccepted ? nowStr : null,
             privacyVersion,
@@ -950,8 +967,8 @@ app.get('/api/admin/clients', requireAdmin, async (req, res, next) => {
 
     if (q) {
       const like = `%${q}%`;
-      sql += ' WHERE c.full_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.allergies_notes LIKE ?';
-      params.push(like, like, like, like);
+      sql += ' WHERE c.full_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.allergies_notes LIKE ? OR c.preferences_notes LIKE ?';
+      params.push(like, like, like, like, like);
     }
     sql += ' GROUP BY c.id ORDER BY c.full_name ASC';
 
@@ -979,6 +996,8 @@ app.post('/api/admin/clients', requireAdmin, async (req, res, next) => {
     const fullName = String(body.full_name || '').trim();
     const phoneRaw = String(body.phone || '').trim();
     const email = String(body.email || '').trim();
+    const birthDateRaw = String(body.birth_date || '').trim();
+    const birthDate = isValidIsoDate(birthDateRaw) ? birthDateRaw : null;
     const allergiesNotes = String(body.allergies_notes || '').trim();
     const preferencesNotes = String(body.preferences_notes || '').trim();
     const privacyAccepted = body.privacy_accepted ? 1 : 0;
@@ -1009,8 +1028,8 @@ app.post('/api/admin/clients', requireAdmin, async (req, res, next) => {
 
       await pool.query(
         `UPDATE clients
-         SET full_name = ?, phone = ?, phone_normalized = ?, email = ?, allergies_notes = ?,
-             preferences_notes = ?, privacy_accepted = ?, privacy_accepted_at = ?,
+         SET full_name = ?, phone = ?, phone_normalized = ?, email = ?, birth_date = ?,
+             allergies_notes = ?, preferences_notes = ?, privacy_accepted = ?, privacy_accepted_at = ?,
              privacy_version = ?, marketing_consent = ?
          WHERE id = ?`,
         [
@@ -1018,6 +1037,7 @@ app.post('/api/admin/clients', requireAdmin, async (req, res, next) => {
           phoneRaw,
           phoneNorm,
           email || null,
+          birthDate,
           allergiesNotes || null,
           preferencesNotes || null,
           privacyAccepted,
@@ -1041,14 +1061,15 @@ app.post('/api/admin/clients', requireAdmin, async (req, res, next) => {
 
     const [ins] = await pool.query(
       `INSERT INTO clients
-       (full_name, phone, phone_normalized, email, allergies_notes, preferences_notes,
+       (full_name, phone, phone_normalized, email, birth_date, allergies_notes, preferences_notes,
         privacy_accepted, privacy_accepted_at, privacy_version, marketing_consent)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         fullName,
         phoneRaw,
         phoneNorm,
         email || null,
+        birthDate,
         allergiesNotes || null,
         preferencesNotes || null,
         privacyAccepted,

@@ -11,6 +11,7 @@ const STATE = {
   anchorDate: new Date(),
   statusFilter: '',
   appointments: [],
+  tomorrowAppointments: [],
   clients: [],
   clientPickerMode: 'existing', // 'existing' | 'new'
   selectedCatalogIds: new Set(),
@@ -43,6 +44,49 @@ function toIsoDate(dt) {
   const m = String(dt.getMonth() + 1).padStart(2, '0');
   const d = String(dt.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+function getTomorrowIso() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return toIsoDate(d);
+}
+
+function formatShortItDate(isoStr) {
+  if (!isoStr || !/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) return isoStr || '';
+  const [, m, d] = isoStr.split('-').map(Number);
+  return `${d} ${MONTHS_IT[m - 1].slice(0, 3)}`;
+}
+
+function getDaysUntilBirthday(birthDateIso) {
+  if (!birthDateIso || !/^\d{4}-\d{2}-\d{2}$/.test(String(birthDateIso))) return null;
+  const [, bm, bd] = String(birthDateIso).split('-').map(Number);
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let nextBday = new Date(now.getFullYear(), bm - 1, bd);
+  if (nextBday < todayMidnight) {
+    nextBday = new Date(now.getFullYear() + 1, bm - 1, bd);
+  }
+  return Math.round((nextBday - todayMidnight) / (1000 * 60 * 60 * 24));
+}
+
+function formatWaNumber(phone) {
+  const clean = String(phone || '').replace(/[^\d]/g, '');
+  if (!clean) return '';
+  return clean.startsWith('39') ? clean : `39${clean}`;
+}
+
+function buildTomorrowReminderUrl(appt) {
+  const waNum = formatWaNumber(appt.client_phone);
+  const dateLabel = formatShortItDate(appt.appointment_date);
+  const msg = `Ciao ${appt.client_name} ♡ Ti ricordiamo il tuo appuntamento da *Giulia Beauty Studio* (Via Principe Amedeo 17, Verdellino) per domani *${dateLabel}* alle ore *${appt.start_time}* (${appt.services_summary}). Per qualsiasi variazione scrivici pure qui su WhatsApp. A domani!`;
+  return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
+}
+
+function buildBirthdayWishUrl(client) {
+  const waNum = formatWaNumber(client.phone);
+  const msg = `Tanti Auguri di Buon Compleanno ${client.full_name} ♡🎂 Da *Giulia Beauty Studio* ti auguriamo una giornata splendida! Ti aspettiamo presto in studio per coccolarti un po'!`;
+  return `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`;
 }
 
 function parseIsoDate(str) {
@@ -108,10 +152,17 @@ async function checkAuth() {
 }
 
 async function refreshAllData() {
-  await Promise.all([loadClients(), loadAppointments()]);
+  await Promise.all([loadClients(), loadAppointments(), loadTomorrowReminders()]);
   updateKpis();
+  renderSmartAssistBar();
   renderCalendar();
   renderClientsTable();
+}
+
+async function loadTomorrowReminders() {
+  const tomorrow = getTomorrowIso();
+  const data = await apiFetch(`admin/appointments?start_date=${tomorrow}&end_date=${tomorrow}`, { method: 'GET' });
+  STATE.tomorrowAppointments = (data.appointments || []).filter((a) => a.status !== 'cancelled');
 }
 
 async function loadClients(query = '') {
@@ -154,6 +205,146 @@ function updateKpis() {
   document.getElementById('kpiWeekCount').textContent = weekActive;
   document.getElementById('kpiPendingCount').textContent = pendingCount;
   document.getElementById('kpiClientsCount').textContent = STATE.clients.length;
+
+  const unsentCount = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at).length;
+  const badgeEl = document.getElementById('tomorrowRemindersBadge');
+  if (badgeEl) {
+    badgeEl.textContent = unsentCount > 0 ? `${unsentCount}` : `${STATE.tomorrowAppointments.length}`;
+  }
+}
+
+function renderSmartAssistBar() {
+  const bar = document.getElementById('smartAssistBar');
+  if (!bar) return;
+
+  const cards = [];
+
+  if (STATE.tomorrowAppointments.length > 0) {
+    const unsent = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at).length;
+    const summaryText = unsent > 0
+      ? `${STATE.tomorrowAppointments.length} appuntamenti domani • ${unsent} promemoria da inviare`
+      : `Tutti i ${STATE.tomorrowAppointments.length} promemoria di domani già inviati ✓`;
+    cards.push(`
+      <div class="assist-card">
+        <div>
+          <span class="assist-card-title">📲 Promemoria per Domani (${escapeHtml(formatShortItDate(getTomorrowIso()))})</span>
+          <span class="assist-card-sub">${escapeHtml(summaryText)}</span>
+        </div>
+        <div class="assist-actions">
+          <button type="button" class="btn-outline-sm" id="assistOpenRemindersBtn">Invia WhatsApp</button>
+        </div>
+      </div>
+    `);
+  }
+
+  const upcomingBirthdays = STATE.clients
+    .map((c) => ({ client: c, days: getDaysUntilBirthday(c.birth_date) }))
+    .filter((item) => item.days !== null && item.days <= 14)
+    .sort((a, b) => a.days - b.days);
+
+  if (upcomingBirthdays.length > 0) {
+    const first = upcomingBirthdays[0];
+    const whenLabel = first.days === 0 ? 'Oggi!' : first.days === 1 ? 'Domani' : `tra ${first.days} gg (${formatShortItDate(first.client.birth_date)})`;
+    const extraCount = upcomingBirthdays.length > 1 ? ` (+${upcomingBirthdays.length - 1})` : '';
+    cards.push(`
+      <div class="assist-card assist-card-birthday">
+        <div>
+          <span class="assist-card-title">🎂 Compleanni in Arrivo${extraCount}</span>
+          <span class="assist-card-sub"><strong>${escapeHtml(first.client.full_name)}</strong> — ${escapeHtml(whenLabel)}</span>
+        </div>
+        <div class="assist-actions">
+          <a href="${buildBirthdayWishUrl(first.client)}" target="_blank" rel="noopener" class="btn-outline-sm">🎂 Auguri WhatsApp</a>
+        </div>
+      </div>
+    `);
+  }
+
+  if (cards.length === 0) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+
+  bar.innerHTML = cards.join('');
+  bar.hidden = false;
+
+  const btn = document.getElementById('assistOpenRemindersBtn');
+  if (btn) {
+    btn.addEventListener('click', openRemindersModal);
+  }
+}
+
+async function openRemindersModal() {
+  const modal = document.getElementById('remindersModal');
+  const container = document.getElementById('remindersListContainer');
+  const subtitle = document.getElementById('remindersDateSubtitle');
+  const tomorrow = getTomorrowIso();
+
+  subtitle.textContent = `Appuntamenti di domani (${formatShortItDate(tomorrow)}): invia il promemoria WhatsApp personalizzato con un clic.`;
+  container.innerHTML = '<p class="muted-text">Caricamento appuntamenti di domani...</p>';
+  modal.classList.add('open');
+
+  await loadTomorrowReminders();
+  updateKpis();
+  renderSmartAssistBar();
+
+  if (STATE.tomorrowAppointments.length === 0) {
+    container.innerHTML = `<div style="padding:28px;text-align:center;color:var(--ink-soft);">Nessun appuntamento attivo in agenda per domani (${escapeHtml(formatShortItDate(tomorrow))}).</div>`;
+    return;
+  }
+
+  container.innerHTML = STATE.tomorrowAppointments
+    .map((appt) => {
+      const sent = Boolean(appt.reminder_sent_at);
+      const sentLabel = sent ? `✓ Inviato (${escapeHtml(String(appt.reminder_sent_at).slice(0, 16))})` : 'Da inviare';
+      return `
+        <div class="reminder-item-card ${sent ? 'is-sent' : ''}" data-reminder-appt-id="${appt.id}">
+          <div style="flex:1;min-width:220px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <strong>${escapeHtml(appt.start_time)} — ${escapeHtml(appt.client_name)}</strong>
+              <span class="status-badge ${sent ? 'badge-privacy-ok' : 'badge-pending'}">${sentLabel}</span>
+            </div>
+            <div style="font-size:0.8rem;color:var(--ink-soft);margin-top:3px;">
+              ${escapeHtml(appt.services_summary)} • ${escapeHtml(appt.client_phone)}
+            </div>
+            ${appt.notes ? `<div class="reminder-msg-preview">📝 Nota: ${escapeHtml(appt.notes)}</div>` : ''}
+          </div>
+          <div class="assist-actions">
+            <a href="${buildTomorrowReminderUrl(appt)}" target="_blank" rel="noopener"
+               class="btn-primary-admin js-send-wa-reminder" data-id="${appt.id}">
+              💬 Invia WhatsApp
+            </a>
+            ${sent
+              ? `<button type="button" class="btn-outline-sm js-toggle-reminder" data-id="${appt.id}" data-reset="1">Segna da inviare</button>`
+              : `<button type="button" class="btn-outline-sm js-toggle-reminder" data-id="${appt.id}" data-reset="0">✓ Segna inviato</button>`}
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  container.querySelectorAll('.js-send-wa-reminder').forEach((link) => {
+    link.addEventListener('click', async () => {
+      const id = Number(link.dataset.id);
+      await apiFetch('admin/appointments', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'mark_reminder', id }),
+      });
+      await openRemindersModal();
+    });
+  });
+
+  container.querySelectorAll('.js-toggle-reminder').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.id);
+      const reset = btn.dataset.reset === '1';
+      await apiFetch('admin/appointments', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'mark_reminder', id, reset }),
+      });
+      await openRemindersModal();
+    });
+  });
 }
 
 /* ==========================================================================
@@ -237,13 +428,15 @@ function renderCalendar() {
       const topPx = Math.max(2, (minutesFromStart / 60) * 54);
       const heightPx = Math.max(36, ((Number(appt.duration_minutes) || 60) / 60) * 54 - 3);
 
+      const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
       html += `
         <div class="cal-event-card status-${escapeHtml(appt.status)}"
              data-appt-id="${appt.id}"
              style="top:${topPx}px; height:${heightPx}px;">
-          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€</div>
+          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
+          ${hasAnyNote ? `<div class="cal-event-note-flag">📝 ${escapeHtml(appt.notes || appt.allergies_notes)}</div>` : ''}
         </div>
       `;
     });
@@ -282,9 +475,15 @@ function renderListCalendar(container) {
       <tr data-appt-id="${a.id}" style="cursor: pointer;">
         <td><strong>${escapeHtml(a.appointment_date)}</strong><br /><span style="font-size:0.75rem;color:var(--ink-muted);">${escapeHtml(a.start_time)} (${a.duration_minutes} min)</span></td>
         <td><strong>${escapeHtml(a.client_name)}</strong><br /><span style="font-size:0.75rem;color:var(--ink-soft);">${escapeHtml(a.client_phone)}</span></td>
-        <td>${escapeHtml(a.services_summary)}</td>
+        <td>
+          ${escapeHtml(a.services_summary)}
+          ${a.notes ? `<br /><span style="font-size:0.74rem;color:var(--ink-muted);">📝 ${escapeHtml(a.notes)}</span>` : ''}
+        </td>
         <td><strong>${Number(a.total_price).toFixed(0)} €</strong></td>
-        <td><span class="status-badge badge-${escapeHtml(a.status)}">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span></td>
+        <td>
+          <span class="status-badge badge-${escapeHtml(a.status)}">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span>
+          ${a.reminder_sent_at ? '<br /><span style="font-size:0.68rem;color:#2e6b4a;">📲 Promemoria inviato</span>' : ''}
+        </td>
         <td><button type="button" class="btn-outline-sm">Apri</button></td>
       </tr>
     `;
@@ -363,6 +562,44 @@ function buildCatalogPicker() {
   });
 }
 
+function renderSelectedClientNotePreview(clientId) {
+  const preview = document.getElementById('apptSelectedClientInfo');
+  if (!preview) return;
+  const c = STATE.clients.find((item) => Number(item.id) === Number(clientId));
+  if (!c) {
+    preview.hidden = true;
+    preview.innerHTML = '';
+    return;
+  }
+
+  const lines = [];
+  if (c.birth_date) {
+    const days = getDaysUntilBirthday(c.birth_date);
+    const bLabel = days === 0 ? '🎂 Compleanno Oggi!' : `🎂 ${formatShortItDate(c.birth_date)}`;
+    lines.push(`<strong>${escapeHtml(bLabel)}</strong>`);
+  }
+  if (c.allergies_notes) {
+    lines.push(`<strong>⚠ Allergie:</strong> ${escapeHtml(c.allergies_notes)}`);
+  }
+  if (c.preferences_notes) {
+    lines.push(`<strong>📝 Note Cliente:</strong> ${escapeHtml(c.preferences_notes)}`);
+  }
+  if (lines.length === 0) {
+    lines.push('Nessuna nota tecnica o compleanno salvato per questa cliente.');
+  }
+
+  preview.innerHTML = `
+    <div>${lines.join('<br />')}</div>
+    <div style="margin-top:6px;">
+      <button type="button" class="btn-outline-sm" id="editPickedClientDossierBtn">Apri / Modifica Scheda &amp; Note</button>
+    </div>
+  `;
+  preview.hidden = false;
+  document.getElementById('editPickedClientDossierBtn').addEventListener('click', () => {
+    openClientModal(Number(c.id));
+  });
+}
+
 function setClientPickerMode(mode) {
   STATE.clientPickerMode = mode;
   document.getElementById('pickExistingClientTab').classList.toggle('active', mode === 'existing');
@@ -410,9 +647,12 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     clientSection.hidden = false;
     setClientPickerMode(STATE.clients.length > 0 ? 'existing' : 'new');
     document.getElementById('apptClientSelect').value = '';
+    renderSelectedClientNotePreview(0);
     document.getElementById('apptNewClientName').value = '';
     document.getElementById('apptNewClientPhone').value = '';
     document.getElementById('apptNewClientEmail').value = '';
+    document.getElementById('apptNewClientBirthDate').value = '';
+    document.getElementById('apptNewClientPrefNotes').value = '';
     document.getElementById('apptNewClientPrivacy').checked = true;
     document.getElementById('apptDateInput').value = presetDate || toIsoDate(STATE.anchorDate);
     document.getElementById('apptTimeInput').value = presetTime || '10:00';
@@ -443,15 +683,31 @@ function renderClientsTable() {
     const privacyOk = Number(c.privacy_accepted) === 1;
     const privacyDate = c.privacy_accepted_at ? String(c.privacy_accepted_at).slice(0, 10) : '';
     const hasAllergy = c.allergies_notes && c.allergies_notes.trim() !== '';
+    const hasNotes = c.preferences_notes && c.preferences_notes.trim() !== '';
+    const daysBday = getDaysUntilBirthday(c.birth_date);
+    let bdayHtml = '—';
+    if (c.birth_date) {
+      const dateTxt = formatShortItDate(c.birth_date);
+      if (daysBday === 0) {
+        bdayHtml = `<span class="status-badge badge-birthday">🎂 Oggi (${escapeHtml(dateTxt)})</span>`;
+      } else if (daysBday !== null && daysBday <= 14) {
+        bdayHtml = `<span class="status-badge badge-birthday">🎂 Tra ${daysBday}gg (${escapeHtml(dateTxt)})</span>`;
+      } else {
+        bdayHtml = `🎂 ${escapeHtml(dateTxt)}`;
+      }
+    }
 
     rows += `
       <tr data-client-id="${c.id}" style="cursor: pointer;">
         <td>
           <strong>${escapeHtml(c.full_name)}</strong>
-          ${hasAllergy ? '<span class="status-badge badge-allergy">⚠ Allergie/Note</span>' : ''}
+          ${hasAllergy ? '<span class="status-badge badge-allergy">⚠ Allergie</span>' : ''}
+          ${hasNotes ? '<span class="status-badge" style="background:#f7eceb;color:var(--ink-soft);">📝 Note</span>' : ''}
           ${c.email ? `<br /><span style="font-size:0.74rem;color:var(--ink-muted);">${escapeHtml(c.email)}</span>` : ''}
+          ${hasNotes ? `<br /><span style="font-size:0.73rem;color:var(--ink-muted);">${escapeHtml(c.preferences_notes.slice(0, 58))}${c.preferences_notes.length > 58 ? '…' : ''}</span>` : ''}
         </td>
         <td>${escapeHtml(c.phone)}</td>
+        <td>${bdayHtml}</td>
         <td>${Number(c.appointments_count || 0)}</td>
         <td><strong>${Number(c.total_spent || 0).toFixed(0)} €</strong></td>
         <td>${c.last_visit ? escapeHtml(c.last_visit) : '—'}</td>
@@ -469,8 +725,9 @@ function renderClientsTable() {
     <table class="admin-table">
       <thead>
         <tr>
-          <th>Cliente</th>
+          <th>Cliente &amp; Note</th>
           <th>Telefono / WA</th>
+          <th>Compleanno 🎂</th>
           <th>Visite</th>
           <th>Spesa Tot.</th>
           <th>Ultima Visita</th>
@@ -505,6 +762,7 @@ async function openClientModal(clientId = null) {
     document.getElementById('clientFullNameInput').value = '';
     document.getElementById('clientPhoneCrmInput').value = '';
     document.getElementById('clientEmailCrmInput').value = '';
+    document.getElementById('clientBirthDateInput').value = '';
     document.getElementById('clientAllergiesInput').value = '';
     document.getElementById('clientPreferencesInput').value = '';
     document.getElementById('clientPrivacyCrmCheck').checked = true;
@@ -525,6 +783,7 @@ async function openClientModal(clientId = null) {
     document.getElementById('clientFullNameInput').value = c.full_name || '';
     document.getElementById('clientPhoneCrmInput').value = c.phone || '';
     document.getElementById('clientEmailCrmInput').value = c.email || '';
+    document.getElementById('clientBirthDateInput').value = c.birth_date ? String(c.birth_date).slice(0, 10) : '';
     document.getElementById('clientAllergiesInput').value = c.allergies_notes || '';
     document.getElementById('clientPreferencesInput').value = c.preferences_notes || '';
     document.getElementById('clientPrivacyCrmCheck').checked = Number(c.privacy_accepted) === 1;
@@ -585,7 +844,7 @@ function exportClientsToCsv() {
     alert('Nessuna cliente da esportare.');
     return;
   }
-  const headers = ['ID', 'Nome Completo', 'Telefono', 'Email', 'Allergie', 'Note Tecniche', 'Privacy Accettata', 'Data Consenso Privacy', 'Versione Privacy', 'Visite', 'Totale Speso EUR'];
+  const headers = ['ID', 'Nome Completo', 'Telefono', 'Email', 'Compleanno', 'Allergie', 'Note Tecniche', 'Privacy Accettata', 'Data Consenso Privacy', 'Versione Privacy', 'Visite', 'Totale Speso EUR'];
   const lines = [headers.join(';')];
   STATE.clients.forEach((c) => {
     const vals = [
@@ -593,6 +852,7 @@ function exportClientsToCsv() {
       c.full_name,
       c.phone,
       c.email || '',
+      c.birth_date ? String(c.birth_date).slice(0, 10) : '',
       (c.allergies_notes || '').replace(/[\r\n;]+/g, ' '),
       (c.preferences_notes || '').replace(/[\r\n;]+/g, ' '),
       Number(c.privacy_accepted) === 1 ? 'SI' : 'NO',
@@ -698,7 +958,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // New Appointment Quick Button & Tabs
+  // New Appointment Quick Button, Reminders Modal & Tabs
+  document.getElementById('openRemindersModalBtn').addEventListener('click', openRemindersModal);
+  document.getElementById('closeRemindersModalBtn').addEventListener('click', () => {
+    document.getElementById('remindersModal').classList.remove('open');
+  });
+  document.getElementById('apptClientSelect').addEventListener('change', (e) => {
+    renderSelectedClientNotePreview(e.target.value);
+  });
   document.getElementById('newApptQuickBtn').addEventListener('click', () => openAppointmentModal());
   document.getElementById('pickExistingClientTab').addEventListener('click', () => setClientPickerMode('existing'));
   document.getElementById('createInlineClientTab').addEventListener('click', () => setClientPickerMode('new'));
@@ -732,6 +999,8 @@ document.addEventListener('DOMContentLoaded', () => {
         payload.client_name = document.getElementById('apptNewClientName').value.trim();
         payload.client_phone = document.getElementById('apptNewClientPhone').value.trim();
         payload.client_email = document.getElementById('apptNewClientEmail').value.trim();
+        payload.client_birth_date = document.getElementById('apptNewClientBirthDate').value;
+        payload.client_notes = document.getElementById('apptNewClientPrefNotes').value.trim();
         payload.privacy_accepted = document.getElementById('apptNewClientPrivacy').checked;
       }
     }
@@ -785,6 +1054,7 @@ document.addEventListener('DOMContentLoaded', () => {
       full_name: document.getElementById('clientFullNameInput').value.trim(),
       phone: document.getElementById('clientPhoneCrmInput').value.trim(),
       email: document.getElementById('clientEmailCrmInput').value.trim(),
+      birth_date: document.getElementById('clientBirthDateInput').value,
       allergies_notes: document.getElementById('clientAllergiesInput').value.trim(),
       preferences_notes: document.getElementById('clientPreferencesInput').value.trim(),
       privacy_accepted: document.getElementById('clientPrivacyCrmCheck').checked,

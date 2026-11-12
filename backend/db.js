@@ -6,6 +6,7 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 
 let pool = null;
+let migrationsChecked = false;
 
 function isDbConfigured() {
   return Boolean(process.env.DB_NAME && process.env.DB_USER);
@@ -38,6 +39,36 @@ function getPool() {
   return pool;
 }
 
+async function ensureColumn(targetPool, tableName, columnName, alterSql) {
+  const [rows] = await targetPool.query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [tableName, columnName]
+  );
+  if (rows.length === 0) {
+    await targetPool.query(alterSql);
+  }
+}
+
+async function ensureSchemaMigrations(targetPool = getPool()) {
+  if (migrationsChecked) return;
+  await ensureColumn(
+    targetPool,
+    'clients',
+    'birth_date',
+    'ALTER TABLE `clients` ADD COLUMN `birth_date` DATE NULL DEFAULT NULL AFTER `email`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'reminder_sent_at',
+    'ALTER TABLE `appointments` ADD COLUMN `reminder_sent_at` DATETIME NULL DEFAULT NULL AFTER `notes`'
+  );
+  migrationsChecked = true;
+}
+
 async function applySchema(targetPool = getPool()) {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const raw = fs.readFileSync(schemaPath, 'utf8');
@@ -49,10 +80,12 @@ async function applySchema(targetPool = getPool()) {
   for (const stmt of statements) {
     await targetPool.query(stmt);
   }
+  await ensureSchemaMigrations(targetPool);
 }
 
 module.exports = {
   isDbConfigured,
   getPool,
+  ensureSchemaMigrations,
   applySchema,
 };
