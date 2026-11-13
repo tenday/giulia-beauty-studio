@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=7" />
+  <link rel="stylesheet" href="admin.css?v=8" />
 </head>
 <body>
 
@@ -204,10 +204,12 @@
            VIEW 4: CENTRO MESSAGGI & TEMPLATE WHATSAPP
            ================================================================ -->
       <section id="viewMessages" class="admin-view" hidden>
+        <div id="waMessagesStatusBanner" class="wa-status-banner"></div>
+
         <div class="settings-grid">
           <div class="settings-card">
             <h3>Invia Messaggio Rapido con Template</h3>
-            <p class="muted-text">Seleziona la cliente e il modello salvato: puoi personalizzare il testo prima di aprire WhatsApp e registrare l'invio nello storico.</p>
+            <p class="muted-text">Seleziona la cliente e il modello salvato: con WhatsApp Business API attiva il messaggio parte in automatico senza uscire dal gestionale.</p>
             <form id="quickMessageForm">
               <div class="form-row-2">
                 <div class="form-group">
@@ -223,15 +225,16 @@
                 <label for="msgPreviewText">Anteprima Testo Messaggio *</label>
                 <textarea id="msgPreviewText" class="form-control" rows="4" required></textarea>
               </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button type="submit" class="btn-primary-admin">📲 Apri WhatsApp &amp; Registra Invio</button>
+              <div id="quickMessageAlert" class="admin-alert" hidden></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="submit" class="btn-primary-admin" id="quickMsgSubmitBtn">📲 Invia via WhatsApp Business</button>
               </div>
             </form>
           </div>
 
           <div class="settings-card">
-            <h3>Modelli (Template) Personalizzabili</h3>
-            <p class="muted-text">Variabili supportate: <code>{nome}</code>, <code>{data}</code>, <code>{ora}</code>, <code>{trattamenti}</code>, <code>{operatore}</code>, <code>{giorni_assenza}</code>.</p>
+            <h3>Modelli (Template) &amp; Template Meta Approvati</h3>
+            <p class="muted-text">Variabili: <code>{nome}</code>, <code>{data}</code>, <code>{ora}</code>, <code>{trattamenti}</code>, <code>{operatore}</code>, <code>{giorni_assenza}</code>, <code>{codice}</code>. Per invii proattivi fuori dalle 24h indica il nome del template approvato in Meta Business.</p>
             <div id="msgTemplatesEditorList"></div>
           </div>
         </div>
@@ -239,8 +242,8 @@
         <div class="clients-table-card" style="margin-top:18px;">
           <div class="insights-section-head">
             <div>
-              <h3>Storico Messaggi Inviati</h3>
-              <p class="muted-text" style="margin:0;">Registro cronologico delle comunicazioni inviate alle clienti.</p>
+              <h3>Storico Messaggi &amp; Stato Consegna WhatsApp Business</h3>
+              <p class="muted-text" style="margin:0;">Registro cronologico con esito consegna (API Cloud, Job Automatici o fallback manuale).</p>
             </div>
           </div>
           <div id="messageLogsContainer"></div>
@@ -304,11 +307,12 @@
 
         <!-- Inactive Clients Table (Win-Back) -->
         <div class="clients-table-card" style="margin-bottom:18px;">
-          <div class="insights-section-head">
+          <div class="insights-section-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
             <div>
               <h3>Clienti che non tornano da un po'</h3>
               <p class="muted-text" style="margin:0;">Elenco automatico delle clienti senza appuntamento futuro la cui ultima visita supera la soglia selezionata.</p>
             </div>
+            <button type="button" class="btn-outline-sm" id="runWinbackBatchBtn">💬 Richiama Tutte via WA Business</button>
           </div>
           <div id="inactiveClientsContainer"></div>
         </div>
@@ -652,6 +656,158 @@
             </div>
           </div>
         </div>
+
+        <!-- WhatsApp Business Cloud API & Job Automatici -->
+        <div id="waAutomationPanel" class="settings-grid" style="margin-top:18px;margin-bottom:18px;">
+          <div class="settings-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <h3 style="margin:0;">📲 Meta WhatsApp Business Cloud API</h3>
+              <span class="status-badge badge-pending" id="waSettingsStatusBadge">Non configurata</span>
+            </div>
+            <p class="muted-text">Collega le credenziali ufficiali Meta Graph API per inviare automaticamente conferme, promemoria, compleanni, richiami, OTP e Gift Card senza aprire link esterni.</p>
+
+            <form id="whatsappSettingsForm">
+              <label class="inline-check-label" style="margin-bottom:12px;">
+                <input type="checkbox" id="waEnabledCheck" />
+                <span><strong>Attiva invio automatico via WhatsApp Business Cloud API</strong></span>
+              </label>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="waPhoneNumberIdInput">Phone Number ID (Meta) *</label>
+                  <input type="text" id="waPhoneNumberIdInput" class="form-control" placeholder="Es. 123456789012345" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label for="waBusinessAccountIdInput">WhatsApp Business Account ID (opzionale)</label>
+                  <input type="text" id="waBusinessAccountIdInput" class="form-control" placeholder="Es. 987654321098765" autocomplete="off" />
+                </div>
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="waAccessTokenInput">Permanent Access Token (System User)</label>
+                  <input type="password" id="waAccessTokenInput" class="form-control" placeholder="Incolla token EAAG... (lascia vuoto per mantenere l'attuale)" autocomplete="new-password" />
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;">
+                    <span id="waTokenStatusHint" class="muted-text" style="font-size:0.74rem;">Nessun token salvato</span>
+                    <button type="button" class="btn-outline-sm" id="waClearTokenBtn" style="padding:2px 8px;font-size:0.7rem;" hidden>Rimuovi token</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="waApiVersionInput">Versione Meta Graph API</label>
+                  <input type="text" id="waApiVersionInput" class="form-control" value="v21.0" placeholder="v21.0" />
+                </div>
+              </div>
+
+              <label class="inline-check-label" style="margin-bottom:12px;">
+                <input type="checkbox" id="waFallbackCheck" checked />
+                <span>Se le chiavi mancano o la Cloud API è spenta, usa il link manuale <code>wa.me</code> come fallback per gli invii dall'agenda</span>
+              </label>
+
+              <div id="waSettingsAlert" class="admin-alert" hidden></div>
+
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="submit" class="btn-primary-admin" id="saveWaSettingsBtn">💾 Salva Credenziali &amp; Regole</button>
+              </div>
+            </form>
+
+            <div class="wa-test-box">
+              <div style="font-size:0.78rem;font-weight:600;margin-bottom:6px;">🧪 Test Rapido Connessione WhatsApp Business</div>
+              <div class="form-row-2">
+                <input type="tel" id="waTestPhoneInput" class="form-control form-control-sm" placeholder="Numero prova (+39 340...)" />
+                <input type="text" id="waTestMetaTplInput" class="form-control form-control-sm" placeholder="Template Meta opzionale (es. hello_world)" />
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+                <button type="button" class="btn-outline-sm" id="waTestSendBtn">Invia Messaggio di Test</button>
+                <span id="waTestResultText" class="muted-text" style="font-size:0.76rem;"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <h3>🤖 Automazioni &amp; Job Programmati (Europe/Rome)</h3>
+            <p class="muted-text">Scegli quali messaggi partono in autonomia su eventi reali o a fascia oraria giornaliera. Nessun duplicato viene mai reinviato alla stessa cliente.</p>
+
+            <div class="wa-jobs-config-list">
+              <label class="inline-check-label">
+                <input type="checkbox" id="waAutoBookingCheck" checked />
+                <span><strong>Conferma Prenotazione Immediata</strong> (Sito pubblico &amp; nuovi appuntamenti in Agenda)</span>
+              </label>
+
+              <label class="inline-check-label">
+                <input type="checkbox" id="waAutoPrivacyCheck" checked />
+                <span><strong>Invio Automatico Privacy OTP</strong> quando generi il link firma mobile dalla Scheda Cliente</span>
+              </label>
+
+              <div class="wa-job-row">
+                <label class="inline-check-label" style="margin:0;">
+                  <input type="checkbox" id="waAutoReminderCheck" checked />
+                  <span><strong>Promemoria Giorno Prima</strong> (Appuntamenti di domani)</span>
+                </label>
+                <div class="wa-hour-field">
+                  <span>Ore:</span>
+                  <input type="number" id="waReminderHourInput" class="form-control form-control-sm" min="6" max="22" value="10" />
+                </div>
+              </div>
+
+              <div class="wa-job-row">
+                <label class="inline-check-label" style="margin:0;">
+                  <input type="checkbox" id="waAutoBirthdayCheck" checked />
+                  <span><strong>Auguri di Compleanno</strong> (Clienti che compiono gli anni oggi)</span>
+                </label>
+                <div class="wa-hour-field">
+                  <span>Ore:</span>
+                  <input type="number" id="waBirthdayHourInput" class="form-control form-control-sm" min="6" max="22" value="9" />
+                </div>
+              </div>
+
+              <div class="wa-job-row" style="flex-wrap:wrap;">
+                <label class="inline-check-label" style="margin:0;">
+                  <input type="checkbox" id="waAutoWinbackCheck" checked />
+                  <span><strong>Richiamo Clienti Assenti (Win-Back)</strong></span>
+                </label>
+                <div class="wa-hour-field">
+                  <span>Ore:</span>
+                  <input type="number" id="waWinbackHourInput" class="form-control form-control-sm" min="6" max="22" value="11" />
+                  <span>Assenti da (gg):</span>
+                  <input type="number" id="waWinbackDaysInput" class="form-control form-control-sm" min="15" max="180" value="45" />
+                  <span>Cooldown (gg):</span>
+                  <input type="number" id="waWinbackCooldownInput" class="form-control form-control-sm" min="7" max="180" value="30" />
+                </div>
+              </div>
+            </div>
+
+            <div class="wa-cron-box">
+              <div style="font-size:0.78rem;font-weight:600;margin-bottom:6px;">⏱ Endpoint Cron cPanel (esecuzione garantita anche a server a riposo)</div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="waCronUrlInput" class="form-control form-control-sm" readonly style="flex:1;min-width:200px;font-family:monospace;font-size:0.72rem;" />
+                <button type="button" class="btn-outline-sm" id="waCopyCronBtn">📋 Copia URL</button>
+                <button type="button" class="btn-outline-sm" id="waRegenCronBtn">🔄 Rigenera Token</button>
+              </div>
+              <p class="muted-text" style="font-size:0.72rem;margin:6px 0 0;">Imposta un Cron Job cPanel ogni ora: <code>curl -fsS "&lt;URL&gt;" &gt;/dev/null</code></p>
+            </div>
+
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+              <select id="waRunJobSelect" class="form-control form-control-sm" style="max-width:220px;">
+                <option value="">Tutti i job abilitati</option>
+                <option value="reminder_tomorrow">Solo Promemoria Domani</option>
+                <option value="birthday_wishes">Solo Compleanni Oggi</option>
+                <option value="winback_inactive">Solo Clienti Assenti</option>
+              </select>
+              <button type="button" class="btn-primary-admin" id="waRunJobsNowBtn">▶ Esegui Job Automatici Ora</button>
+            </div>
+            <div id="waJobRunFeedback" class="admin-alert" style="margin-top:10px;" hidden></div>
+          </div>
+        </div>
+
+        <div class="clients-table-card">
+          <div class="insights-section-head">
+            <div>
+              <h3>Registro Esecuzioni Job Automatici</h3>
+              <p class="muted-text" style="margin:0;">Cronologia delle elaborazioni automatiche e manuali per promemoria, compleanni e richiami.</p>
+            </div>
+          </div>
+          <div id="automationRunsContainer"></div>
+        </div>
       </section>
     </main>
   </div>
@@ -776,12 +932,17 @@
           </div>
         </div>
 
+        <label class="inline-check-label" id="apptSendWaConfirmWrap" style="margin-top:6px;">
+          <input type="checkbox" id="apptSendWaConfirmCheck" checked />
+          <span>📲 Invia conferma WhatsApp automatica alla cliente (se WhatsApp Business API è attiva e stato Confermato)</span>
+        </label>
+
         <div id="apptModalAlert" class="admin-alert admin-alert-error" hidden></div>
 
         <div class="admin-modal-footer">
           <div class="modal-footer-left">
             <button type="button" class="btn-danger-outline" id="deleteApptBtn" hidden>Elimina</button>
-            <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="apptWhatsappReminderBtn" hidden>💬 WhatsApp Cliente</a>
+            <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="apptWhatsappReminderBtn" hidden>💬 Invia WhatsApp Cliente</a>
           </div>
           <button type="submit" class="btn-primary-admin" id="saveApptBtn">Salva Appuntamento</button>
         </div>
@@ -868,6 +1029,25 @@
             <button type="submit" class="btn-primary-admin">Salva Scheda Cliente</button>
           </div>
         </form>
+
+        <div id="clientQuickWaBox" class="wa-quick-composer" hidden>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+            <strong style="font-size:0.84rem;">📲 Invia Messaggio WhatsApp Rapido alla Cliente</strong>
+            <button type="button" class="btn-outline-sm" id="closeClientQuickWaBtn" style="padding:2px 8px;font-size:0.72rem;">✕ Chiudi</button>
+          </div>
+          <div class="form-group">
+            <label for="clientQuickWaTemplate">Template (opzionale)</label>
+            <select id="clientQuickWaTemplate" class="form-control form-control-sm"></select>
+          </div>
+          <div class="form-group">
+            <label for="clientQuickWaText">Messaggio *</label>
+            <textarea id="clientQuickWaText" class="form-control" rows="3" placeholder="Scrivi il messaggio WhatsApp per questa cliente..."></textarea>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn-primary-admin" id="sendClientQuickWaBtn">📲 Invia Messaggio</button>
+            <span id="clientQuickWaStatus" class="muted-text" style="font-size:0.76rem;"></span>
+          </div>
+        </div>
 
         <!-- Client Cards & Packages + History + Privacy Logs -->
         <div id="clientDossierHistory" hidden>
@@ -1220,9 +1400,12 @@
         <button type="button" class="btn-close-modal" id="closeRemindersModalBtn">✕</button>
       </div>
       <div class="admin-modal-body">
-        <p class="muted-text" id="remindersDateSubtitle">
-          Invia con un clic il promemoria WhatsApp personalizzato alle clienti con appuntamento previsto per domani.
-        </p>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+          <p class="muted-text" id="remindersDateSubtitle" style="margin:0;">
+            Invia con un clic il promemoria WhatsApp alle clienti con appuntamento previsto per domani.
+          </p>
+          <button type="button" class="btn-primary-admin" id="sendAllRemindersBtn">📲 Invia Tutti i Da Inviare</button>
+        </div>
         <div id="remindersListContainer"></div>
       </div>
     </div>
@@ -1234,6 +1417,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=7"></script>
+  <script src="admin.js?v=8"></script>
 </body>
 </html>

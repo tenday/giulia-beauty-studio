@@ -29,6 +29,7 @@ function defaultState() {
       template: 0,
       msg_log: 0,
       gift_card: 0,
+      automation_run: 0,
     },
     admin_users: [],
     admin_sessions: [],
@@ -46,6 +47,8 @@ function defaultState() {
     message_templates: [],
     message_logs: [],
     gift_cards: [],
+    studio_settings: [],
+    automation_runs: [],
   };
 }
 
@@ -81,16 +84,16 @@ function ensureLocalCollections(state) {
     });
     dirty = true;
   }
-  if (state.message_templates.length === 0) {
-    const now = formatRomeNow();
-    for (const tpl of DEFAULT_MESSAGE_TEMPLATES) {
+  const existingCodes = new Set((state.message_templates || []).map((t) => t.code));
+  for (const tpl of DEFAULT_MESSAGE_TEMPLATES) {
+    if (!existingCodes.has(tpl.code)) {
       state.message_templates.push({
         id: nextId(state, 'template'),
         ...tpl,
-        updated_at: now,
+        updated_at: formatRomeNow(),
       });
+      dirty = true;
     }
-    dirty = true;
   }
   return dirty;
 }
@@ -1314,13 +1317,25 @@ async function listMessageTemplates() {
   return [...db.message_templates].sort((a, b) => Number(a.id) - Number(b.id));
 }
 
-async function saveMessageTemplate({ code, title, bodyTemplate }) {
+async function saveMessageTemplate({
+  code,
+  title,
+  bodyTemplate,
+  metaTemplateName,
+  metaTemplateLang,
+}) {
   const db = readDb();
   const now = formatRomeNow();
   const existing = db.message_templates.find((t) => t.code === code);
   if (existing) {
     if (title) existing.title = title;
     existing.body_template = bodyTemplate;
+    if (metaTemplateName !== undefined) {
+      existing.meta_template_name = String(metaTemplateName || '').trim() || null;
+    }
+    if (metaTemplateLang !== undefined) {
+      existing.meta_template_lang = String(metaTemplateLang || 'it').trim() || 'it';
+    }
     existing.updated_at = now;
     writeDb(db);
     return existing;
@@ -1330,6 +1345,8 @@ async function saveMessageTemplate({ code, title, bodyTemplate }) {
     code,
     title: title || code,
     body_template: bodyTemplate,
+    meta_template_name: metaTemplateName ? String(metaTemplateName).trim() : null,
+    meta_template_lang: metaTemplateLang ? String(metaTemplateLang).trim() : 'it',
     updated_at: now,
   };
   db.message_templates.push(created);
@@ -1353,6 +1370,11 @@ async function createMessageLog({
   templateCode,
   messageText,
   adminId,
+  status = 'sent',
+  externalMessageId = null,
+  errorMessage = null,
+  triggerSource = 'manual',
+  metaPayloadType = 'text',
 }) {
   const db = readDb();
   const now = formatRomeNow();
@@ -1365,12 +1387,127 @@ async function createMessageLog({
     channel: channel || 'whatsapp',
     template_code: templateCode || null,
     message_text: messageText,
+    status: status || 'sent',
+    external_message_id: externalMessageId || null,
+    error_message: errorMessage || null,
+    trigger_source: triggerSource || 'manual',
+    meta_payload_type: metaPayloadType || 'text',
     sent_by_admin_id: adminId || null,
     sent_at: now,
   };
   db.message_logs.push(log);
   writeDb(db);
   return log;
+}
+
+async function hasRecentMessageLog({
+  clientId = null,
+  appointmentId = null,
+  templateCode = '',
+  withinDays = 0,
+  sinceDate = '',
+  statuses = ['sent'],
+}) {
+  const db = readDb();
+  const cutoffDate = sinceDate
+    ? sinceDate
+    : withinDays > 0
+      ? getRomeNowParts(-Number(withinDays) * 86400000).date
+      : '';
+  const allowedStatuses = new Set(Array.isArray(statuses) ? statuses : ['sent']);
+
+  return (db.message_logs || []).some((log) => {
+    if (templateCode && log.template_code !== templateCode) return false;
+    const logStatus = log.status || 'sent';
+    if (!allowedStatuses.has(logStatus)) return false;
+    if (appointmentId && Number(log.appointment_id) !== Number(appointmentId)) return false;
+    if (clientId && Number(log.client_id) !== Number(clientId)) return false;
+    if (cutoffDate) {
+      const logDate = String(log.sent_at || '').slice(0, 10);
+      if (logDate < cutoffDate) return false;
+    }
+    return true;
+  });
+}
+
+async function getStudioSetting(key) {
+  const db = readDb();
+  const found = (db.studio_settings || []).find((s) => s.setting_key === key);
+  if (!found) return null;
+  try {
+    const val = typeof found.setting_value === 'string'
+      ? JSON.parse(found.setting_value)
+      : found.setting_value;
+    if (val && typeof val === 'object') {
+      return { ...val, updated_at: found.updated_at || null };
+    }
+    return val;
+  } catch {
+    return null;
+  }
+}
+
+async function saveStudioSetting(key, valueObj) {
+  const db = readDb();
+  const now = formatRomeNow();
+  const serialized = JSON.stringify(valueObj || {});
+  const list = db.studio_settings || (db.studio_settings = []);
+  const existing = list.find((s) => s.setting_key === key);
+  if (existing) {
+    existing.setting_value = serialized;
+    existing.updated_at = now;
+  } else {
+    list.push({ setting_key: key, setting_value: serialized, updated_at: now });
+  }
+  writeDb(db);
+  return { ...(valueObj || {}), updated_at: now };
+}
+
+async function listAutomationRuns(limit = 40) {
+  const db = readDb();
+  return [...(db.automation_runs || [])]
+    .sort((a, b) => Number(b.id) - Number(a.id))
+    .slice(0, limit);
+}
+
+async function hasAutomationRunForDate(jobName, runDate) {
+  const db = readDb();
+  return (db.automation_runs || []).some(
+    (r) => r.job_name === jobName && r.run_date === runDate && r.status === 'completed'
+  );
+}
+
+async function recordAutomationRun({
+  jobName,
+  runDate,
+  triggerMode = 'scheduler',
+  status = 'completed',
+  processedCount = 0,
+  sentCount = 0,
+  failedCount = 0,
+  skippedCount = 0,
+  summaryText = '',
+  startedAt = null,
+  finishedAt = null,
+}) {
+  const db = readDb();
+  const row = {
+    id: nextId(db, 'automation_run'),
+    job_name: jobName,
+    run_date: runDate,
+    trigger_mode: triggerMode,
+    status,
+    processed_count: Number(processedCount || 0),
+    sent_count: Number(sentCount || 0),
+    failed_count: Number(failedCount || 0),
+    skipped_count: Number(skippedCount || 0),
+    summary_text: summaryText || '',
+    started_at: startedAt || formatRomeNow(),
+    finished_at: finishedAt || formatRomeNow(),
+  };
+  (db.automation_runs || (db.automation_runs = [])).push(row);
+  writeDb(db);
+  return row;
 }
 
 async function listGiftCards(query = '') {
@@ -1528,6 +1665,12 @@ module.exports = {
   saveMessageTemplate,
   listMessageLogs,
   createMessageLog,
+  hasRecentMessageLog,
+  getStudioSetting,
+  saveStudioSetting,
+  listAutomationRuns,
+  hasAutomationRunForDate,
+  recordAutomationRun,
   listGiftCards,
   createGiftCard,
   redeemGiftCard,

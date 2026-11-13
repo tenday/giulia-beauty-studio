@@ -256,8 +256,205 @@ async function runApiSuite() {
     });
     assert.strictEqual(gcDel.status, 200);
 
+    // =========================================================================
+    // WhatsApp Business Cloud API + Automated Jobs Regression Suite
+    // =========================================================================
+    const { getRomeToday } = require(path.join(ROOT_DIR, 'backend', 'helpers'));
+    const { addDaysIso } = require(path.join(ROOT_DIR, 'backend', 'jobs'));
+    const todayIso = getRomeToday();
+    const tomorrowIso = addDaysIso(todayIso, 1);
+    const oldVisitIso = addDaysIso(todayIso, -65);
+
+    const autoInit = await req('GET', '/api/admin/automation');
+    assert.strictEqual(autoInit.status, 200);
+    assert.strictEqual(autoInit.json.settings.active, false);
+
+    // Unconfigured fallback wa.me test
+    const fbSend = await req('POST', '/api/admin/whatsapp/send', {
+      recipient_phone: '+39 331 555 0001',
+      recipient_name: 'Cliente Fallback',
+      message_text: 'Ciao test fallback',
+      trigger_source: 'manual',
+    });
+    assert.strictEqual(fbSend.status, 200);
+    assert.strictEqual(fbSend.json.sent, false);
+    assert.strictEqual(fbSend.json.sent_via, 'fallback_wa_me');
+    assert(String(fbSend.json.fallback_url || '').startsWith('https://wa.me/393315550001'));
+
+    // Save Meta Cloud API settings & check token masking
+    const saveWa = await req('POST', '/api/admin/automation/settings', {
+      enabled: true,
+      phone_number_id: '1234567890',
+      business_account_id: '987654321',
+      access_token: 'EAAG-ci-secret-token-9988',
+      cron_secret: 'ci-cron-secret-token',
+      auto_booking_confirmed: true,
+      auto_reminder_tomorrow: true,
+      auto_birthday_wishes: true,
+      auto_winback_inactive: true,
+      winback_inactive_days: 30,
+      winback_cooldown_days: 30,
+    });
+    assert.strictEqual(saveWa.status, 200);
+    assert.strictEqual(saveWa.json.settings.active, true);
+    assert.strictEqual(saveWa.json.settings.has_access_token, true);
+    assert.strictEqual(saveWa.json.settings.access_token_masked, 'EAAG••••••••9988');
+    assert(!saveWa.text.includes('EAAG-ci-secret-token-9988'), 'Token raw non deve mai essere esposto!');
+
+    // Prepare mock Meta Graph API transport
+    const metaCalls = [];
+    let mockMetaMode = 'ok';
+    let mockIdCounter = 0;
+    globalThis.__GBS_WHATSAPP_FETCH__ = async (url, opts) => {
+      const bodyObj = JSON.parse(opts.body);
+      metaCalls.push({ url, headers: opts.headers, body: bodyObj });
+      if (mockMetaMode === 'error') {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({
+            error: { code: 131047, message: 'Re-engagement message outside 24h window' },
+          }),
+        };
+      }
+      mockIdCounter += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          messaging_product: 'whatsapp',
+          contacts: [{ wa_id: bodyObj.to }],
+          messages: [{ id: `wamid.ci.${mockIdCounter}` }],
+        }),
+      };
+    };
+
+    // Cloud API direct text send
+    const cloudSend = await req('POST', '/api/admin/whatsapp/send', {
+      recipient_phone: '331 555 0002',
+      recipient_name: 'Cliente Cloud',
+      message_text: 'Messaggio diretto via Meta API',
+      trigger_source: 'manual',
+    });
+    assert.strictEqual(cloudSend.status, 200);
+    assert.strictEqual(cloudSend.json.sent, true);
+    assert.strictEqual(cloudSend.json.sent_via, 'cloud_api');
+    assert.strictEqual(cloudSend.json.external_message_id, 'wamid.ci.1');
+    assert.strictEqual(metaCalls[0].headers.Authorization, 'Bearer EAAG-ci-secret-token-9988');
+    assert.strictEqual(metaCalls[0].body.to, '393315550002');
+    assert.strictEqual(metaCalls[0].body.type, 'text');
+
+    // Meta approved template payload support
+    const tplSave = await req('POST', '/api/admin/messages/templates', {
+      code: 'reminder_tomorrow',
+      title: 'Promemoria Appuntamento',
+      body_template: 'Ciao {nome} appuntamento domani alle {ora} con {operatore} ({trattamenti})',
+      meta_template_name: 'promemoria_studio_v1',
+      meta_template_lang: 'it',
+    });
+    assert.strictEqual(tplSave.status, 200);
+    assert.strictEqual(tplSave.json.template.meta_template_name, 'promemoria_studio_v1');
+
+    // Public booking auto confirmation webhook trigger
+    const pubBookRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-03',
+      start_time: '14:30',
+      duration_minutes: 60,
+      operator_id: sara.id,
+      services: [{ name: 'Manicure Spa', price: 35, duration: 60 }],
+      total_price: 35,
+      client_name: 'Elena AutoConfirm',
+      client_phone: '+39 333 777 8899',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(pubBookRes.status, 201);
+    assert.strictEqual(pubBookRes.json.whatsapp_sent, true);
+    assert(metaCalls.some((c) => c.body.to === '393337778899'));
+
+    // Seed clients + appointments for all 3 automated jobs:
+    // 1) Tomorrow appointment (reminder_tomorrow -> template mode)
+    const remApptRes = await req('POST', '/api/admin/appointments', {
+      action: 'create',
+      operator_id: sara.id,
+      appointment_date: tomorrowIso,
+      start_time: '11:00',
+      duration_minutes: 60,
+      services_summary: 'Semipermanente Rinforzato',
+      total_price: 45,
+      client_name: 'Marta Promemoria',
+      client_phone: '+39 339 111 2233',
+      client_birth_date: `1992-${todayIso.slice(5, 10)}`, // also matches birthday today!
+      privacy_accepted: true,
+      send_whatsapp: false, // keep direct trigger off so job picks it up
+    });
+    assert.strictEqual(remApptRes.status, 201);
+
+    // 2) Inactive client 65 days ago (winback_inactive)
+    const inactApptRes = await req('POST', '/api/admin/appointments', {
+      action: 'create',
+      operator_id: sara.id,
+      appointment_date: oldVisitIso,
+      start_time: '15:00',
+      duration_minutes: 45,
+      services_summary: 'Pulizia Viso',
+      total_price: 55,
+      client_name: 'Laura Inattiva',
+      client_phone: '+39 338 444 5566',
+      status: 'completed',
+      privacy_accepted: true,
+      send_whatsapp: false,
+    });
+    assert.strictEqual(inactApptRes.status, 201);
+
+    // Cron secret security check + full jobs execution
+    const badCron = await fetch(`${baseUrl}/api/cron/run-jobs?secret=wrong-secret`);
+    assert.strictEqual(badCron.status, 401);
+
+    const goodCronRes = await fetch(`${baseUrl}/api/cron/run-jobs?force=1`, {
+      method: 'POST',
+      headers: { 'x-cron-secret': 'ci-cron-secret-token' },
+    });
+    assert.strictEqual(goodCronRes.status, 200);
+    const goodCronJson = await goodCronRes.json();
+    assert.strictEqual(goodCronJson.ok, true);
+    const rRem = goodCronJson.results.find((r) => r.job_name === 'reminder_tomorrow');
+    const rBday = goodCronJson.results.find((r) => r.job_name === 'birthday_wishes');
+    const rWin = goodCronJson.results.find((r) => r.job_name === 'winback_inactive');
+    assert(rRem && rRem.sent >= 1, 'Job reminder_tomorrow deve inviare almeno 1 promemoria');
+    assert(rBday && rBday.sent >= 1, 'Job birthday_wishes deve inviare almeno 1 augurio');
+    assert(rWin && rWin.sent >= 1, 'Job winback_inactive deve inviare almeno 1 richiamo');
+
+    // Assert Meta template format was used for reminder_tomorrow
+    const tplCall = metaCalls.find((c) => c.body.type === 'template');
+    assert(tplCall && tplCall.body.template.name === 'promemoria_studio_v1');
+    assert(tplCall.body.template.components[0].parameters.length >= 4);
+
+    // Idempotency check: running again must send 0 duplicates!
+    const rerunRes = await req('POST', '/api/admin/automation/run', {});
+    assert.strictEqual(rerunRes.status, 200);
+    for (const r of rerunRes.json.results) {
+      assert.strictEqual(r.sent, 0, `Idempotenza fallita su ${r.job_name}: sent=${r.sent}`);
+    }
+
+    // Meta API error resilience check
+    mockMetaMode = 'error';
+    const failTestRes = await req('POST', '/api/admin/automation/test-whatsapp', {
+      to_phone: '+39 331 999 8877',
+    });
+    assert.strictEqual(failTestRes.status, 400);
+    assert.strictEqual(failTestRes.json.sent, false);
+    assert(String(failTestRes.json.error || '').includes('131047'));
+
+    const msgsAfter = await req('GET', '/api/admin/messages');
+    assert(msgsAfter.json.logs.some((l) => l.status === 'failed' && l.trigger_source === 'test'));
+    assert(msgsAfter.json.logs.some((l) => l.status === 'sent' && l.trigger_source === 'job_reminder'));
+    assert(msgsAfter.json.logs.some((l) => l.status === 'sent' && l.trigger_source === 'job_birthday'));
+    assert(msgsAfter.json.logs.some((l) => l.status === 'sent' && l.trigger_source === 'job_winback'));
+
     console.log('[CI] API Regression Suite OK');
   } finally {
+    delete globalThis.__GBS_WHATSAPP_FETCH__;
     await new Promise((r) => server.close(r));
     if (fs.existsSync(TMP_DB_PATH)) fs.unlinkSync(TMP_DB_PATH);
   }

@@ -2247,3 +2247,95 @@ body {
     box-shadow: none !important;
   }
 }
+
+/* ==========================================================================
+   WHATSAPP BUSINESS CLOUD API & AUTOMATED JOBS PANEL
+   ========================================================================== */
+.wa-status-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: #fdf8f7;
+  font-size: 0.84rem;
+}
+
+.wa-status-banner.is-active {
+  background: #eef9f2;
+  border-color: #b7e1c7;
+  color: #155733;
+}
+
+.wa-status-banner.is-fallback {
+  background: #fff9eb;
+  border-color: #f0d79a;
+  color: #6f4e10;
+}
+
+.wa-jobs-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.wa-job-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdfb;
+}
+
+.wa-hour-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+}
+
+.wa-hour-field input {
+  width: 68px !important;
+  text-align: center;
+}
+
+.wa-test-box,
+.wa-cron-box,
+.wa-quick-composer {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+  background: #fcf6f4;
+}
+
+.badge-wa-cloud {
+  background: #e7f6ec;
+  color: #166534;
+}
+
+.badge-wa-fallback {
+  background: #fef3c7;
+  color: #854d0e;
+}
+
+.badge-wa-failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-wa-source {
+  background: #f3ecee;
+  color: var(--ink-soft);
+}

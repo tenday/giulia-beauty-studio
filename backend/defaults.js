@@ -43,10 +43,42 @@ const DEFAULT_MESSAGE_TEMPLATES = [
     title: 'Conferma Prenotazione Ricevuta',
     body_template:
       'Ciao {nome} ♡ Il tuo appuntamento da *Giulia Beauty Studio* del *{data}* alle *{ora}* con {operatore} ({trattamenti}) è confermato! A presto.',
+    meta_template_name: '',
+    meta_template_lang: 'it',
+  },
+  {
+    code: 'gift_card',
+    title: 'Invio Gift Card Digitale',
+    body_template:
+      'Ciao {nome}! ♡ Ecco la tua *Gift Card Giulia Beauty Studio*{da_parte}: *{regalo}*{scadenza}.\n{dedica}\n🔑 Codice Univoco: *{codice}*\n📍 Via Principe Amedeo 17, Verdellino (BG) • Prenota su +39 331 504 5135',
+    meta_template_name: '',
+    meta_template_lang: 'it',
   },
 ];
+
+const DEFAULT_WHATSAPP_SETTINGS = {
+  enabled: false,
+  phone_number_id: '',
+  business_account_id: '',
+  access_token: '',
+  api_version: 'v21.0',
+  cron_secret: '',
+  fallback_to_wa_me: true,
+  auto_booking_confirmed: true,
+  auto_privacy_otp: true,
+  auto_reminder_tomorrow: true,
+  reminder_send_hour: 10,
+  auto_birthday_wishes: true,
+  birthday_send_hour: 9,
+  auto_winback_inactive: true,
+  winback_inactive_days: 45,
+  winback_cooldown_days: 30,
+  winback_send_hour: 11,
+  winback_max_per_run: 25,
+};
 
 module.exports = {
   getDefaultOperatorPayload,
   DEFAULT_MESSAGE_TEMPLATES,
+  DEFAULT_WHATSAPP_SETTINGS,
 };

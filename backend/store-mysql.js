@@ -1241,15 +1241,34 @@ async function listMessageTemplates() {
   return rows;
 }
 
-async function saveMessageTemplate({ code, title, bodyTemplate }) {
+async function saveMessageTemplate({
+  code,
+  title,
+  bodyTemplate,
+  metaTemplateName,
+  metaTemplateLang,
+}) {
   const pool = getPool();
   await ensureDefaults(pool);
   await pool.query(
-    `INSERT INTO message_templates (code, title, body_template)
-     VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), body_template = VALUES(body_template)`,
-    [code, title || code, bodyTemplate]
+    `INSERT INTO message_templates (code, title, body_template, meta_template_name, meta_template_lang)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       title = COALESCE(VALUES(title), title),
+       body_template = VALUES(body_template),
+       meta_template_name = COALESCE(VALUES(meta_template_name), meta_template_name),
+       meta_template_lang = COALESCE(VALUES(meta_template_lang), meta_template_lang)`,
+    [
+      code,
+      title || code,
+      bodyTemplate,
+      metaTemplateName !== undefined ? (String(metaTemplateName || '').trim() || null) : null,
+      metaTemplateLang !== undefined ? (String(metaTemplateLang || 'it').trim() || 'it') : 'it',
+    ]
   );
+  if (metaTemplateName !== undefined && String(metaTemplateName || '').trim() === '') {
+    await pool.query('UPDATE message_templates SET meta_template_name = NULL WHERE code = ?', [code]);
+  }
   const [rows] = await pool.query('SELECT * FROM message_templates WHERE code = ? LIMIT 1', [code]);
   return rows[0];
 }
@@ -1272,12 +1291,19 @@ async function createMessageLog({
   templateCode,
   messageText,
   adminId,
+  status = 'sent',
+  externalMessageId = null,
+  errorMessage = null,
+  triggerSource = 'manual',
+  metaPayloadType = 'text',
 }) {
   const pool = getPool();
+  await ensureDefaults(pool);
   const [ins] = await pool.query(
     `INSERT INTO message_logs
-     (client_id, appointment_id, recipient_phone, recipient_name, channel, template_code, message_text, sent_by_admin_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     (client_id, appointment_id, recipient_phone, recipient_name, channel, template_code, message_text,
+      status, external_message_id, error_message, trigger_source, meta_payload_type, sent_by_admin_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       clientId || null,
       appointmentId || null,
@@ -1286,10 +1312,150 @@ async function createMessageLog({
       channel || 'whatsapp',
       templateCode || null,
       messageText,
+      status || 'sent',
+      externalMessageId || null,
+      errorMessage ? String(errorMessage).slice(0, 395) : null,
+      triggerSource || 'manual',
+      metaPayloadType || 'text',
       adminId || null,
     ]
   );
   const [rows] = await pool.query('SELECT * FROM message_logs WHERE id = ?', [ins.insertId]);
+  return rows[0];
+}
+
+async function hasRecentMessageLog({
+  clientId = null,
+  appointmentId = null,
+  templateCode = '',
+  withinDays = 0,
+  sinceDate = '',
+  statuses = ['sent'],
+}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const conditions = [];
+  const params = [];
+
+  if (templateCode) {
+    conditions.push('template_code = ?');
+    params.push(templateCode);
+  }
+  if (appointmentId) {
+    conditions.push('appointment_id = ?');
+    params.push(Number(appointmentId));
+  }
+  if (clientId) {
+    conditions.push('client_id = ?');
+    params.push(Number(clientId));
+  }
+  const stList = Array.isArray(statuses) && statuses.length ? statuses : ['sent'];
+  conditions.push(`status IN (${stList.map(() => '?').join(',')})`);
+  params.push(...stList);
+
+  const cutoffDate = sinceDate
+    ? sinceDate
+    : withinDays > 0
+      ? getRomeNowParts(-Number(withinDays) * 86400000).date
+      : '';
+  if (cutoffDate) {
+    conditions.push('DATE(sent_at) >= ?');
+    params.push(cutoffDate);
+  }
+
+  const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const [rows] = await pool.query(`SELECT id FROM message_logs ${whereSql} LIMIT 1`, params);
+  return rows.length > 0;
+}
+
+async function getStudioSetting(key) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query(
+    'SELECT setting_value, updated_at FROM studio_settings WHERE setting_key = ? LIMIT 1',
+    [key]
+  );
+  if (!rows[0]) return null;
+  try {
+    const parsed = JSON.parse(rows[0].setting_value);
+    if (parsed && typeof parsed === 'object') {
+      return { ...parsed, updated_at: rows[0].updated_at || null };
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveStudioSetting(key, valueObj) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const serialized = JSON.stringify(valueObj || {});
+  await pool.query(
+    `INSERT INTO studio_settings (setting_key, setting_value)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+    [key, serialized]
+  );
+  return getStudioSetting(key);
+}
+
+async function listAutomationRuns(limit = 40) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query(
+    'SELECT * FROM automation_runs ORDER BY id DESC LIMIT ?',
+    [Number(limit) || 40]
+  );
+  return rows;
+}
+
+async function hasAutomationRunForDate(jobName, runDate) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query(
+    "SELECT id FROM automation_runs WHERE job_name = ? AND run_date = ? AND status = 'completed' LIMIT 1",
+    [jobName, runDate]
+  );
+  return rows.length > 0;
+}
+
+async function recordAutomationRun({
+  jobName,
+  runDate,
+  triggerMode = 'scheduler',
+  status = 'completed',
+  processedCount = 0,
+  sentCount = 0,
+  failedCount = 0,
+  skippedCount = 0,
+  summaryText = '',
+  startedAt = null,
+  finishedAt = null,
+}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const start = startedAt || formatRomeNow();
+  const finish = finishedAt || formatRomeNow();
+  const [ins] = await pool.query(
+    `INSERT INTO automation_runs
+     (job_name, run_date, trigger_mode, status, processed_count, sent_count, failed_count, skipped_count, summary_text, started_at, finished_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      jobName,
+      runDate,
+      triggerMode,
+      status,
+      Number(processedCount || 0),
+      Number(sentCount || 0),
+      Number(failedCount || 0),
+      Number(skippedCount || 0),
+      String(summaryText || '').slice(0, 490),
+      start,
+      finish,
+    ]
+  );
+  const [rows] = await pool.query('SELECT * FROM automation_runs WHERE id = ?', [ins.insertId]);
   return rows[0];
 }
 
@@ -1459,6 +1625,12 @@ module.exports = {
   saveMessageTemplate,
   listMessageLogs,
   createMessageLog,
+  hasRecentMessageLog,
+  getStudioSetting,
+  saveStudioSetting,
+  listAutomationRuns,
+  hasAutomationRunForDate,
+  recordAutomationRun,
   listGiftCards,
   createGiftCard,
   redeemGiftCard,

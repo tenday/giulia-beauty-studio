@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS `message_templates` (
   `code` VARCHAR(60) NOT NULL,
   `title` VARCHAR(120) NOT NULL,
   `body_template` TEXT NOT NULL,
+  `meta_template_name` VARCHAR(120) NULL DEFAULT NULL,
+  `meta_template_lang` VARCHAR(20) NOT NULL DEFAULT 'it',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_msg_tpl_code` (`code`)
@@ -241,11 +243,42 @@ CREATE TABLE IF NOT EXISTS `message_logs` (
   `channel` VARCHAR(30) NOT NULL DEFAULT 'whatsapp',
   `template_code` VARCHAR(60) NULL DEFAULT NULL,
   `message_text` TEXT NOT NULL,
+  `status` VARCHAR(30) NOT NULL DEFAULT 'sent',
+  `external_message_id` VARCHAR(120) NULL DEFAULT NULL,
+  `error_message` VARCHAR(400) NULL DEFAULT NULL,
+  `trigger_source` VARCHAR(40) NOT NULL DEFAULT 'manual',
+  `meta_payload_type` VARCHAR(20) NOT NULL DEFAULT 'text',
   `sent_by_admin_id` INT UNSIGNED NULL DEFAULT NULL,
   `sent_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_msglog_sent_at` (`sent_at`),
-  KEY `idx_msglog_client` (`client_id`)
+  KEY `idx_msglog_client` (`client_id`),
+  KEY `idx_msglog_tpl_status` (`template_code`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `studio_settings` (
+  `setting_key` VARCHAR(80) NOT NULL,
+  `setting_value` LONGTEXT NOT NULL,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `automation_runs` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `job_name` VARCHAR(60) NOT NULL,
+  `run_date` DATE NOT NULL,
+  `trigger_mode` VARCHAR(30) NOT NULL DEFAULT 'scheduler',
+  `status` VARCHAR(30) NOT NULL DEFAULT 'completed',
+  `processed_count` INT NOT NULL DEFAULT 0,
+  `sent_count` INT NOT NULL DEFAULT 0,
+  `failed_count` INT NOT NULL DEFAULT 0,
+  `skipped_count` INT NOT NULL DEFAULT 0,
+  `summary_text` VARCHAR(500) NULL DEFAULT NULL,
+  `started_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `finished_at` DATETIME NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_auto_run_job_date` (`job_name`, `run_date`),
+  KEY `idx_auto_run_started` (`started_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `gift_cards` (

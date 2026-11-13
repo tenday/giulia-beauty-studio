@@ -93,6 +93,48 @@ async function ensureSchemaMigrations(targetPool = getPool()) {
     'reminder_sent_at',
     'ALTER TABLE `appointments` ADD COLUMN `reminder_sent_at` DATETIME NULL DEFAULT NULL AFTER `notes`'
   );
+  await ensureColumn(
+    targetPool,
+    'message_templates',
+    'meta_template_name',
+    'ALTER TABLE `message_templates` ADD COLUMN `meta_template_name` VARCHAR(120) NULL DEFAULT NULL AFTER `body_template`'
+  );
+  await ensureColumn(
+    targetPool,
+    'message_templates',
+    'meta_template_lang',
+    "ALTER TABLE `message_templates` ADD COLUMN `meta_template_lang` VARCHAR(20) NOT NULL DEFAULT 'it' AFTER `meta_template_name`"
+  );
+  await ensureColumn(
+    targetPool,
+    'message_logs',
+    'status',
+    "ALTER TABLE `message_logs` ADD COLUMN `status` VARCHAR(30) NOT NULL DEFAULT 'sent' AFTER `message_text`"
+  );
+  await ensureColumn(
+    targetPool,
+    'message_logs',
+    'external_message_id',
+    'ALTER TABLE `message_logs` ADD COLUMN `external_message_id` VARCHAR(120) NULL DEFAULT NULL AFTER `status`'
+  );
+  await ensureColumn(
+    targetPool,
+    'message_logs',
+    'error_message',
+    'ALTER TABLE `message_logs` ADD COLUMN `error_message` VARCHAR(400) NULL DEFAULT NULL AFTER `external_message_id`'
+  );
+  await ensureColumn(
+    targetPool,
+    'message_logs',
+    'trigger_source',
+    "ALTER TABLE `message_logs` ADD COLUMN `trigger_source` VARCHAR(40) NOT NULL DEFAULT 'manual' AFTER `error_message`"
+  );
+  await ensureColumn(
+    targetPool,
+    'message_logs',
+    'meta_payload_type',
+    "ALTER TABLE `message_logs` ADD COLUMN `meta_payload_type` VARCHAR(20) NOT NULL DEFAULT 'text' AFTER `trigger_source`"
+  );
   migrationsChecked = true;
 }
 
