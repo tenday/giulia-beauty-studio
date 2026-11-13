@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=5" />
+  <link rel="stylesheet" href="admin.css?v=6" />
 </head>
 <body>
 
@@ -117,6 +117,12 @@
               <option value="confirmed">Confermati</option>
               <option value="completed">Completati</option>
               <option value="cancelled">Annullati</option>
+            </select>
+
+            <select id="calDensitySelect" class="form-control form-control-sm" aria-label="Densità griglia oraria" title="Altezza fasce orarie nell'agenda">
+              <option value="64">Vista compatta</option>
+              <option value="96" selected>Vista standard</option>
+              <option value="128">Vista ampia</option>
             </select>
 
             <div class="view-mode-pills">
@@ -1227,6 +1233,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=5"></script>
+  <script src="admin.js?v=6"></script>
 </body>
 </html>

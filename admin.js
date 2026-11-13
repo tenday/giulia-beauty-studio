@@ -4,10 +4,22 @@
 
 const API_BASE = 'api';
 
+const CAL_HOUR_PX_DEFAULT = 96; // 96px per ora -> 24px = 15 min, zero sovrapposizioni verticali
+const CAL_HOUR_PX_OPTIONS = [64, 96, 128];
+
+function getInitialCalHourPx() {
+  try {
+    const raw = Number(localStorage.getItem('gb_cal_hour_px'));
+    if (CAL_HOUR_PX_OPTIONS.includes(raw)) return raw;
+  } catch {}
+  return CAL_HOUR_PX_DEFAULT;
+}
+
 const STATE = {
   admin: null,
   activeView: 'agenda',
   calMode: 'week', // 'week' | 'day' | 'list'
+  calHourPx: getInitialCalHourPx(),
   anchorDate: new Date(),
   statusFilter: '',
   operatorFilter: 0,
@@ -503,11 +515,15 @@ async function openRemindersModal() {
    ========================================================================== */
 const CAL_START_HOUR = 8;
 const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
-const CAL_HOUR_PX = 64; // 64px per ora -> 16px = 15 min
 const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
 const CAL_MAX_DURATION = 480;
 const CAL_LONG_PRESS_MS = 480;
+
+function getCalHourPx() {
+  const v = Number(STATE.calHourPx);
+  return CAL_HOUR_PX_OPTIONS.includes(v) ? v : CAL_HOUR_PX_DEFAULT;
+}
 
 const CAL_UI = {
   suppressClickUntil: 0,
@@ -537,62 +553,93 @@ function snapMinutes(mins, step = CAL_SNAP_MIN) {
 }
 
 function computeEventTopPx(startTimeStr) {
+  const hourPx = getCalHourPx();
   const minutesFromStart = parseTimeToMinutes(startTimeStr) - CAL_START_HOUR * 60;
-  return Math.max(2, (minutesFromStart / 60) * CAL_HOUR_PX);
+  return Math.round((Math.max(0, minutesFromStart) / 60) * hourPx * 10) / 10 + 1;
 }
 
 function computeEventHeightPx(durationMinutes) {
-  const dur = Math.max(CAL_MIN_DURATION, Number(durationMinutes) || 60);
-  return Math.max(22, (dur / 60) * CAL_HOUR_PX - 3);
+  const hourPx = getCalHourPx();
+  const dur = Math.max(10, Number(durationMinutes) || 60);
+  const idealHeight = (dur / 60) * hourPx - 2;
+  return Math.max(20, Math.round(idealHeight * 10) / 10);
 }
 
 function formatTimeRangeLabel(startTimeStr, durationMinutes) {
   const startMin = parseTimeToMinutes(startTimeStr);
-  const endMin = startMin + Math.max(CAL_MIN_DURATION, Number(durationMinutes) || 60);
+  const endMin = startMin + Math.max(10, Number(durationMinutes) || 60);
   return `${minutesToTimeStr(startMin)} – ${minutesToTimeStr(endMin)}`;
 }
 
 function layoutDayEvents(dayAppts) {
   const items = dayAppts
     .map((appt) => {
-      const start = parseTimeToMinutes(appt.start_time);
-      const end = start + Math.max(CAL_MIN_DURATION, Number(appt.duration_minutes) || 60);
-      return { id: Number(appt.id), start, end };
+      const startMin = parseTimeToMinutes(appt.start_time);
+      const durMin = Math.max(10, Number(appt.duration_minutes) || 60);
+      const topPx = computeEventTopPx(appt.start_time);
+      const heightPx = computeEventHeightPx(durMin);
+      const bottomPx = Math.round((topPx + heightPx) * 10) / 10;
+      return {
+        id: Number(appt.id),
+        start: startMin,
+        end: startMin + durMin,
+        topPx,
+        heightPx,
+        bottomPx,
+      };
     })
-    .sort((a, b) => a.start - b.start || b.end - a.end);
+    .sort((a, b) => a.topPx - b.topPx || b.bottomPx - a.bottomPx || a.id - b.id);
 
   const layoutMap = new Map();
   let cluster = [];
-  let clusterEnd = -1;
+  let clusterEndPx = -1;
 
   function flushCluster() {
     if (cluster.length === 0) return;
-    const laneEnds = [];
-    const assigned = [];
+    const laneEndsPx = [];
+    const placed = [];
     for (const item of cluster) {
-      let lane = laneEnds.findIndex((endT) => endT <= item.start);
+      let lane = laneEndsPx.findIndex((endY) => endY <= item.topPx + 0.5);
       if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(item.end);
+        lane = laneEndsPx.length;
+        laneEndsPx.push(item.bottomPx);
       } else {
-        laneEnds[lane] = item.end;
+        laneEndsPx[lane] = Math.max(laneEndsPx[lane], item.bottomPx);
       }
-      assigned.push({ id: item.id, lane });
+      placed.push({ item, lane });
     }
-    const laneCount = Math.max(1, laneEnds.length);
-    for (const entry of assigned) {
-      layoutMap.set(entry.id, { lane: entry.lane, laneCount });
+    const laneCount = Math.max(1, laneEndsPx.length);
+    for (const entry of placed) {
+      let colSpan = 1;
+      for (let nextLane = entry.lane + 1; nextLane < laneCount; nextLane++) {
+        const blocked = placed.some(
+          (other) =>
+            other.lane === nextLane &&
+            other.item.bottomPx > entry.item.topPx + 0.5 &&
+            entry.item.bottomPx > other.item.topPx + 0.5
+        );
+        if (blocked) break;
+        colSpan++;
+      }
+      layoutMap.set(entry.item.id, {
+        lane: entry.lane,
+        laneCount,
+        colSpan,
+        topPx: entry.item.topPx,
+        heightPx: entry.item.heightPx,
+        bottomPx: entry.item.bottomPx,
+      });
     }
     cluster = [];
-    clusterEnd = -1;
+    clusterEndPx = -1;
   }
 
   for (const item of items) {
-    if (cluster.length > 0 && item.start >= clusterEnd) {
+    if (cluster.length > 0 && item.topPx >= clusterEndPx - 0.5) {
       flushCluster();
     }
     cluster.push(item);
-    clusterEnd = Math.max(clusterEnd, item.end);
+    clusterEndPx = Math.max(clusterEndPx, item.bottomPx);
   }
   flushCluster();
   return layoutMap;
@@ -907,9 +954,10 @@ function bindInteractiveCalendarGrid(container) {
 
   function updateDragVisuals() {
     if (!g || g.mode !== 'drag') return;
+    const hourPx = getCalHourPx();
     const deltaScrollY = container.scrollTop - g.startScrollTop;
     const totalDeltaY = g.lastY - g.startY + deltaScrollY;
-    const deltaMins = snapMinutes((totalDeltaY / CAL_HOUR_PX) * 60);
+    const deltaMins = snapMinutes((totalDeltaY / hourPx) * 60);
     const maxStartMin = CAL_END_HOUR * 60 - CAL_SNAP_MIN;
     g.targetStartMin = Math.max(CAL_START_HOUR * 60, Math.min(maxStartMin, g.initialStartMin + deltaMins));
 
@@ -939,16 +987,19 @@ function bindInteractiveCalendarGrid(container) {
 
   function updateResizeVisuals() {
     if (!g || g.mode !== 'resize') return;
+    const hourPx = getCalHourPx();
     const deltaScrollY = container.scrollTop - g.startScrollTop;
     const totalDeltaY = g.lastY - g.startY + deltaScrollY;
-    const deltaMins = snapMinutes((totalDeltaY / CAL_HOUR_PX) * 60);
+    const deltaMins = snapMinutes((totalDeltaY / hourPx) * 60);
     const maxEndMin = (CAL_END_HOUR + 1) * 60;
     const maxAllowedDur = Math.min(CAL_MAX_DURATION, maxEndMin - g.initialStartMin);
     g.targetDuration = Math.max(CAL_MIN_DURATION, Math.min(maxAllowedDur, g.initialDuration + deltaMins));
 
     const heightPx = computeEventHeightPx(g.targetDuration);
     g.cardEl.style.height = `${heightPx}px`;
-    g.cardEl.classList.toggle('is-compact', heightPx < 36);
+    g.cardEl.classList.toggle('is-compact', heightPx < 34);
+    g.cardEl.classList.toggle('is-no-service', heightPx >= 34 && heightPx < 42);
+    g.cardEl.classList.toggle('is-short-note', heightPx < 62);
 
     const startStr = minutesToTimeStr(g.initialStartMin);
     const rangeLabel = formatTimeRangeLabel(startStr, g.targetDuration);
@@ -1005,7 +1056,9 @@ function bindInteractiveCalendarGrid(container) {
     if (g.cardEl && g.mode === 'resize') {
       const origH = computeEventHeightPx(g.initialDuration);
       g.cardEl.style.height = `${origH}px`;
-      g.cardEl.classList.toggle('is-compact', origH < 36);
+      g.cardEl.classList.toggle('is-compact', origH < 34);
+      g.cardEl.classList.toggle('is-no-service', origH >= 34 && origH < 42);
+      g.cardEl.classList.toggle('is-short-note', origH < 62);
     }
     window.removeEventListener('pointermove', onWindowPointerMove);
     window.removeEventListener('pointerup', onWindowPointerUp);
@@ -1249,16 +1302,42 @@ function renderCalendar() {
     hours.push(h);
   }
 
+  const hourPx = getCalHourPx();
+  container.style?.setProperty?.('--cal-hour-px', `${hourPx}px`);
+
   const todayIso = toIsoDate(new Date());
   const gridClass = STATE.calMode === 'week' ? 'week-grid' : 'day-grid';
 
-  let html = `<div class="${gridClass}">`;
-  html += `<div class="cal-corner-cell"><span class="cal-day-name">Ora</span></div>`;
-
-  days.forEach((d) => {
+  const daysMeta = days.map((d) => {
     const iso = toIsoDate(d);
     const dow = d.getDay();
     const isClosed = dow === 0 || dow === 2;
+    const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
+    const lanesMap = layoutDayEvents(dayAppts);
+    let maxLanes = 1;
+    lanesMap.forEach((info) => {
+      if (info.laneCount > maxLanes) maxLanes = info.laneCount;
+    });
+    return { d, iso, dow, isClosed, dayAppts, lanesMap, maxLanes };
+  });
+
+  let gridInlineStyle = `--cal-hour-px:${hourPx}px;`;
+  if (STATE.calMode === 'week') {
+    const dayTracks = [];
+    let totalMinW = 70;
+    daysMeta.forEach((meta) => {
+      const minW = meta.maxLanes <= 1 ? 160 : Math.min(440, meta.maxLanes * 124);
+      const fr = meta.maxLanes <= 1 ? '1' : (1 + (meta.maxLanes - 1) * 0.45).toFixed(2);
+      dayTracks.push(`minmax(${minW}px, ${fr}fr)`);
+      totalMinW += minW;
+    });
+    gridInlineStyle += ` grid-template-columns: 70px ${dayTracks.join(' ')}; min-width: ${totalMinW}px;`;
+  }
+
+  let html = `<div class="${gridClass}" style="${gridInlineStyle}">`;
+  html += `<div class="cal-corner-cell"><span class="cal-day-name">Ora</span></div>`;
+
+  daysMeta.forEach(({ d, iso, dow, isClosed }) => {
     const isToday = iso === todayIso;
     const dayAbsences = (STATE.absences || []).filter((abs) => iso >= abs.start_date && iso <= abs.end_date);
     const absHtml = dayAbsences
@@ -1282,13 +1361,7 @@ function renderCalendar() {
   html += `</div>`;
 
   // Day columns
-  days.forEach((d) => {
-    const iso = toIsoDate(d);
-    const dow = d.getDay();
-    const isClosed = dow === 0 || dow === 2;
-    const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
-    const lanesMap = layoutDayEvents(dayAppts);
-
+  daysMeta.forEach(({ iso, isClosed, dayAppts, lanesMap }) => {
     html += `<div class="cal-day-col ${isClosed ? 'is-closed' : ''}" data-date="${iso}">`;
     hours.forEach((h) => {
       const slotTime = `${String(h).padStart(2, '0')}:00`;
@@ -1296,23 +1369,46 @@ function renderCalendar() {
     });
 
     dayAppts.forEach((appt) => {
-      const topPx = computeEventTopPx(appt.start_time);
-      const heightPx = computeEventHeightPx(appt.duration_minutes);
-      const laneInfo = lanesMap.get(Number(appt.id)) || { lane: 0, laneCount: 1 };
+      const laneInfo = lanesMap.get(Number(appt.id)) || {
+        lane: 0,
+        laneCount: 1,
+        colSpan: 1,
+        topPx: computeEventTopPx(appt.start_time),
+        heightPx: computeEventHeightPx(appt.duration_minutes),
+      };
+      const topPx = laneInfo.topPx;
+      const heightPx = laneInfo.heightPx;
+      const colSpan = Math.max(1, laneInfo.colSpan || 1);
       const laneStyle =
         laneInfo.laneCount > 1
-          ? `left: calc(${(laneInfo.lane * 100) / laneInfo.laneCount}% + 3px); width: calc(${100 / laneInfo.laneCount}% - 6px); right: auto;`
+          ? `left: calc(${(laneInfo.lane * 100) / laneInfo.laneCount}% + 2px); width: calc(${(colSpan * 100) / laneInfo.laneCount}% - 4px); right: auto;`
           : '';
 
       const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
       const opColor = appt.operator_color || '#d47491';
       const opName = appt.operator_name || 'Giulia';
-      const isCompact = heightPx < 36;
+      const dur = Math.max(10, Number(appt.duration_minutes) || 60);
+      const isCompact = heightPx < 34;
+      const isNoService = !isCompact && heightPx < 42;
+      const isShortNote = heightPx < 62;
+      const isNarrow = laneInfo.laneCount > 1 && colSpan === 1;
+      const rangeTooltip = `${formatTimeRangeLabel(appt.start_time, dur)} (${dur} min) • ${appt.client_name} • ${appt.services_summary} • ${opName}`;
+      const clsList = [
+        'cal-event-card',
+        `status-${escapeHtml(appt.status)}`,
+        isCompact ? 'is-compact' : '',
+        isNoService ? 'is-no-service' : '',
+        isShortNote ? 'is-short-note' : '',
+        isNarrow ? 'is-narrow' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
       html += `
-        <div class="cal-event-card status-${escapeHtml(appt.status)}${isCompact ? ' is-compact' : ''}"
+        <div class="${clsList}"
              data-appt-id="${appt.id}"
+             title="${escapeHtml(rangeTooltip)}"
              style="top:${topPx}px; height:${heightPx}px; ${laneStyle} border-left: 4px solid ${escapeHtml(opColor)};">
-          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
+          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
           ${hasAnyNote ? `<div class="cal-event-note-flag">📝 ${escapeHtml(appt.notes || appt.allergies_notes)}</div>` : ''}
@@ -1333,7 +1429,11 @@ function renderCalendar() {
     slotEl.addEventListener('click', (e) => {
       if (Date.now() < CAL_UI.suppressClickUntil) return;
       const rect = slotEl.getBoundingClientRect();
-      const mins = e.clientY - rect.top >= CAL_HOUR_PX / 2 ? '30' : '00';
+      const relY = Math.max(0, e.clientY - rect.top);
+      const quarterStep = hourPx >= 80 ? 15 : 30;
+      const fraction = Math.min(0.99, relY / (rect.height || hourPx));
+      const minsVal = Math.floor((fraction * 60) / quarterStep) * quarterStep;
+      const mins = String(Math.max(0, Math.min(45, minsVal))).padStart(2, '0');
       const clickedTime = `${String(Number(slotEl.dataset.hour)).padStart(2, '0')}:${mins}`;
       openAppointmentModal(null, slotEl.dataset.date, clickedTime);
     });
@@ -1955,6 +2055,19 @@ document.addEventListener('DOMContentLoaded', () => {
     opFilterEl.addEventListener('change', async (e) => {
       STATE.operatorFilter = Number(e.target.value) || 0;
       await loadAppointments();
+      renderCalendar();
+    });
+  }
+
+  const densityEl = document.getElementById('calDensitySelect');
+  if (densityEl) {
+    densityEl.value = String(getCalHourPx());
+    densityEl.addEventListener('change', (e) => {
+      const next = Number(e.target.value);
+      STATE.calHourPx = CAL_HOUR_PX_OPTIONS.includes(next) ? next : CAL_HOUR_PX_DEFAULT;
+      try {
+        localStorage.setItem('gb_cal_hour_px', String(STATE.calHourPx));
+      } catch {}
       renderCalendar();
     });
   }
