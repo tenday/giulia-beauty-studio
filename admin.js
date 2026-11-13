@@ -225,6 +225,39 @@ function getMondayOfWeek(dt) {
   return copy;
 }
 
+function parseIsoDateLocal(isoStr) {
+  if (!isoStr || !/^\d{4}-\d{2}-\d{2}$/.test(String(isoStr))) return null;
+  const [y, m, d] = String(isoStr).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function addMonthsClamped(dt, deltaMonths) {
+  const targetFirst = new Date(dt.getFullYear(), dt.getMonth() + deltaMonths, 1);
+  const lastDay = new Date(targetFirst.getFullYear(), targetFirst.getMonth() + 1, 0).getDate();
+  return new Date(targetFirst.getFullYear(), targetFirst.getMonth(), Math.min(dt.getDate(), lastDay));
+}
+
+function getMonthCalendarGridDates(year, month) {
+  const firstOfMonth = new Date(year, month, 1);
+  const lastOfMonth = new Date(year, month + 1, 0);
+  const startOffset = (firstOfMonth.getDay() + 6) % 7; // Mon=0 .. Sun=6
+  const totalCells = Math.ceil((startOffset + lastOfMonth.getDate()) / 7) * 7;
+  const gridStart = new Date(year, month, 1 - startOffset);
+  const days = [];
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    days.push(d);
+  }
+  return days;
+}
+
+function syncCalModePills() {
+  document.querySelectorAll('.mode-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.calmode === STATE.calMode);
+  });
+}
+
 async function apiFetch(endpoint, options = {}) {
   const res = await fetch(`${API_BASE}/${endpoint}`, {
     credentials: 'include',
@@ -418,6 +451,10 @@ async function loadAppointments() {
     const iso = toIsoDate(STATE.anchorDate);
     params.set('start_date', iso);
     params.set('end_date', iso);
+  } else if (STATE.calMode === 'month') {
+    const gridDays = getMonthCalendarGridDates(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth());
+    params.set('start_date', toIsoDate(gridDays[0]));
+    params.set('end_date', toIsoDate(gridDays[gridDays.length - 1]));
   }
   if (STATE.statusFilter) {
     params.set('status', STATE.statusFilter);
@@ -681,6 +718,10 @@ const CAL_UI = {
   duplicateKeyHandler: null,
   lastDuplicatedId: 0,
   cleanupDupHover: null,
+  miniPickerOpen: false,
+  miniPickerMonth: null,
+  miniPickerDismissHandler: null,
+  miniPickerKeyHandler: null,
 };
 
 function getAppointmentNoteInfo(appt) {
@@ -1116,11 +1157,9 @@ async function startAppointmentDuplicateMode(appt) {
   };
   document.addEventListener('keydown', CAL_UI.duplicateKeyHandler, true);
 
-  if (STATE.calMode === 'list') {
+  if (STATE.calMode === 'list' || STATE.calMode === 'month') {
     STATE.calMode = 'week';
-    document.querySelectorAll('.mode-pill').forEach((p) => {
-      p.classList.toggle('active', p.dataset.calmode === 'week');
-    });
+    syncCalModePills();
     syncDuplicateBanner();
     try {
       await loadAppointments();
@@ -1207,12 +1246,192 @@ function handleDuplicateGridTap(colEl, clientY) {
   return true;
 }
 
+function closeMiniCalendarPicker() {
+  CAL_UI.miniPickerOpen = false;
+  const pop = document.getElementById('calMiniPicker');
+  if (pop) {
+    pop.hidden = true;
+    pop.innerHTML = '';
+  }
+  const btn = document.getElementById('calQuickJumpBtn');
+  btn?.setAttribute('aria-expanded', 'false');
+  if (CAL_UI.miniPickerDismissHandler) {
+    document.removeEventListener('pointerdown', CAL_UI.miniPickerDismissHandler, true);
+    CAL_UI.miniPickerDismissHandler = null;
+  }
+  if (CAL_UI.miniPickerKeyHandler) {
+    document.removeEventListener('keydown', CAL_UI.miniPickerKeyHandler, true);
+    CAL_UI.miniPickerKeyHandler = null;
+  }
+}
+
+async function jumpAgendaToDate(targetDate, { nextMode = null, closePicker = true } = {}) {
+  if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) return;
+  STATE.anchorDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+
+  const resolvedMode = nextMode || (STATE.calMode === 'list' ? 'week' : null);
+  if (resolvedMode && resolvedMode !== STATE.calMode) {
+    STATE.calMode = resolvedMode;
+    syncCalModePills();
+    if ((STATE.calMode === 'list' || STATE.calMode === 'month') && CAL_UI.duplicatingAppt) {
+      cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+    }
+  }
+
+  if (closePicker) {
+    closeMiniCalendarPicker();
+  }
+  await loadAppointments();
+  updateKpis();
+  renderCalendar();
+}
+
+async function stepAgendaPeriod(direction) {
+  const dir = direction < 0 ? -1 : 1;
+  if (STATE.calMode === 'month') {
+    STATE.anchorDate = addMonthsClamped(STATE.anchorDate, dir);
+  } else {
+    const stepDays = STATE.calMode === 'day' ? dir : dir * 7;
+    const next = new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), STATE.anchorDate.getDate() + stepDays);
+    STATE.anchorDate = next;
+  }
+  if (CAL_UI.miniPickerOpen) {
+    CAL_UI.miniPickerMonth = new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), 1);
+  }
+  await loadAppointments();
+  updateKpis();
+  renderCalendar();
+}
+
+function renderMiniCalendarPopover() {
+  const pop = document.getElementById('calMiniPicker');
+  if (!pop || !CAL_UI.miniPickerOpen) return;
+
+  const viewMonth = CAL_UI.miniPickerMonth || new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), 1);
+  const y = viewMonth.getFullYear();
+  const m = viewMonth.getMonth();
+  const gridDays = getMonthCalendarGridDates(y, m);
+  const todayIso = toIsoDate(new Date());
+  const anchorIso = toIsoDate(STATE.anchorDate);
+  const weekStart = getMondayOfWeek(STATE.anchorDate);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  const weekStartIso = toIsoDate(weekStart);
+  const weekEndIso = toIsoDate(weekEnd);
+  const weekHighlight = STATE.calMode === 'week';
+
+  const weekdaysHtml = ['L', 'M', 'M', 'G', 'V', 'S', 'D']
+    .map((label) => `<div>${label}</div>`)
+    .join('');
+
+  const daysHtml = gridDays
+    .map((d) => {
+      const iso = toIsoDate(d);
+      const dow = d.getDay();
+      const cls = [
+        'cal-mini-day',
+        d.getMonth() !== m ? 'is-other-month' : '',
+        dow === 0 || dow === 2 ? 'is-closed' : '',
+        weekHighlight && iso >= weekStartIso && iso <= weekEndIso ? 'is-in-week' : '',
+        iso === todayIso ? 'is-today' : '',
+        iso === anchorIso ? 'is-selected' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      return `<button type="button" class="${cls}" data-mini-iso="${iso}" aria-label="${d.getDate()} ${MONTHS_IT[d.getMonth()]} ${d.getFullYear()}">${d.getDate()}</button>`;
+    })
+    .join('');
+
+  pop.innerHTML = `
+    <div class="cal-mini-header">
+      <button type="button" class="cal-mini-nav-btn" data-mini-nav="-1" title="Mese precedente">‹</button>
+      <span class="cal-mini-month-label">${escapeHtml(MONTHS_IT[m])} ${y}</span>
+      <button type="button" class="cal-mini-nav-btn" data-mini-nav="1" title="Mese successivo">›</button>
+    </div>
+    <div class="cal-mini-presets">
+      <button type="button" class="cal-mini-preset-btn" data-mini-preset="today">Oggi</button>
+      <button type="button" class="cal-mini-preset-btn" data-mini-preset="w1">+1 sett</button>
+      <button type="button" class="cal-mini-preset-btn" data-mini-preset="w3">+3 sett</button>
+      <button type="button" class="cal-mini-preset-btn" data-mini-preset="m1">+1 mese</button>
+    </div>
+    <div class="cal-mini-weekdays">${weekdaysHtml}</div>
+    <div class="cal-mini-days">${daysHtml}</div>
+  `;
+
+  pop.querySelectorAll('[data-mini-nav]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      CAL_UI.miniPickerMonth = addMonthsClamped(viewMonth, Number(btn.dataset.miniNav));
+      renderMiniCalendarPopover();
+    });
+  });
+
+  pop.querySelectorAll('[data-mini-preset]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const preset = btn.dataset.miniPreset;
+      let nextDate = new Date();
+      if (preset === 'w1') {
+        nextDate = new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), STATE.anchorDate.getDate() + 7);
+      } else if (preset === 'w3') {
+        nextDate = new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), STATE.anchorDate.getDate() + 21);
+      } else if (preset === 'm1') {
+        nextDate = addMonthsClamped(STATE.anchorDate, 1);
+      }
+      jumpAgendaToDate(nextDate);
+    });
+  });
+
+  pop.querySelectorAll('[data-mini-iso]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const picked = parseIsoDateLocal(btn.dataset.miniIso);
+      if (picked) jumpAgendaToDate(picked);
+    });
+  });
+}
+
+function toggleMiniCalendarPicker() {
+  if (CAL_UI.miniPickerOpen) {
+    closeMiniCalendarPicker();
+    return;
+  }
+  const pop = document.getElementById('calMiniPicker');
+  if (!pop) return;
+
+  closeCalendarNotePopover(true);
+  closeCalendarContextMenu();
+  CAL_UI.miniPickerOpen = true;
+  CAL_UI.miniPickerMonth = new Date(STATE.anchorDate.getFullYear(), STATE.anchorDate.getMonth(), 1);
+  pop.hidden = false;
+  document.getElementById('calQuickJumpBtn')?.setAttribute('aria-expanded', 'true');
+  renderMiniCalendarPopover();
+
+  CAL_UI.miniPickerDismissHandler = (e) => {
+    if (e.target.closest('#calJumpAnchor') || e.target.closest('#calRangeTitle')) return;
+    closeMiniCalendarPicker();
+  };
+  document.addEventListener('pointerdown', CAL_UI.miniPickerDismissHandler, true);
+
+  CAL_UI.miniPickerKeyHandler = (e) => {
+    if (e.key === 'Escape' && CAL_UI.miniPickerOpen) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMiniCalendarPicker();
+    }
+  };
+  document.addEventListener('keydown', CAL_UI.miniPickerKeyHandler, true);
+}
+
 const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
-  if (viewName !== 'agenda' && CAL_UI.duplicatingAppt) {
-    cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+  if (viewName !== 'agenda') {
+    closeMiniCalendarPicker();
+    if (CAL_UI.duplicatingAppt) {
+      cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+    }
   }
   STATE.activeView = viewName;
   document.querySelectorAll('.admin-tab-btn').forEach((b) => {
@@ -1869,6 +2088,16 @@ function renderCalendar() {
     renderListCalendar(container);
     container.scrollTop = prevScrollTop;
     container.scrollLeft = prevScrollLeft;
+    if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
+    return;
+  }
+
+  if (STATE.calMode === 'month') {
+    titleEl.textContent = `${MONTHS_IT[STATE.anchorDate.getMonth()]} ${STATE.anchorDate.getFullYear()}`;
+    renderMonthCalendar(container);
+    container.scrollTop = prevScrollTop;
+    container.scrollLeft = prevScrollLeft;
+    if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
     return;
   }
 
@@ -2044,6 +2273,130 @@ function renderCalendar() {
 
   bindInteractiveCalendarGrid(container);
   bindDuplicateHoverPreview(container);
+  if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
+}
+
+function renderMonthCalendar(container) {
+  container.classList.remove('is-duplicating');
+  CAL_UI.cleanupDupHover?.();
+  syncDuplicateBanner();
+
+  const year = STATE.anchorDate.getFullYear();
+  const month = STATE.anchorDate.getMonth();
+  const gridDays = getMonthCalendarGridDates(year, month);
+  const todayIso = toIsoDate(new Date());
+  const selectedIso = toIsoDate(STATE.anchorDate);
+
+  const byDate = new Map();
+  STATE.appointments.forEach((a) => {
+    const key = a.appointment_date;
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key).push(a);
+  });
+
+  const dowHeaders = [
+    { label: 'Lun', closed: false },
+    { label: 'Mar', closed: true },
+    { label: 'Mer', closed: false },
+    { label: 'Gio', closed: false },
+    { label: 'Ven', closed: false },
+    { label: 'Sab', closed: false },
+    { label: 'Dom', closed: true },
+  ];
+
+  let html = '<div class="month-grid">';
+  dowHeaders.forEach((d) => {
+    html += `<div class="cal-month-dow${d.closed ? ' is-closed-dow' : ''}">${d.label}</div>`;
+  });
+
+  gridDays.forEach((d) => {
+    const iso = toIsoDate(d);
+    const dow = d.getDay();
+    const isClosed = dow === 0 || dow === 2;
+    const dayAppts = (byDate.get(iso) || []).slice().sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+    const activeCount = dayAppts.filter((a) => a.status !== 'cancelled').length;
+    const cellCls = [
+      'cal-month-cell',
+      d.getMonth() !== month ? 'is-other-month' : '',
+      isClosed ? 'is-closed' : '',
+      iso === todayIso ? 'is-today' : '',
+      iso === selectedIso ? 'is-selected' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const visibleAppts = dayAppts.slice(0, 3);
+    const extraCount = dayAppts.length - visibleAppts.length;
+    const apptsHtml = visibleAppts
+      .map((a) => {
+        const opColor = a.operator_color || '#d47491';
+        const nInfo = getAppointmentNoteInfo(a);
+        const noteTag = nInfo.allergyNote ? ' ⚠' : nInfo.apptNote ? ' 📝' : '';
+        return `
+          <button type="button"
+                  class="cal-month-appt status-${escapeHtml(a.status)}"
+                  data-appt-id="${a.id}"
+                  style="border-left: 3px solid ${escapeHtml(opColor)};"
+                  title="${escapeHtml(a.start_time)} • ${escapeHtml(a.client_name)} — ${escapeHtml(a.services_summary)}">
+            <span class="cal-month-appt-time">${escapeHtml(String(a.start_time || '').slice(0, 5))}</span>
+            <span class="cal-month-appt-client">${escapeHtml(a.client_name)}${noteTag}</span>
+          </button>
+        `;
+      })
+      .join('');
+
+    const dayAbsences = (STATE.absences || []).filter((abs) => iso >= abs.start_date && iso <= abs.end_date);
+    const absHtml = dayAbsences
+      .slice(0, 1)
+      .map((abs) => `<div class="cal-absence-pill">🏖️ ${escapeHtml(abs.operator_name)}</div>`)
+      .join('');
+
+    html += `
+      <div class="${cellCls}" data-month-date="${iso}" title="Clicca per aprire il giorno ${formatShortItDate(iso)}">
+        <div class="cal-month-cell-head">
+          <button type="button" class="cal-month-day-btn" data-month-day="${iso}" title="Apri vista giorno">${d.getDate()}</button>
+          <div class="cal-month-head-actions">
+            ${activeCount > 0 ? `<span class="cal-month-count">${activeCount}</span>` : ''}
+            <button type="button" class="cal-month-week-btn" data-month-week="${iso}" title="Apri la settimana di questo giorno">Sett.</button>
+          </div>
+        </div>
+        ${absHtml}
+        <div class="cal-month-appts">
+          ${apptsHtml}
+          ${extraCount > 0 ? `<div class="cal-month-more">+${extraCount} altri…</div>` : ''}
+        </div>
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
+
+  container.querySelectorAll('.cal-month-appt[data-appt-id]').forEach((btnEl) => {
+    const getAppt = () => STATE.appointments.find((a) => Number(a.id) === Number(btnEl.dataset.apptId));
+    attachLongPressAndContextMenu(btnEl, getAppt);
+    btnEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (Date.now() < CAL_UI.suppressClickUntil) return;
+      const appt = getAppt();
+      if (appt) openAppointmentModal(appt);
+    });
+  });
+
+  container.querySelectorAll('[data-month-week]').forEach((weekBtn) => {
+    weekBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = parseIsoDateLocal(weekBtn.dataset.monthWeek);
+      if (target) jumpAgendaToDate(target, { nextMode: 'week' });
+    });
+  });
+
+  container.querySelectorAll('.cal-month-cell[data-month-date]').forEach((cellEl) => {
+    cellEl.addEventListener('click', () => {
+      const target = parseIsoDateLocal(cellEl.dataset.monthDate);
+      if (target) jumpAgendaToDate(target, { nextMode: 'day' });
+    });
+  });
 }
 
 function renderListCalendar(container) {
@@ -2708,28 +3061,30 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Calendar Navigation & Modes
-  document.getElementById('calPrevBtn').addEventListener('click', async () => {
-    const step = STATE.calMode === 'day' ? -1 : -7;
-    STATE.anchorDate.setDate(STATE.anchorDate.getDate() + step);
-    await loadAppointments();
-    updateKpis();
-    renderCalendar();
+  document.getElementById('calPrevBtn').addEventListener('click', () => stepAgendaPeriod(-1));
+  document.getElementById('calNextBtn').addEventListener('click', () => stepAgendaPeriod(1));
+  document.getElementById('calTodayBtn').addEventListener('click', () => {
+    jumpAgendaToDate(new Date());
   });
 
-  document.getElementById('calNextBtn').addEventListener('click', async () => {
-    const step = STATE.calMode === 'day' ? 1 : 7;
-    STATE.anchorDate.setDate(STATE.anchorDate.getDate() + step);
-    await loadAppointments();
-    updateKpis();
-    renderCalendar();
+  document.getElementById('calQuickJumpBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMiniCalendarPicker();
   });
 
-  document.getElementById('calTodayBtn').addEventListener('click', async () => {
-    STATE.anchorDate = new Date();
-    await loadAppointments();
-    updateKpis();
-    renderCalendar();
-  });
+  const rangeTitleEl = document.getElementById('calRangeTitle');
+  if (rangeTitleEl) {
+    rangeTitleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMiniCalendarPicker();
+    });
+    rangeTitleEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleMiniCalendarPicker();
+      }
+    });
+  }
 
   document.getElementById('calStatusFilter').addEventListener('change', async (e) => {
     STATE.statusFilter = e.target.value;
@@ -2761,13 +3116,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.mode-pill').forEach((pill) => {
     pill.addEventListener('click', async () => {
-      document.querySelectorAll('.mode-pill').forEach((p) => p.classList.remove('active'));
-      pill.classList.add('active');
       STATE.calMode = pill.dataset.calmode;
-      if (STATE.calMode === 'list' && CAL_UI.duplicatingAppt) {
+      syncCalModePills();
+      if ((STATE.calMode === 'list' || STATE.calMode === 'month') && CAL_UI.duplicatingAppt) {
         cancelAppointmentDuplicateMode({ silent: true, rerender: false });
       }
       await loadAppointments();
+      updateKpis();
       renderCalendar();
     });
   });

@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=9" />
+  <link rel="stylesheet" href="admin.css?v=10" />
 </head>
 <body>
 
@@ -103,7 +103,13 @@
             <button type="button" class="btn-outline-sm" id="calPrevBtn" title="Periodo precedente">‹</button>
             <button type="button" class="btn-outline-sm" id="calTodayBtn">Oggi</button>
             <button type="button" class="btn-outline-sm" id="calNextBtn" title="Periodo successivo">›</button>
-            <h2 id="calRangeTitle" class="cal-range-title">Settimana Corrente</h2>
+            <div class="cal-jump-anchor" id="calJumpAnchor">
+              <button type="button" class="btn-outline-sm cal-jump-btn" id="calQuickJumpBtn" aria-expanded="false" aria-controls="calMiniPicker" title="Apri calendario mensile per spostarti rapidamente ad una data">
+                📅 Calendario ▾
+              </button>
+              <div id="calMiniPicker" class="cal-mini-picker" role="dialog" aria-label="Calendario per spostamento rapido" hidden></div>
+            </div>
+            <h2 id="calRangeTitle" class="cal-range-title is-clickable" role="button" tabindex="0" title="Clicca per aprire il calendario rapido">Settimana Corrente</h2>
           </div>
 
           <div class="calendar-view-controls">
@@ -128,6 +134,7 @@
             <div class="view-mode-pills">
               <button type="button" class="mode-pill active" data-calmode="week">Settimana</button>
               <button type="button" class="mode-pill" data-calmode="day">Giorno</button>
+              <button type="button" class="mode-pill" data-calmode="month">Mese</button>
               <button type="button" class="mode-pill" data-calmode="list">Lista</button>
             </div>
           </div>
@@ -150,7 +157,7 @@
         </div>
 
         <div class="calendar-scroll-hint">
-          <span>Trascina gli appuntamenti per spostarli • Tira il bordo inferiore per estendere la durata • Tasto destro (o tieni premuto su tablet) per modificare, duplicare o eliminare • Clicca uno spazio vuoto per aggiungere</span>
+          <span>Trascina gli appuntamenti per spostarli • Usa 📅 Calendario o Mese per spostarti velocemente • Tasto destro (o tieni premuto su tablet) per modificare o duplicare • Clicca uno spazio vuoto per aggiungere</span>
         </div>
 
         <div id="calendarContainer" class="calendar-surface" tabindex="0" aria-label="Calendario appuntamenti scorrevole"></div>
@@ -1432,6 +1439,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=10"></script>
+  <script src="admin.js?v=11"></script>
 </body>
 </html>
