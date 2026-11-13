@@ -247,3 +247,29 @@ CREATE TABLE IF NOT EXISTS `message_logs` (
   KEY `idx_msglog_sent_at` (`sent_at`),
   KEY `idx_msglog_client` (`client_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `gift_cards` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `code` VARCHAR(40) NOT NULL,
+  `theme` VARCHAR(30) NOT NULL DEFAULT 'rose',
+  `gift_mode` VARCHAR(20) NOT NULL DEFAULT 'amount',
+  `amount` DECIMAL(10,2) NOT NULL DEFAULT 50.00,
+  `remaining_amount` DECIMAL(10,2) NOT NULL DEFAULT 50.00,
+  `hide_price` TINYINT(1) NOT NULL DEFAULT 0,
+  `service_title` VARCHAR(180) NULL DEFAULT NULL,
+  `recipient_name` VARCHAR(120) NOT NULL,
+  `sender_name` VARCHAR(120) NULL DEFAULT NULL,
+  `recipient_phone` VARCHAR(40) NULL DEFAULT NULL,
+  `client_id` INT UNSIGNED NULL DEFAULT NULL,
+  `message` VARCHAR(320) NULL DEFAULT NULL,
+  `expires_at` DATE NULL DEFAULT NULL,
+  `status` VARCHAR(25) NOT NULL DEFAULT 'active',
+  `redeemed_at` DATETIME NULL DEFAULT NULL,
+  `notes` VARCHAR(300) NULL DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_gift_card_code` (`code`),
+  KEY `idx_gc_status` (`status`),
+  KEY `idx_gc_client` (`client_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

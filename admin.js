@@ -21,6 +21,8 @@ const STATE = {
   movements: [],
   messageTemplates: [],
   messageLogs: [],
+  giftCards: [],
+  giftCardsSummary: null,
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
   insights: null,
@@ -224,6 +226,7 @@ async function refreshAllData() {
     loadTomorrowReminders(),
     loadInventoryData(),
     loadMessagesData(),
+    loadGiftCards(),
     loadAdminUsers(),
     loadInsights(),
   ]);
@@ -233,6 +236,7 @@ async function refreshAllData() {
   renderClientsTable();
   renderInventoryView();
   renderMessagesView();
+  renderGiftCardsView();
   renderInsightsView();
   renderSettingsView();
 }
@@ -279,6 +283,12 @@ async function loadMessagesData() {
   const data = await apiFetch('admin/messages', { method: 'GET' });
   STATE.messageTemplates = data.templates || [];
   STATE.messageLogs = data.logs || [];
+}
+
+async function loadGiftCards() {
+  const data = await apiFetch('admin/gift-cards', { method: 'GET' });
+  STATE.giftCards = data.gift_cards || [];
+  STATE.giftCardsSummary = data.summary || null;
 }
 
 async function loadAdminUsers() {
@@ -667,7 +677,7 @@ async function persistAppointmentQuickChange(appt, patch, successMsg) {
   }
 }
 
-const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'insights', 'settings'];
+const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
@@ -682,6 +692,7 @@ function switchAdminView(viewName) {
   if (viewName === 'clients') renderClientsTable();
   if (viewName === 'inventory') renderInventoryView();
   if (viewName === 'messages') renderMessagesView();
+  if (viewName === 'giftcards') renderGiftCardsView();
   if (viewName === 'insights') renderInsightsView();
   if (viewName === 'settings') renderSettingsView();
 }
@@ -2451,6 +2462,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderSettingsView();
     });
   }
+
+  initGiftCardGeneratorControls();
 });
 
 /* ==========================================================================
@@ -3150,4 +3163,754 @@ function renderSettingsView() {
       });
     });
   }
+}
+
+/* ==========================================================================
+   GIFT CARD GENERATOR, HIGH-RES PNG CANVAS EXPORT & ARCHIVE REGISTRY
+   ========================================================================== */
+function generateRandomGiftCardCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let suffix = '';
+  for (let i = 0; i < 6; i++) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return `GBS-${suffix}`;
+}
+
+function getDefaultGiftCardExpiryIso() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 1);
+  return toIsoDate(d);
+}
+
+function formatItDateSlash(isoStr) {
+  if (!isoStr || !/^\d{4}-\d{2}-\d{2}/.test(isoStr)) return '12 mesi dall\'emissione';
+  const [y, m, d] = String(isoStr).slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function getGiftCardValueBadgeText(card) {
+  const amt = Math.max(0, Number(card.amount || 0));
+  if (card.gift_mode === 'treatment' && Number(card.hide_price) === 1) {
+    return 'RITUALE REGALO';
+  }
+  if (card.gift_mode === 'treatment' && amt <= 0) {
+    return 'EXPERIENCE';
+  }
+  return `${amt % 1 === 0 ? amt.toFixed(0) : amt.toFixed(2)} €`;
+}
+
+function readGiftCardFormDraft() {
+  const code = (document.getElementById('gcCodeInput')?.value || '').trim().toUpperCase() || generateRandomGiftCardCode();
+  const theme = document.getElementById('gcThemeInput')?.value || 'rose';
+  const giftMode = document.getElementById('gcModeInput')?.value === 'treatment' ? 'treatment' : 'amount';
+  const amount = Math.max(0, Number(document.getElementById('gcAmountInput')?.value || 0) || 0);
+  const hidePrice = Boolean(document.getElementById('gcHidePriceCheck')?.checked);
+  const serviceTitle = (document.getElementById('gcServiceTitleInput')?.value || '').trim();
+  const recipientName = (document.getElementById('gcRecipientInput')?.value || '').trim() || 'Te';
+  const senderName = (document.getElementById('gcSenderInput')?.value || '').trim();
+  const recipientPhone = (document.getElementById('gcPhoneInput')?.value || '').trim();
+  const clientId = Number(document.getElementById('gcClientSelect')?.value || 0) || 0;
+  const message = (document.getElementById('gcMessageInput')?.value || '').trim() ||
+    'Un momento di pura bellezza e relax pensato solo per te.';
+  const expiresAt = document.getElementById('gcExpiresInput')?.value || getDefaultGiftCardExpiryIso();
+
+  return {
+    code,
+    theme,
+    gift_mode: giftMode,
+    amount,
+    hide_price: hidePrice ? 1 : 0,
+    service_title: serviceTitle,
+    recipient_name: recipientName,
+    sender_name: senderName,
+    recipient_phone: recipientPhone,
+    client_id: clientId || null,
+    message,
+    expires_at: expiresAt,
+  };
+}
+
+function updateGiftCardLivePreview(cardInput = null) {
+  const card = cardInput || readGiftCardFormDraft();
+  const preview = document.getElementById('gcLivePreviewCard');
+  if (!preview) return;
+
+  preview.dataset.theme = card.theme || 'rose';
+  const badgeEl = document.getElementById('gcPrevValueBadge');
+  const recEl = document.getElementById('gcPrevRecipient');
+  const treatEl = document.getElementById('gcPrevTreatment');
+  const msgEl = document.getElementById('gcPrevMessage');
+  const senderEl = document.getElementById('gcPrevSender');
+  const codeEl = document.getElementById('gcPrevCode');
+  const expEl = document.getElementById('gcPrevExpiry');
+
+  if (badgeEl) badgeEl.textContent = getGiftCardValueBadgeText(card);
+  if (recEl) recEl.textContent = card.recipient_name || 'Te';
+  if (treatEl) {
+    const showTreat = card.gift_mode === 'treatment' && Boolean(card.service_title);
+    treatEl.hidden = !showTreat;
+    treatEl.textContent = showTreat ? `✦ ${card.service_title}` : '';
+  }
+  if (msgEl) msgEl.textContent = `“${card.message || ''}”`;
+  if (senderEl) {
+    senderEl.hidden = !card.sender_name;
+    senderEl.textContent = card.sender_name ? `Con affetto, da ${card.sender_name}` : '';
+  }
+  if (codeEl) codeEl.textContent = `CODICE: ${card.code}`;
+  if (expEl) expEl.textContent = card.expires_at ? `Valida fino al ${formatItDateSlash(card.expires_at)}` : 'Valida 12 mesi';
+}
+
+function loadGiftCardFormFromRecord(gc) {
+  if (!gc) return;
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+
+  setVal('gcThemeInput', gc.theme || 'rose');
+  document.querySelectorAll('#gcThemePills .gc-choice-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.gctheme === (gc.theme || 'rose'));
+  });
+
+  const mode = gc.gift_mode === 'treatment' ? 'treatment' : 'amount';
+  setVal('gcModeInput', mode);
+  document.querySelectorAll('#gcModePills .gc-choice-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.gcmode === mode);
+  });
+  const amtSec = document.getElementById('gcAmountSection');
+  const treatSec = document.getElementById('gcTreatmentSection');
+  if (amtSec) amtSec.hidden = mode !== 'amount';
+  if (treatSec) treatSec.hidden = mode !== 'treatment';
+
+  setVal('gcAmountInput', Number(gc.amount || 0));
+  document.querySelectorAll('#gcAmountPresetRow .gc-chip-btn').forEach((c) => {
+    c.classList.toggle('active', Number(c.dataset.gcamount) === Number(gc.amount));
+  });
+  setVal('gcServiceTitleInput', gc.service_title || '');
+  const hideCheck = document.getElementById('gcHidePriceCheck');
+  if (hideCheck) hideCheck.checked = Boolean(Number(gc.hide_price));
+  setVal('gcRecipientInput', gc.recipient_name || '');
+  setVal('gcSenderInput', gc.sender_name || '');
+  setVal('gcPhoneInput', gc.recipient_phone || '');
+  setVal('gcClientSelect', gc.client_id ? String(gc.client_id) : '');
+  setVal('gcMessageInput', gc.message || '');
+  setVal('gcCodeInput', gc.code || generateRandomGiftCardCode());
+  setVal('gcExpiresInput', gc.expires_at ? String(gc.expires_at).slice(0, 10) : getDefaultGiftCardExpiryIso());
+
+  updateGiftCardLivePreview();
+}
+
+function drawRoundedRectPath(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function wrapCanvasText(ctx, text, maxWidth, maxLines = 4) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const lines = [];
+  let current = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const candidate = `${current} ${words[i]}`;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = words[i];
+      if (lines.length === maxLines - 1) {
+        while (i + 1 < words.length && ctx.measureText(`${current} ${words[i + 1]}…`).width <= maxWidth) {
+          i++;
+          current += ` ${words[i]}`;
+        }
+        if (i < words.length - 1) current += '…';
+        break;
+      }
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+async function exportGiftCardToPng(cardInput = null) {
+  const card = cardInput || readGiftCardFormDraft();
+  if (document.fonts && document.fonts.ready) {
+    try {
+      await document.fonts.ready;
+    } catch {}
+  }
+
+  const W = 1400;
+  const H = 840;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const palettes = {
+    rose: {
+      c0: '#fceeed',
+      c1: '#f3d2d6',
+      c2: '#e6b8c0',
+      glow: 'rgba(255, 255, 255, 0.85)',
+      ink: '#3f131a',
+      inkSoft: 'rgba(63, 19, 26, 0.78)',
+      border: 'rgba(145, 78, 86, 0.42)',
+      pillBg: 'rgba(255, 255, 255, 0.88)',
+      pillInk: '#3f131a',
+      watermark: 'rgba(145, 78, 86, 0.08)',
+    },
+    bordeaux: {
+      c0: '#270b11',
+      c1: '#441620',
+      c2: '#2e0d14',
+      glow: 'rgba(176, 76, 98, 0.34)',
+      ink: '#fdf5f2',
+      inkSoft: 'rgba(253, 245, 242, 0.8)',
+      border: 'rgba(232, 189, 176, 0.48)',
+      pillBg: 'rgba(253, 244, 239, 0.95)',
+      pillInk: '#3c1118',
+      watermark: 'rgba(255, 232, 224, 0.06)',
+    },
+    pearl: {
+      c0: '#ffffff',
+      c1: '#fbf5f0',
+      c2: '#f0e2d6',
+      glow: 'rgba(255, 255, 255, 0.96)',
+      ink: '#3a171c',
+      inkSoft: 'rgba(58, 23, 28, 0.78)',
+      border: 'rgba(181, 139, 98, 0.46)',
+      pillBg: 'rgba(255, 255, 255, 0.92)',
+      pillInk: '#3a171c',
+      watermark: 'rgba(181, 139, 98, 0.08)',
+    },
+  };
+  const pal = palettes[card.theme] || palettes.rose;
+
+  // Card surface
+  drawRoundedRectPath(ctx, 0, 0, W, H, 46);
+  ctx.save();
+  ctx.clip();
+
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, pal.c0);
+  grad.addColorStop(0.55, pal.c1);
+  grad.addColorStop(1, pal.c2);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  const radGlow = ctx.createRadialGradient(260, 180, 20, 260, 180, 560);
+  radGlow.addColorStop(0, pal.glow);
+  radGlow.addColorStop(1, 'transparent');
+  ctx.fillStyle = radGlow;
+  ctx.fillRect(0, 0, W, H);
+
+  // Heart watermark
+  ctx.fillStyle = pal.watermark;
+  ctx.font = '400 320px Georgia, serif';
+  ctx.fillText('♡', W - 340, H / 2 + 120);
+
+  // Inner double border
+  ctx.strokeStyle = pal.border;
+  ctx.lineWidth = 2.5;
+  drawRoundedRectPath(ctx, 26, 26, W - 52, H - 52, 32);
+  ctx.stroke();
+
+  // Header brand
+  ctx.fillStyle = pal.ink;
+  ctx.font = '600 48px "Cormorant Garamond", Georgia, serif';
+  ctx.fillText('G I U L I A', 74, 122);
+  ctx.fillStyle = pal.inkSoft;
+  ctx.font = '600 18px "Montserrat", Arial, sans-serif';
+  ctx.fillText('BEAUTY STUDIO  •  NAILS & MAKEUP', 74, 156);
+
+  // Value / Ritual Pill on top right
+  const badgeText = getGiftCardValueBadgeText(card);
+  ctx.font = '600 44px "Cormorant Garamond", Georgia, serif';
+  const badgeTw = ctx.measureText(badgeText).width;
+  const pillW = Math.max(190, badgeTw + 68);
+  const pillH = 74;
+  const pillX = W - 74 - pillW;
+  const pillY = 82;
+  ctx.fillStyle = pal.pillBg;
+  drawRoundedRectPath(ctx, pillX, pillY, pillW, pillH, 37);
+  ctx.fill();
+  ctx.strokeStyle = pal.border;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = pal.pillInk;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(badgeText, pillX + pillW / 2, pillY + pillH / 2 + 2);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+
+  // Recipient block
+  let curY = 278;
+  ctx.fillStyle = pal.inkSoft;
+  ctx.font = '600 19px "Montserrat", Arial, sans-serif';
+  ctx.fillText('UN DONO SPECIALE PER', 74, curY);
+  curY += 68;
+
+  ctx.fillStyle = pal.ink;
+  ctx.font = 'italic 600 72px "Cormorant Garamond", Georgia, serif';
+  const recLines = wrapCanvasText(ctx, card.recipient_name || 'Te', W - 160, 2);
+  recLines.forEach((line, idx) => {
+    ctx.fillText(line, 74, curY + idx * 72);
+  });
+  curY += (recLines.length - 1) * 72 + 24;
+
+  // Optional Treatment Pill
+  if (card.gift_mode === 'treatment' && card.service_title) {
+    ctx.font = '600 22px "Montserrat", Arial, sans-serif';
+    const trTxt = `✦ ${card.service_title}`;
+    const trW = Math.min(W - 150, ctx.measureText(trTxt).width + 40);
+    ctx.fillStyle = pal.pillBg;
+    drawRoundedRectPath(ctx, 74, curY, trW, 44, 22);
+    ctx.fill();
+    ctx.fillStyle = pal.pillInk;
+    ctx.fillText(trTxt, 94, curY + 29);
+    curY += 74;
+  } else {
+    curY += 26;
+  }
+
+  // Message
+  ctx.fillStyle = pal.inkSoft;
+  ctx.font = 'italic 400 29px "Cormorant Garamond", Georgia, serif';
+  const msgLines = wrapCanvasText(ctx, `“${card.message || ''}”`, W - 180, 3);
+  msgLines.forEach((line, idx) => {
+    ctx.fillText(line, 74, curY + idx * 38);
+  });
+  curY += msgLines.length * 38 + 18;
+
+  // Sender
+  if (card.sender_name) {
+    ctx.fillStyle = pal.ink;
+    ctx.font = '600 21px "Montserrat", Arial, sans-serif';
+    ctx.fillText(`Con affetto, da ${card.sender_name}`, 74, Math.min(H - 156, curY + 6));
+  }
+
+  // Bottom bar
+  ctx.strokeStyle = pal.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(74, H - 118);
+  ctx.lineTo(W - 74, H - 118);
+  ctx.stroke();
+
+  // Unique Code Pill
+  const codeLabel = `CODICE: ${card.code}`;
+  ctx.font = '700 21px "Montserrat", Arial, sans-serif';
+  const codeW = ctx.measureText(codeLabel).width + 38;
+  ctx.fillStyle = pal.pillBg;
+  drawRoundedRectPath(ctx, 74, H - 96, codeW, 44, 10);
+  ctx.fill();
+  ctx.fillStyle = pal.pillInk;
+  ctx.fillText(codeLabel, 93, H - 66);
+
+  // Expiry & studio info
+  ctx.fillStyle = pal.inkSoft;
+  ctx.font = '500 18px "Montserrat", Arial, sans-serif';
+  const expText = card.expires_at ? `Valida fino al ${formatItDateSlash(card.expires_at)}` : 'Valida 12 mesi';
+  ctx.fillText(expText, 74 + codeW + 28, H - 67);
+
+  ctx.textAlign = 'right';
+  ctx.fillText('Via Principe Amedeo 17, Verdellino (BG) • +39 331 504 5135', W - 74, H - 67);
+  ctx.textAlign = 'left';
+  ctx.restore();
+
+  const triggerDownload = (href, revoke) => {
+    const a = document.createElement('a');
+    a.download = `GiftCard-${card.code}.png`;
+    a.href = href;
+    document.body?.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      a.remove();
+      if (revoke) URL.revokeObjectURL(href);
+    }, 300);
+    showAgendaToast(`Gift Card PNG scaricata (${card.code})`);
+  };
+
+  if (typeof canvas.toBlob === 'function') {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        triggerDownload(URL.createObjectURL(blob), true);
+      } else {
+        triggerDownload(canvas.toDataURL('image/png'), false);
+      }
+    }, 'image/png');
+  } else {
+    triggerDownload(canvas.toDataURL('image/png'), false);
+  }
+}
+
+function buildGiftCardWhatsappUrl(card) {
+  const whatGift =
+    card.gift_mode === 'treatment' && card.service_title
+      ? (Number(card.hide_price) === 1 || Number(card.amount) <= 0
+          ? `*${card.service_title}*`
+          : `*${card.service_title}* (valore ${Number(card.amount).toFixed(0)} €)`)
+      : `un credito regalo di *${Number(card.amount).toFixed(0)} €*`;
+  const fromPart = card.sender_name ? ` da parte di *${card.sender_name}*` : '';
+  const expPart = card.expires_at ? ` (valida fino al ${formatItDateSlash(card.expires_at)})` : '';
+  const text =
+    `Ciao ${card.recipient_name || ''}! ♡ Ecco la tua *Gift Card Giulia Beauty Studio*${fromPart}: ${whatGift}${expPart}.\n` +
+    (card.message ? `✨ _"${card.message}"_\n` : '') +
+    `🔑 Codice Univoco: *${card.code}*\n` +
+    `📍 Via Principe Amedeo 17, Verdellino (BG) • Prenota su +39 331 504 5135`;
+
+  const waNum = formatWaNumber(card.recipient_phone || '');
+  return waNum
+    ? `https://wa.me/${waNum}?text=${encodeURIComponent(text)}`
+    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
+
+function populateGiftCardSelectors() {
+  const catSel = document.getElementById('gcCatalogSelect');
+  if (catSel && window.STUDIO_CATALOG) {
+    const firstOpt = '<option value="">— Oppure scrivi manualmente qui sotto —</option>';
+    const opts = [];
+    window.STUDIO_CATALOG.forEach((cat) => {
+      opts.push(`<optgroup label="${escapeHtml(cat.title)}">`);
+      (cat.items || []).forEach((item) => {
+        opts.push(
+          `<option value="${escapeHtml(item.name)}" data-price="${Number(item.price || 0)}">${escapeHtml(item.name)} — ${Number(item.price || 0)} €</option>`
+        );
+      });
+      opts.push('</optgroup>');
+    });
+    catSel.innerHTML = firstOpt + opts.join('');
+  }
+
+  const cliSel = document.getElementById('gcClientSelect');
+  if (cliSel) {
+    const prev = cliSel.value;
+    cliSel.innerHTML = `<option value="">— Nessun collegamento —</option>${(STATE.clients || [])
+      .map((c) => `<option value="${c.id}">${escapeHtml(c.full_name)} (${escapeHtml(c.phone)})</option>`)
+      .join('')}`;
+    if (prev) cliSel.value = prev;
+  }
+}
+
+function initGiftCardGeneratorControls() {
+  const form = document.getElementById('giftCardGeneratorForm');
+  if (!form) return;
+
+  const codeEl = document.getElementById('gcCodeInput');
+  const expEl = document.getElementById('gcExpiresInput');
+  if (codeEl && !codeEl.value) codeEl.value = generateRandomGiftCardCode();
+  if (expEl && !expEl.value) expEl.value = getDefaultGiftCardExpiryIso();
+
+  populateGiftCardSelectors();
+  updateGiftCardLivePreview();
+
+  document.querySelectorAll('#gcThemePills .gc-choice-pill').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#gcThemePills .gc-choice-pill').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('gcThemeInput').value = btn.dataset.gctheme;
+      updateGiftCardLivePreview();
+    });
+  });
+
+  document.querySelectorAll('#gcModePills .gc-choice-pill').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#gcModePills .gc-choice-pill').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const mode = btn.dataset.gcmode;
+      document.getElementById('gcModeInput').value = mode;
+      document.getElementById('gcAmountSection').hidden = mode !== 'amount';
+      document.getElementById('gcTreatmentSection').hidden = mode !== 'treatment';
+      updateGiftCardLivePreview();
+    });
+  });
+
+  document.querySelectorAll('#gcAmountPresetRow .gc-chip-btn').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#gcAmountPresetRow .gc-chip-btn').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      document.getElementById('gcAmountInput').value = chip.dataset.gcamount;
+      updateGiftCardLivePreview();
+    });
+  });
+
+  document.getElementById('gcCatalogSelect')?.addEventListener('change', (e) => {
+    const opt = e.target.selectedOptions?.[0];
+    if (!opt || !opt.value) return;
+    document.getElementById('gcServiceTitleInput').value = opt.value;
+    const price = Number(opt.dataset.price || 0);
+    if (price > 0) document.getElementById('gcAmountInput').value = price;
+    updateGiftCardLivePreview();
+  });
+
+  document.getElementById('gcClientSelect')?.addEventListener('change', (e) => {
+    const c = (STATE.clients || []).find((x) => Number(x.id) === Number(e.target.value));
+    if (!c) return;
+    const recEl = document.getElementById('gcRecipientInput');
+    const phoneEl = document.getElementById('gcPhoneInput');
+    if (recEl && (!recEl.value.trim() || recEl.value.trim() === 'Chiara')) recEl.value = c.full_name;
+    if (phoneEl && !phoneEl.value.trim()) phoneEl.value = c.phone || '';
+    updateGiftCardLivePreview();
+  });
+
+  document.querySelectorAll('#gcOccasionPills [data-occasion]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('gcMessageInput').value = btn.dataset.occasion;
+      updateGiftCardLivePreview();
+    });
+  });
+
+  document.getElementById('gcRegenCodeBtn')?.addEventListener('click', () => {
+    document.getElementById('gcCodeInput').value = generateRandomGiftCardCode();
+    updateGiftCardLivePreview();
+  });
+
+  document.getElementById('gcResetFormBtn')?.addEventListener('click', () => {
+    document.getElementById('gcCodeInput').value = generateRandomGiftCardCode();
+    document.getElementById('gcExpiresInput').value = getDefaultGiftCardExpiryIso();
+    document.getElementById('gcRecipientInput').value = '';
+    document.getElementById('gcSenderInput').value = '';
+    document.getElementById('gcPhoneInput').value = '';
+    document.getElementById('gcClientSelect').value = '';
+    document.getElementById('gcServiceTitleInput').value = '';
+    document.getElementById('gcAmountInput').value = 50;
+    document.getElementById('gcGeneratorAlert').hidden = true;
+    updateGiftCardLivePreview();
+  });
+
+  ['gcAmountInput', 'gcExpiresInput', 'gcRecipientInput', 'gcSenderInput', 'gcPhoneInput', 'gcServiceTitleInput', 'gcHidePriceCheck', 'gcMessageInput', 'gcCodeInput']
+    .forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => updateGiftCardLivePreview());
+        el.addEventListener('change', () => updateGiftCardLivePreview());
+      }
+    });
+
+  document.getElementById('gcDownloadPngBtn')?.addEventListener('click', () => {
+    exportGiftCardToPng(readGiftCardFormDraft());
+  });
+
+  document.getElementById('gcPrintBtn')?.addEventListener('click', () => {
+    updateGiftCardLivePreview();
+    document.body.classList.add('printing-giftcard');
+    const cleanupPrint = () => {
+      document.body.classList.remove('printing-giftcard');
+      window.removeEventListener('afterprint', cleanupPrint);
+    };
+    window.addEventListener('afterprint', cleanupPrint);
+    window.print();
+    setTimeout(cleanupPrint, 1200);
+  });
+
+  document.getElementById('gcWhatsappShareBtn')?.addEventListener('click', () => {
+    const url = buildGiftCardWhatsappUrl(readGiftCardFormDraft());
+    window.open(url, '_blank', 'noopener');
+  });
+
+  document.getElementById('gcSearchInput')?.addEventListener('input', () => renderGiftCardsView());
+  document.getElementById('gcStatusFilter')?.addEventListener('change', () => renderGiftCardsView());
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const alertEl = document.getElementById('gcGeneratorAlert');
+    alertEl.hidden = true;
+    const draft = readGiftCardFormDraft();
+
+    try {
+      const res = await apiFetch('admin/gift-cards', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create',
+          ...draft,
+        }),
+      });
+      await loadGiftCards();
+      renderGiftCardsView();
+      if (res.gift_card) loadGiftCardFormFromRecord(res.gift_card);
+      showAgendaToast(`Gift Card ${draft.code} emessa e salvata!`);
+    } catch (err) {
+      alertEl.hidden = false;
+      alertEl.textContent = err.message;
+    }
+  });
+}
+
+function renderGiftCardsView() {
+  populateGiftCardSelectors();
+
+  const kpiStrip = document.getElementById('gcKpiStrip');
+  const regBox = document.getElementById('gcRegistryContainer');
+  if (!regBox) return;
+
+  const list = STATE.giftCards || [];
+  const active = list.filter((g) => g.status === 'active');
+  const sum = STATE.giftCardsSummary || {
+    active_count: active.length,
+    redeemed_count: list.filter((g) => g.status === 'redeemed').length,
+    active_remaining_total: active.reduce((s, g) => s + Number(g.remaining_amount || 0), 0),
+    total_issued_amount: list.filter((g) => g.status !== 'cancelled').reduce((s, g) => s + Number(g.amount || 0), 0),
+  };
+
+  if (kpiStrip) {
+    kpiStrip.innerHTML = `
+      <div class="insight-kpi-card"><span class="kpi-label">Gift Card Attive</span><strong>${sum.active_count}</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">Credito Residuo Attivo</span><strong>${Number(sum.active_remaining_total || 0).toFixed(0)} €</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">Totale Emesso</span><strong>${Number(sum.total_issued_amount || 0).toFixed(0)} €</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">Riscattate 100%</span><strong>${sum.redeemed_count}</strong></div>
+    `;
+  }
+
+  const q = (document.getElementById('gcSearchInput')?.value || '').trim().toLowerCase();
+  const statusFilter = document.getElementById('gcStatusFilter')?.value || '';
+  const filtered = list.filter((g) => {
+    if (statusFilter && g.status !== statusFilter) return false;
+    if (!q) return true;
+    return [g.code, g.recipient_name, g.sender_name, g.service_title, g.client_name]
+      .some((v) => String(v || '').toLowerCase().includes(q));
+  });
+
+  if (filtered.length === 0) {
+    regBox.innerHTML = '<div style="padding:28px;text-align:center;" class="muted-text">Nessuna Gift Card presente o corrispondente ai filtri.</div>';
+    return;
+  }
+
+  const statusLabels = { active: 'Attiva', redeemed: 'Riscattata', cancelled: 'Annullata' };
+  const statusClasses = { active: 'badge-confirmed', redeemed: 'badge-completed', cancelled: 'badge-cancelled' };
+
+  regBox.innerHTML = `
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Codice &amp; Stile</th>
+          <th>Destinatario / Mittente</th>
+          <th>Regalo &amp; Credito Residuo</th>
+          <th>Scadenza</th>
+          <th>Stato</th>
+          <th>Azioni &amp; Riscatto</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filtered
+          .map((g) => {
+            const amt = Number(g.amount || 0);
+            const rem = Number(g.remaining_amount || 0);
+            const stCls = statusClasses[g.status] || 'badge-pending';
+            const stLbl = statusLabels[g.status] || g.status;
+            return `
+              <tr data-gc-id="${g.id}">
+                <td>
+                  <strong style="letter-spacing:0.06em;">${escapeHtml(g.code)}</strong>
+                  <div class="muted-text" style="font-size:0.72rem;text-transform:capitalize;">Tema: ${escapeHtml(g.theme || 'rose')}</div>
+                </td>
+                <td>
+                  <strong>Per ${escapeHtml(g.recipient_name)}</strong>
+                  ${g.sender_name ? `<div class="muted-text" style="font-size:0.74rem;">Da: ${escapeHtml(g.sender_name)}</div>` : ''}
+                  ${g.client_name ? `<div class="muted-text" style="font-size:0.72rem;">CRM: ${escapeHtml(g.client_name)}</div>` : ''}
+                </td>
+                <td>
+                  ${g.gift_mode === 'treatment' && g.service_title ? `<div><strong>${escapeHtml(g.service_title)}</strong></div>` : ''}
+                  <div>${amt > 0 ? `Residuo: <strong>${rem.toFixed(0)} €</strong> / ${amt.toFixed(0)} €` : '<em>Trattamento senza importo esposto</em>'}</div>
+                </td>
+                <td>${escapeHtml(formatItDateSlash(g.expires_at))}</td>
+                <td><span class="status-badge ${stCls}">${escapeHtml(stLbl)}</span></td>
+                <td>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    <button type="button" class="btn-outline-sm gc-load-btn" data-id="${g.id}" title="Ricarica in anteprima per scaricare PNG o stampare">🎨 PNG</button>
+                    <button type="button" class="btn-outline-sm gc-wa-btn" data-id="${g.id}" title="Invia su WhatsApp">📲</button>
+                    ${g.status === 'active' ? `<button type="button" class="btn-outline-sm gc-full-redeem-btn" data-id="${g.id}">✓ Riscatta 100%</button>` : ''}
+                    <button type="button" class="btn-outline-sm gc-del-btn" data-id="${g.id}" style="color:#a12a2e;border-color:#e0b5b5;">✕</button>
+                  </div>
+                  ${
+                    g.status === 'active' && amt > 0
+                      ? `<div class="gc-redeem-inline">
+                           <input type="number" class="gc-partial-input" min="1" max="${rem}" step="1" value="${Math.min(rem, 20)}" aria-label="Importo da scalare" />
+                           <button type="button" class="btn-outline-sm gc-partial-btn" data-id="${g.id}">Scala €</button>
+                         </div>`
+                      : ''
+                  }
+                </td>
+              </tr>
+            `;
+          })
+          .join('')}
+      </tbody>
+    </table>
+  `;
+
+  regBox.querySelectorAll('.gc-load-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const gc = (STATE.giftCards || []).find((x) => Number(x.id) === Number(btn.dataset.id));
+      if (gc) {
+        loadGiftCardFormFromRecord(gc);
+        showAgendaToast(`Card ${gc.code} caricata nell'anteprima`);
+      }
+    });
+  });
+
+  regBox.querySelectorAll('.gc-wa-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const gc = (STATE.giftCards || []).find((x) => Number(x.id) === Number(btn.dataset.id));
+      if (gc) window.open(buildGiftCardWhatsappUrl(gc), '_blank', 'noopener');
+    });
+  });
+
+  regBox.querySelectorAll('.gc-partial-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const val = Number(row?.querySelector('.gc-partial-input')?.value || 0);
+      if (!(val > 0)) return;
+      await apiFetch('admin/gift-cards', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'redeem', id: Number(btn.dataset.id), redeem_amount: val }),
+      });
+      await loadGiftCards();
+      renderGiftCardsView();
+      showAgendaToast(`Scalati ${val} € dalla Gift Card`);
+    });
+  });
+
+  regBox.querySelectorAll('.gc-full-redeem-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await apiFetch('admin/gift-cards', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'redeem', id: Number(btn.dataset.id), mark_full: true }),
+      });
+      await loadGiftCards();
+      renderGiftCardsView();
+      showAgendaToast('Gift Card segnata come riscattata');
+    });
+  });
+
+  regBox.querySelectorAll('.gc-del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Conferma';
+        setTimeout(() => {
+          if (btn.isConnected) {
+            btn.dataset.armed = '0';
+            btn.textContent = '✕';
+          }
+        }, 3000);
+        return;
+      }
+      await apiFetch('admin/gift-cards', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete', id: Number(btn.dataset.id) }),
+      });
+      await loadGiftCards();
+      renderGiftCardsView();
+      showAgendaToast('Gift Card eliminata');
+    });
+  });
 }

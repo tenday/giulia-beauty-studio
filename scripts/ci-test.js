@@ -197,6 +197,65 @@ async function runApiSuite() {
       id: targetAppt.id,
     });
     assert.strictEqual(delRes.status, 200);
+
+    // Gift Card Generator CRUD + Partial/Full Redeem + Delete
+    const gcBad = await req('POST', '/api/admin/gift-cards', {
+      action: 'create',
+      recipient_name: '',
+      amount: 80,
+    });
+    assert.strictEqual(gcBad.status, 422);
+
+    const gcCreate = await req('POST', '/api/admin/gift-cards', {
+      action: 'create',
+      theme: 'bordeaux',
+      gift_mode: 'amount',
+      amount: 80,
+      recipient_name: 'Laura Conti',
+      sender_name: 'Marco',
+      message: 'Buon compleanno!',
+    });
+    assert.strictEqual(gcCreate.status, 201);
+    const gcId = gcCreate.json.gift_card.id;
+    const gcCode = gcCreate.json.gift_card.code;
+    assert(gcCode.startsWith('GBS-'));
+
+    const gcDup = await req('POST', '/api/admin/gift-cards', {
+      action: 'create',
+      code: gcCode,
+      recipient_name: 'Altra',
+      amount: 50,
+    });
+    assert.strictEqual(gcDup.status, 409);
+
+    const gcPartial = await req('POST', '/api/admin/gift-cards', {
+      action: 'redeem',
+      id: gcId,
+      redeem_amount: 30,
+    });
+    assert.strictEqual(gcPartial.status, 200);
+    assert.strictEqual(Number(gcPartial.json.gift_card.remaining_amount), 50);
+    assert.strictEqual(gcPartial.json.gift_card.status, 'active');
+
+    const gcFull = await req('POST', '/api/admin/gift-cards', {
+      action: 'redeem',
+      id: gcId,
+      mark_full: true,
+    });
+    assert.strictEqual(gcFull.status, 200);
+    assert.strictEqual(Number(gcFull.json.gift_card.remaining_amount), 0);
+    assert.strictEqual(gcFull.json.gift_card.status, 'redeemed');
+
+    const gcList = await req('GET', '/api/admin/gift-cards');
+    assert.strictEqual(gcList.status, 200);
+    assert(gcList.json.gift_cards.some((g) => g.code === gcCode));
+
+    const gcDel = await req('POST', '/api/admin/gift-cards', {
+      action: 'delete',
+      id: gcId,
+    });
+    assert.strictEqual(gcDel.status, 200);
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     await new Promise((r) => server.close(r));

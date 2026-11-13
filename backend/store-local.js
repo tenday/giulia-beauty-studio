@@ -28,6 +28,7 @@ function defaultState() {
       movement: 0,
       template: 0,
       msg_log: 0,
+      gift_card: 0,
     },
     admin_users: [],
     admin_sessions: [],
@@ -44,6 +45,7 @@ function defaultState() {
     product_movements: [],
     message_templates: [],
     message_logs: [],
+    gift_cards: [],
   };
 }
 
@@ -1371,6 +1373,108 @@ async function createMessageLog({
   return log;
 }
 
+async function listGiftCards(query = '') {
+  const db = readDb();
+  const clientMap = new Map(db.clients.map((c) => [Number(c.id), c]));
+  const q = String(query || '').trim().toLowerCase();
+  return [...(db.gift_cards || [])]
+    .filter((gc) => {
+      if (!q) return true;
+      return [gc.code, gc.recipient_name, gc.sender_name, gc.service_title]
+        .some((v) => String(v || '').toLowerCase().includes(q));
+    })
+    .sort((a, b) => Number(b.id) - Number(a.id))
+    .map((gc) => ({
+      ...gc,
+      client_name: clientMap.get(Number(gc.client_id))?.full_name || null,
+    }));
+}
+
+async function createGiftCard({
+  code,
+  theme,
+  giftMode,
+  amount,
+  hidePrice,
+  serviceTitle,
+  recipientName,
+  senderName,
+  recipientPhone,
+  clientId,
+  message,
+  expiresAt,
+  notes,
+}) {
+  const db = readDb();
+  const dup = (db.gift_cards || []).find((g) => String(g.code).toUpperCase() === String(code).toUpperCase());
+  if (dup) {
+    const err = new Error('Questo codice Gift Card esiste già. Rigenera o scegli un altro codice.');
+    err.status = 409;
+    err.code = 'GIFT_CODE_EXISTS';
+    throw err;
+  }
+  const now = formatRomeNow();
+  const row = {
+    id: nextId(db, 'gift_card'),
+    code,
+    theme: theme || 'rose',
+    gift_mode: giftMode || 'amount',
+    amount: Number(amount || 0).toFixed(2),
+    remaining_amount: Number(amount || 0).toFixed(2),
+    hide_price: hidePrice ? 1 : 0,
+    service_title: serviceTitle || null,
+    recipient_name: recipientName,
+    sender_name: senderName || null,
+    recipient_phone: recipientPhone || null,
+    client_id: clientId || null,
+    message: message || null,
+    expires_at: expiresAt || null,
+    status: 'active',
+    redeemed_at: null,
+    notes: notes || null,
+    created_at: now,
+    updated_at: now,
+  };
+  db.gift_cards.push(row);
+  writeDb(db);
+  const clientName = db.clients.find((c) => Number(c.id) === Number(clientId))?.full_name || null;
+  return { ...row, client_name: clientName };
+}
+
+async function redeemGiftCard(id, { redeemAmount = 0, markFull = false, cancel = false }) {
+  const db = readDb();
+  const gc = (db.gift_cards || []).find((g) => Number(g.id) === Number(id));
+  if (!gc) return null;
+  const now = formatRomeNow();
+  if (cancel) {
+    gc.status = 'cancelled';
+  } else if (markFull) {
+    gc.remaining_amount = '0.00';
+    gc.status = 'redeemed';
+    gc.redeemed_at = now;
+  } else if (Number(gc.amount) > 0) {
+    const nextRem = Math.max(0, Number((Number(gc.remaining_amount) - Math.max(0, Number(redeemAmount) || 0)).toFixed(2)));
+    gc.remaining_amount = nextRem.toFixed(2);
+    if (nextRem <= 0) {
+      gc.status = 'redeemed';
+      gc.redeemed_at = now;
+    }
+  } else {
+    gc.status = 'redeemed';
+    gc.redeemed_at = now;
+  }
+  gc.updated_at = now;
+  writeDb(db);
+  const clientName = db.clients.find((c) => Number(c.id) === Number(gc.client_id))?.full_name || null;
+  return { ...gc, client_name: clientName };
+}
+
+async function deleteGiftCard(id) {
+  const db = readDb();
+  db.gift_cards = (db.gift_cards || []).filter((g) => Number(g.id) !== Number(id));
+  writeDb(db);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1424,4 +1528,8 @@ module.exports = {
   saveMessageTemplate,
   listMessageLogs,
   createMessageLog,
+  listGiftCards,
+  createGiftCard,
+  redeemGiftCard,
+  deleteGiftCard,
 };

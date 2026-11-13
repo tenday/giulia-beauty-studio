@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=4" />
+  <link rel="stylesheet" href="admin.css?v=5" />
 </head>
 <body>
 
@@ -49,6 +49,9 @@
         </button>
         <button type="button" class="admin-tab-btn" data-view="messages">
           💬 Messaggi
+        </button>
+        <button type="button" class="admin-tab-btn" data-view="giftcards">
+          🎁 Gift Card
         </button>
         <button type="button" class="admin-tab-btn" data-view="insights">
           ✨ AI &amp; Report
@@ -329,6 +332,190 @@
             <p class="muted-text">Stima esaurimento scorte (consumo ultimi 60 gg) e abbinamenti servizio/prodotto.</p>
             <div id="inventoryReorderReportList"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 4B: GIFT CARD GENERATOR & ARCHIVIO VOUCHER
+           ================================================================ -->
+      <section id="viewGiftcards" class="admin-view" hidden>
+        <div id="gcKpiStrip" class="insights-kpi-grid"></div>
+
+        <div class="gc-generator-grid">
+          <div class="settings-card">
+            <div class="insights-section-head" style="margin-bottom:12px;">
+              <div>
+                <h3>🎁 Generatore Gift Card Studio</h3>
+                <p class="muted-text" style="margin:0;">Crea un buono regalo elegante, scarica l'immagine HD per WhatsApp o stampala per la consegna in studio.</p>
+              </div>
+              <button type="button" class="btn-outline-sm" id="gcResetFormBtn">Nuova Card</button>
+            </div>
+
+            <form id="giftCardGeneratorForm">
+              <div class="form-group">
+                <label>Stile Grafico</label>
+                <div class="gc-pill-row" id="gcThemePills">
+                  <button type="button" class="gc-choice-pill active" data-gctheme="rose">🌸 Rosa Satinata</button>
+                  <button type="button" class="gc-choice-pill" data-gctheme="bordeaux">🍷 Bordeaux Atelier</button>
+                  <button type="button" class="gc-choice-pill" data-gctheme="pearl">✨ Perla &amp; Oro</button>
+                </div>
+                <input type="hidden" id="gcThemeInput" value="rose" />
+              </div>
+
+              <div class="form-group">
+                <label>Tipo di Regalo</label>
+                <div class="gc-pill-row" id="gcModePills">
+                  <button type="button" class="gc-choice-pill active" data-gcmode="amount">💶 Valore in Euro</button>
+                  <button type="button" class="gc-choice-pill" data-gcmode="treatment">💅 Trattamento Specifico</button>
+                </div>
+                <input type="hidden" id="gcModeInput" value="amount" />
+              </div>
+
+              <div id="gcAmountSection" class="form-group">
+                <label>Importo Rapido (€)</label>
+                <div class="gc-amount-chips" id="gcAmountPresetRow">
+                  <button type="button" class="gc-chip-btn" data-gcamount="30">30 €</button>
+                  <button type="button" class="gc-chip-btn active" data-gcamount="50">50 €</button>
+                  <button type="button" class="gc-chip-btn" data-gcamount="80">80 €</button>
+                  <button type="button" class="gc-chip-btn" data-gcamount="100">100 €</button>
+                  <button type="button" class="gc-chip-btn" data-gcamount="150">150 €</button>
+                </div>
+              </div>
+
+              <div id="gcTreatmentSection" class="modal-section-box" hidden>
+                <div class="form-group">
+                  <label for="gcCatalogSelect">Scegli dal Listino Studio (opzionale)</label>
+                  <select id="gcCatalogSelect" class="form-control form-control-sm">
+                    <option value="">— Oppure scrivi manualmente qui sotto —</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="gcServiceTitleInput">Nome Trattamento / Esperienza *</label>
+                  <input type="text" id="gcServiceTitleInput" class="form-control" maxlength="160" placeholder="Es. Rituale Manicure Spa + Semipermanente" />
+                </div>
+                <label class="inline-check-label">
+                  <input type="checkbox" id="gcHidePriceCheck" />
+                  <span>Nascondi il prezzo (€) sulla grafica della Gift Card</span>
+                </label>
+              </div>
+
+              <div class="form-row-2" style="margin-top:10px;">
+                <div class="form-group">
+                  <label for="gcAmountInput">Valore Contabile / Importo (€)</label>
+                  <input type="number" id="gcAmountInput" class="form-control" min="0" step="1" value="50" />
+                </div>
+                <div class="form-group">
+                  <label for="gcExpiresInput">Scadenza Validità (12 mesi)</label>
+                  <input type="date" id="gcExpiresInput" class="form-control" />
+                </div>
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="gcRecipientInput">Un dono per (Destinatario) *</label>
+                  <input type="text" id="gcRecipientInput" class="form-control" maxlength="100" value="Chiara" placeholder="Es. Chiara Bianchi" required />
+                </div>
+                <div class="form-group">
+                  <label for="gcSenderInput">Da parte di (Mittente)</label>
+                  <input type="text" id="gcSenderInput" class="form-control" maxlength="100" placeholder="Es. Marco / Le tue amiche" />
+                </div>
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="gcClientSelect">Collega Cliente CRM (opzionale)</label>
+                  <select id="gcClientSelect" class="form-control form-control-sm">
+                    <option value="">— Nessun collegamento —</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="gcPhoneInput">WhatsApp per Invio Card</label>
+                  <input type="tel" id="gcPhoneInput" class="form-control" placeholder="+39 340..." />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Dedica Personalizzata</label>
+                <div class="gc-occasion-row" id="gcOccasionPills">
+                  <button type="button" class="btn-outline-sm" data-occasion="Tanti auguri di Buon Compleanno! Concediti un momento di pura bellezza e relax da Giulia Beauty Studio ♡">🎂 Compleanno</button>
+                  <button type="button" class="btn-outline-sm" data-occasion="Un piccolo pensiero di puro relax e coccole pensato apposta per te. Con affetto!">🌸 Relax</button>
+                  <button type="button" class="btn-outline-sm" data-occasion="Un grazie speciale dal cuore: goditi un rituale di bellezza tutto per te ♡">💐 Grazie</button>
+                  <button type="button" class="btn-outline-sm" data-occasion="Buone Feste! Un momento prezioso per splendere e prenderti cura di te ♡">✨ Feste</button>
+                </div>
+                <textarea id="gcMessageInput" class="form-control" rows="3" maxlength="300" style="margin-top:8px;">Un momento di pura bellezza e relax pensato solo per te. Con affetto!</textarea>
+              </div>
+
+              <div class="form-group">
+                <label for="gcCodeInput">Codice Univoco Gift Card</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="text" id="gcCodeInput" class="form-control" maxlength="32" style="font-weight:600;letter-spacing:0.08em;text-transform:uppercase;" />
+                  <button type="button" class="btn-outline-sm" id="gcRegenCodeBtn">🎲 Rigenera</button>
+                </div>
+              </div>
+
+              <div id="gcGeneratorAlert" class="admin-alert admin-alert-error" hidden></div>
+
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+                <button type="submit" class="btn-primary-admin" id="gcSaveBtn">✨ Emetti &amp; Salva in Archivio</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <h3 style="margin-bottom:4px;">Anteprima Gift Card &amp; Export</h3>
+            <p class="muted-text">Anteprima in tempo reale pronta per essere scaricata in HD, stampata o inviata su WhatsApp.</p>
+
+            <div class="gc-preview-stage">
+              <div id="gcLivePreviewCard" class="gc-live-card" data-theme="rose">
+                <div class="gc-live-top">
+                  <div>
+                    <div class="gc-live-brand">GIULIA</div>
+                    <div class="gc-live-sub">BEAUTY STUDIO • NAILS &amp; MAKEUP</div>
+                  </div>
+                  <div class="gc-live-badge" id="gcPrevValueBadge">50 €</div>
+                </div>
+
+                <div class="gc-live-body">
+                  <div class="gc-live-kicker">UN DONO SPECIALE PER</div>
+                  <div class="gc-live-recipient" id="gcPrevRecipient">Chiara</div>
+                  <div class="gc-live-treatment" id="gcPrevTreatment" hidden></div>
+                  <p class="gc-live-message" id="gcPrevMessage">“Un momento di pura bellezza e relax pensato solo per te. Con affetto!”</p>
+                  <div class="gc-live-sender" id="gcPrevSender" hidden></div>
+                </div>
+
+                <div class="gc-live-bottom">
+                  <span class="gc-live-code-pill" id="gcPrevCode">CODICE: GBS-000000</span>
+                  <span id="gcPrevExpiry">Valida 12 mesi</span>
+                  <span class="gc-live-studio-addr">Via Principe Amedeo 17, Verdellino (BG) • +39 331 504 5135</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="gc-export-actions">
+              <button type="button" class="btn-primary-admin" id="gcDownloadPngBtn">⬇️ Scarica PNG HD</button>
+              <button type="button" class="btn-outline-sm" id="gcPrintBtn">🖨️ Stampa / Salva PDF</button>
+              <button type="button" class="btn-outline-sm" id="gcWhatsappShareBtn">📲 Invia su WhatsApp</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="clients-table-card" style="margin-top:18px;">
+          <div class="insights-section-head">
+            <div>
+              <h3>Archivio Gift Card Emesse &amp; Riscatto</h3>
+              <p class="muted-text" style="margin:0;">Cerca per codice o nominativo, ricarica la grafica per ristampa o scala il credito usato in studio.</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <input type="search" id="gcSearchInput" class="form-control form-control-sm" placeholder="Cerca codice, destinatario..." style="min-width:190px;" />
+              <select id="gcStatusFilter" class="form-control form-control-sm">
+                <option value="">Tutti gli stati</option>
+                <option value="active">Attive</option>
+                <option value="redeemed">Riscattate</option>
+                <option value="cancelled">Annullate</option>
+              </select>
+            </div>
+          </div>
+          <div id="gcRegistryContainer"></div>
         </div>
       </section>
 
@@ -1040,6 +1227,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=4"></script>
+  <script src="admin.js?v=5"></script>
 </body>
 </html>

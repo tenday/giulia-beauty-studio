@@ -1293,6 +1293,119 @@ async function createMessageLog({
   return rows[0];
 }
 
+async function listGiftCards(query = '') {
+  const pool = getPool();
+  const q = String(query || '').trim();
+  let sql = `SELECT gc.*, c.full_name AS client_name
+    FROM gift_cards gc
+    LEFT JOIN clients c ON c.id = gc.client_id`;
+  const params = [];
+  if (q) {
+    const like = `%${q}%`;
+    sql += ` WHERE gc.code LIKE ? OR gc.recipient_name LIKE ? OR gc.sender_name LIKE ? OR gc.service_title LIKE ?`;
+    params.push(like, like, like, like);
+  }
+  sql += ` ORDER BY gc.created_at DESC, gc.id DESC`;
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
+async function createGiftCard({
+  code,
+  theme,
+  giftMode,
+  amount,
+  hidePrice,
+  serviceTitle,
+  recipientName,
+  senderName,
+  recipientPhone,
+  clientId,
+  message,
+  expiresAt,
+  notes,
+}) {
+  const pool = getPool();
+  const [dup] = await pool.query('SELECT id FROM gift_cards WHERE code = ? LIMIT 1', [code]);
+  if (dup.length > 0) {
+    const err = new Error('Questo codice Gift Card esiste già. Rigenera o scegli un altro codice.');
+    err.status = 409;
+    err.code = 'GIFT_CODE_EXISTS';
+    throw err;
+  }
+
+  const [ins] = await pool.query(
+    `INSERT INTO gift_cards
+      (code, theme, gift_mode, amount, remaining_amount, hide_price, service_title,
+       recipient_name, sender_name, recipient_phone, client_id, message, expires_at, status, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+    [
+      code,
+      theme || 'rose',
+      giftMode || 'amount',
+      amount,
+      amount,
+      hidePrice ? 1 : 0,
+      serviceTitle || null,
+      recipientName,
+      senderName || null,
+      recipientPhone || null,
+      clientId || null,
+      message || null,
+      expiresAt || null,
+      notes || null,
+    ]
+  );
+  const [rows] = await pool.query(
+    `SELECT gc.*, c.full_name AS client_name
+     FROM gift_cards gc LEFT JOIN clients c ON c.id = gc.client_id
+     WHERE gc.id = ? LIMIT 1`,
+    [ins.insertId]
+  );
+  return rows[0];
+}
+
+async function redeemGiftCard(id, { redeemAmount = 0, markFull = false, cancel = false }) {
+  const pool = getPool();
+  const [rows] = await pool.query('SELECT * FROM gift_cards WHERE id = ? LIMIT 1', [id]);
+  if (rows.length === 0) return null;
+  const gc = rows[0];
+
+  if (cancel) {
+    await pool.query('UPDATE gift_cards SET status = ? WHERE id = ?', ['cancelled', id]);
+  } else if (markFull) {
+    await pool.query(
+      'UPDATE gift_cards SET remaining_amount = 0.00, status = ?, redeemed_at = NOW() WHERE id = ?',
+      ['redeemed', id]
+    );
+  } else if (Number(gc.amount) > 0) {
+    const nextRem = Math.max(0, Number((Number(gc.remaining_amount) - Math.max(0, Number(redeemAmount) || 0)).toFixed(2)));
+    const nextStatus = nextRem <= 0 ? 'redeemed' : 'active';
+    await pool.query(
+      'UPDATE gift_cards SET remaining_amount = ?, status = ?, redeemed_at = IF(? = "redeemed", NOW(), redeemed_at) WHERE id = ?',
+      [nextRem, nextStatus, nextStatus, id]
+    );
+  } else {
+    await pool.query(
+      'UPDATE gift_cards SET status = ?, redeemed_at = NOW() WHERE id = ?',
+      ['redeemed', id]
+    );
+  }
+
+  const [updated] = await pool.query(
+    `SELECT gc.*, c.full_name AS client_name
+     FROM gift_cards gc LEFT JOIN clients c ON c.id = gc.client_id
+     WHERE gc.id = ? LIMIT 1`,
+    [id]
+  );
+  return updated[0] || null;
+}
+
+async function deleteGiftCard(id) {
+  const pool = getPool();
+  await pool.query('DELETE FROM gift_cards WHERE id = ?', [id]);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1346,4 +1459,8 @@ module.exports = {
   saveMessageTemplate,
   listMessageLogs,
   createMessageLog,
+  listGiftCards,
+  createGiftCard,
+  redeemGiftCard,
+  deleteGiftCard,
 };

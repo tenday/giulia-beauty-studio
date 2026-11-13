@@ -1208,6 +1208,121 @@ app.post('/api/admin/ai-chat', requireAdmin, async (req, res, next) => {
 });
 
 /* ============================================================================
+   ADMIN GIFT CARD GENERATOR API (ISSUE, LIST, REDEEM, CANCEL, DELETE)
+   ============================================================================ */
+function generateGiftCardCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(6);
+  let suffix = '';
+  for (let i = 0; i < 6; i++) {
+    suffix += alphabet[bytes[i] % alphabet.length];
+  }
+  return `GBS-${suffix}`;
+}
+
+function getDefaultGiftCardExpiry(fromDateIso) {
+  const parts = String(fromDateIso || getRomeToday()).split('-').map(Number);
+  const dt = new Date(Date.UTC(parts[0], (parts[1] || 1) - 1, parts[2] || 1));
+  dt.setUTCFullYear(dt.getUTCFullYear() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+app.get('/api/admin/gift-cards', requireAdmin, async (req, res, next) => {
+  try {
+    const giftCards = await getStore().listGiftCards(String(req.query.q || '').trim());
+    const active = giftCards.filter((g) => g.status === 'active');
+    const summary = {
+      active_count: active.length,
+      redeemed_count: giftCards.filter((g) => g.status === 'redeemed').length,
+      active_remaining_total: Number(
+        active.reduce((sum, g) => sum + Math.max(0, Number(g.remaining_amount || 0)), 0).toFixed(2)
+      ),
+      total_issued_amount: Number(
+        giftCards
+          .filter((g) => g.status !== 'cancelled')
+          .reduce((sum, g) => sum + Math.max(0, Number(g.amount || 0)), 0)
+          .toFixed(2)
+      ),
+    };
+    return res.json({ ok: true, gift_cards: giftCards, summary });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/gift-cards', requireAdmin, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const action = String(body.action || 'create');
+    const store = getStore();
+
+    if (action === 'delete') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID Gift Card non valido.', 400);
+      await store.deleteGiftCard(id);
+      return res.json({ ok: true, deleted_id: id });
+    }
+
+    if (action === 'redeem' || action === 'cancel') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID Gift Card non valido.', 400);
+      const giftCard = await store.redeemGiftCard(id, {
+        redeemAmount: Number(body.redeem_amount || 0) || 0,
+        markFull: Boolean(body.mark_full),
+        cancel: action === 'cancel',
+      });
+      if (!giftCard) return sendError(res, 'Gift Card non trovata.', 404);
+      return res.json({ ok: true, gift_card: giftCard });
+    }
+
+    const recipientName = String(body.recipient_name || '').trim();
+    if (recipientName.length < 2) {
+      return sendError(res, 'Inserisci il nome del destinatario della Gift Card.', 422);
+    }
+
+    const giftMode = body.gift_mode === 'treatment' ? 'treatment' : 'amount';
+    const serviceTitle = String(body.service_title || '').trim().slice(0, 175);
+    const amount = Math.max(0, Number(body.amount || 0) || 0);
+
+    if (giftMode === 'amount' && amount <= 0) {
+      return sendError(res, 'Inserisci un valore positivo in euro per la Gift Card.', 422);
+    }
+    if (giftMode === 'treatment' && serviceTitle.length < 2) {
+      return sendError(res, 'Specifica il trattamento regalo incluso nella Gift Card.', 422);
+    }
+
+    const rawCode = String(body.code || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, '')
+      .slice(0, 36);
+    const code = rawCode.length >= 4 ? rawCode : generateGiftCardCode();
+    const theme = ['rose', 'bordeaux', 'pearl'].includes(body.theme) ? body.theme : 'rose';
+    const expiresAt = isValidIsoDate(body.expires_at) ? body.expires_at : getDefaultGiftCardExpiry();
+
+    const giftCard = await store.createGiftCard({
+      code,
+      theme,
+      giftMode,
+      amount: Number(amount.toFixed(2)),
+      hidePrice: Boolean(body.hide_price),
+      serviceTitle,
+      recipientName: recipientName.slice(0, 115),
+      senderName: String(body.sender_name || '').trim().slice(0, 115),
+      recipientPhone: String(body.recipient_phone || '').trim().slice(0, 38),
+      clientId: Number.parseInt(body.client_id || '0', 10) || null,
+      message: String(body.message || '').trim().slice(0, 310),
+      expiresAt,
+      notes: String(body.notes || '').trim().slice(0, 290),
+    });
+
+    return res.status(201).json({ ok: true, gift_card: giftCard });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ============================================================================
    STATIC FRONTEND & GLOBAL API ERROR HANDLER
    ============================================================================ */
 app.use(express.static(ROOT_DIR, { extensions: ['html'] }));
