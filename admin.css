@@ -841,6 +841,9 @@ body {
   z-index: 1300;
   min-width: 244px;
   max-width: min(320px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #ffffff;
   border: 1px solid var(--border-strong);
   border-radius: 14px;

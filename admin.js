@@ -1590,15 +1590,21 @@ function openCalendarContextMenu(appt, clientX, clientY) {
     </div>
   `;
 
+  const repositionMenu = (targetX, targetY) => {
+    const pad = 10;
+    const menuW = menu.offsetWidth || 250;
+    const menuH = menu.offsetHeight || 220;
+    const x = Number.isFinite(targetX) ? targetX : window.innerWidth / 2;
+    const y = Number.isFinite(targetY) ? targetY : window.innerHeight / 2;
+    const maxLeft = Math.max(pad, window.innerWidth - menuW - pad);
+    const maxTop = Math.max(pad, window.innerHeight - menuH - pad);
+    menu.style.left = `${Math.max(pad, Math.min(maxLeft, x))}px`;
+    menu.style.top = `${Math.max(pad, Math.min(maxTop, y))}px`;
+  };
+
   menu.style.visibility = 'hidden';
   menu.hidden = false;
-  const menuW = menu.offsetWidth || 250;
-  const menuH = menu.offsetHeight || 220;
-  const pad = 10;
-  const left = Math.max(pad, Math.min(window.innerWidth - menuW - pad, (clientX || window.innerWidth / 2)));
-  const top = Math.max(pad, Math.min(window.innerHeight - menuH - pad, (clientY || window.innerHeight / 2)));
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
+  repositionMenu(clientX || window.innerWidth / 2, clientY || window.innerHeight / 2);
   menu.style.visibility = 'visible';
 
   const confirmBox = menu.querySelector('[data-ctx-confirm]');
@@ -1626,9 +1632,12 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       } else if (action === 'ask-delete') {
         if (askDeleteBtn) askDeleteBtn.hidden = true;
         if (confirmBox) confirmBox.hidden = false;
+        repositionMenu(parseFloat(menu.style.left), parseFloat(menu.style.top));
+        confirmBox?.scrollIntoView({ block: 'nearest' });
       } else if (action === 'cancel-delete') {
         if (confirmBox) confirmBox.hidden = true;
         if (askDeleteBtn) askDeleteBtn.hidden = false;
+        repositionMenu(parseFloat(menu.style.left), parseFloat(menu.style.top));
       } else if (action === 'confirm-delete') {
         btn.disabled = true;
         btn.textContent = 'Elimino...';
