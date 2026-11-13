@@ -533,7 +533,46 @@ const CAL_UI = {
   ctxKeyHandler: null,
   ctxLastOpenedId: 0,
   ctxLastOpenedAt: 0,
+  noteHideTimer: null,
+  notePinnedId: 0,
+  noteDismissHandler: null,
+  noteKeyHandler: null,
 };
+
+function getAppointmentNoteInfo(appt) {
+  const apptNote = String(appt?.notes || '').trim();
+  const allergyNote = String(appt?.allergies_notes || '').trim();
+  const clientNote = String(appt?.preferences_notes || '').trim();
+  const parts = [];
+  if (allergyNote) parts.push(`⚠ ${allergyNote}`);
+  if (apptNote) parts.push(`📝 ${apptNote}`);
+  return {
+    apptNote,
+    allergyNote,
+    clientNote,
+    hasCardNote: Boolean(apptNote || allergyNote),
+    hasAnyNote: Boolean(apptNote || allergyNote || clientNote),
+    cardPreviewText: parts.join(' • '),
+  };
+}
+
+function getEventCardHeightClasses(heightPx, hasCardNote) {
+  const isCompact = heightPx < 34;
+  const isNotePriority = Boolean(hasCardNote) && !isCompact && heightPx < 62;
+  const isNoService = !isCompact && !isNotePriority && heightPx < 42;
+  const isNoteSingleLine = Boolean(hasCardNote) && !isCompact && heightPx < 62;
+  const isNoteTall = Boolean(hasCardNote) && heightPx >= 115;
+  return { isCompact, isNotePriority, isNoService, isNoteSingleLine, isNoteTall };
+}
+
+function syncCardHeightClasses(cardEl, heightPx, hasCardNote) {
+  const flags = getEventCardHeightClasses(heightPx, hasCardNote);
+  cardEl.classList.toggle('is-compact', flags.isCompact);
+  cardEl.classList.toggle('is-note-priority', flags.isNotePriority);
+  cardEl.classList.toggle('is-no-service', flags.isNoService);
+  cardEl.classList.toggle('is-note-single-line', flags.isNoteSingleLine);
+  cardEl.classList.toggle('is-note-tall', flags.isNoteTall);
+}
 
 function parseTimeToMinutes(hhmm) {
   const match = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || '09:00').trim());
@@ -657,6 +696,118 @@ function showAgendaToast(message, variant = 'info') {
   }, 2700);
 }
 
+function closeCalendarNotePopover(force = true) {
+  clearTimeout(CAL_UI.noteHideTimer);
+  CAL_UI.noteHideTimer = null;
+  if (!force && CAL_UI.notePinnedId) return;
+  CAL_UI.notePinnedId = 0;
+  const pop = document.getElementById('calNotePopover');
+  if (pop) {
+    pop.hidden = true;
+    pop.innerHTML = '';
+  }
+  if (CAL_UI.noteDismissHandler) {
+    document.removeEventListener('pointerdown', CAL_UI.noteDismissHandler, true);
+    CAL_UI.noteDismissHandler = null;
+  }
+  if (CAL_UI.noteKeyHandler) {
+    document.removeEventListener('keydown', CAL_UI.noteKeyHandler, true);
+    CAL_UI.noteKeyHandler = null;
+  }
+}
+
+function scheduleHideCalendarNotePopover() {
+  clearTimeout(CAL_UI.noteHideTimer);
+  if (CAL_UI.notePinnedId) return;
+  CAL_UI.noteHideTimer = setTimeout(() => {
+    closeCalendarNotePopover(false);
+  }, 150);
+}
+
+function openCalendarNotePopover(appt, anchorEl, { pinned = false } = {}) {
+  const pop = document.getElementById('calNotePopover');
+  if (!pop || !appt) return;
+  const info = getAppointmentNoteInfo(appt);
+  if (!info.hasAnyNote) return;
+
+  clearTimeout(CAL_UI.noteHideTimer);
+  if (pinned && !pop.hidden && CAL_UI.notePinnedId === Number(appt.id)) {
+    closeCalendarNotePopover(true);
+    return;
+  }
+
+  closeCalendarNotePopover(true);
+  CAL_UI.notePinnedId = pinned ? Number(appt.id) : 0;
+
+  const dur = Math.max(10, Number(appt.duration_minutes) || 60);
+  const timeRange = formatTimeRangeLabel(appt.start_time, dur);
+  const opName = appt.operator_name || 'Giulia';
+
+  pop.innerHTML = `
+    <div class="cal-note-pop-head">
+      <div>
+        <div class="cal-note-pop-title">${escapeHtml(appt.client_name)}</div>
+        <div class="cal-note-pop-sub">${escapeHtml(timeRange)} • ${escapeHtml(appt.services_summary)} • ${escapeHtml(opName)}</div>
+      </div>
+      <button type="button" class="cal-note-pop-close" aria-label="Chiudi note">✕</button>
+    </div>
+    ${info.apptNote ? `<div class="cal-note-pop-block"><span class="cal-note-pop-label">📝 Nota Appuntamento</span>${escapeHtml(info.apptNote)}</div>` : ''}
+    ${info.allergyNote ? `<div class="cal-note-pop-block is-allergy"><span class="cal-note-pop-label">⚠ Allergie / Attenzione</span>${escapeHtml(info.allergyNote)}</div>` : ''}
+    ${info.clientNote ? `<div class="cal-note-pop-block is-client"><span class="cal-note-pop-label">👩 Note Scheda Cliente</span>${escapeHtml(info.clientNote)}</div>` : ''}
+  `;
+
+  pop.style.visibility = 'hidden';
+  pop.hidden = false;
+
+  const rect = anchorEl?.getBoundingClientRect?.() || { left: 120, right: 280, top: 160, bottom: 200 };
+  const popW = pop.offsetWidth || 310;
+  const popH = pop.offsetHeight || 160;
+  const pad = 12;
+  const winW = window.innerWidth || 1024;
+  const winH = window.innerHeight || 768;
+
+  let left = rect.right + 10;
+  if (left + popW + pad > winW) {
+    left = rect.left - popW - 10;
+  }
+  if (left < pad) {
+    left = Math.max(pad, Math.min(winW - popW - pad, rect.left));
+  }
+  const top = Math.max(pad, Math.min(winH - popH - pad, rect.top));
+
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  pop.style.visibility = 'visible';
+
+  const closeBtn = pop.querySelector('.cal-note-pop-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeCalendarNotePopover(true);
+    });
+  }
+
+  pop.onmouseenter = () => clearTimeout(CAL_UI.noteHideTimer);
+  pop.onmouseleave = () => scheduleHideCalendarNotePopover();
+
+  if (pinned) {
+    CAL_UI.noteDismissHandler = (ev) => {
+      if (!pop.contains(ev.target) && !ev.target.closest?.('.cal-event-note-flag')) {
+        closeCalendarNotePopover(true);
+      }
+    };
+    CAL_UI.noteKeyHandler = (ev) => {
+      if (ev.key === 'Escape') closeCalendarNotePopover(true);
+    };
+    setTimeout(() => {
+      if (!pop.hidden) {
+        document.addEventListener('pointerdown', CAL_UI.noteDismissHandler, true);
+        document.addEventListener('keydown', CAL_UI.noteKeyHandler, true);
+      }
+    }, 0);
+  }
+}
+
 function closeCalendarContextMenu() {
   const menu = document.getElementById('calContextMenu');
   if (menu) {
@@ -776,6 +927,7 @@ function openCalendarContextMenu(appt, clientX, clientY) {
     return;
   }
 
+  closeCalendarNotePopover(true);
   closeCalendarContextMenu();
   CAL_UI.ctxLastOpenedId = Number(appt.id);
   CAL_UI.ctxLastOpenedAt = now;
@@ -787,12 +939,21 @@ function openCalendarContextMenu(appt, clientX, clientY) {
   const dateObj = parseIsoDate(appt.appointment_date);
   const dateLabel = `${DAYS_IT[dateObj.getDay()]} ${dateObj.getDate()} ${MONTHS_IT[dateObj.getMonth()].slice(0, 3)}`;
   const timeRange = formatTimeRangeLabel(appt.start_time, dur);
+  const noteInfo = getAppointmentNoteInfo(appt);
+  const ctxNotesHtml = noteInfo.hasAnyNote
+    ? `<div class="cal-ctx-notes">
+        ${noteInfo.apptNote ? `<div>📝 ${escapeHtml(noteInfo.apptNote)}</div>` : ''}
+        ${noteInfo.allergyNote ? `<div class="cal-ctx-notes-warn">⚠ Allergie: ${escapeHtml(noteInfo.allergyNote)}</div>` : ''}
+        ${!noteInfo.apptNote && noteInfo.clientNote ? `<div>👩 ${escapeHtml(noteInfo.clientNote)}</div>` : ''}
+      </div>`
+    : '';
 
   menu.innerHTML = `
     <div class="cal-ctx-header">
       <div class="cal-ctx-client">${escapeHtml(appt.client_name)}</div>
       <div class="cal-ctx-meta">${escapeHtml(dateLabel)} • ${escapeHtml(timeRange)} (${dur} min)</div>
       <div class="cal-ctx-meta">${escapeHtml(appt.services_summary)}</div>
+      ${ctxNotesHtml}
     </div>
     <button type="button" class="cal-ctx-btn" data-ctx-action="edit">✏️ Apri / Modifica dettaglio</button>
     <button type="button" class="cal-ctx-btn" data-ctx-action="open-client">👩 Vai alla Scheda Cliente</button>
@@ -997,9 +1158,8 @@ function bindInteractiveCalendarGrid(container) {
 
     const heightPx = computeEventHeightPx(g.targetDuration);
     g.cardEl.style.height = `${heightPx}px`;
-    g.cardEl.classList.toggle('is-compact', heightPx < 34);
-    g.cardEl.classList.toggle('is-no-service', heightPx >= 34 && heightPx < 42);
-    g.cardEl.classList.toggle('is-short-note', heightPx < 62);
+    const nInfo = getAppointmentNoteInfo(g.appt);
+    syncCardHeightClasses(g.cardEl, heightPx, nInfo.hasCardNote);
 
     const startStr = minutesToTimeStr(g.initialStartMin);
     const rangeLabel = formatTimeRangeLabel(startStr, g.targetDuration);
@@ -1056,9 +1216,8 @@ function bindInteractiveCalendarGrid(container) {
     if (g.cardEl && g.mode === 'resize') {
       const origH = computeEventHeightPx(g.initialDuration);
       g.cardEl.style.height = `${origH}px`;
-      g.cardEl.classList.toggle('is-compact', origH < 34);
-      g.cardEl.classList.toggle('is-no-service', origH >= 34 && origH < 42);
-      g.cardEl.classList.toggle('is-short-note', origH < 62);
+      const nInfo = getAppointmentNoteInfo(g.appt);
+      syncCardHeightClasses(g.cardEl, origH, nInfo.hasCardNote);
     }
     window.removeEventListener('pointermove', onWindowPointerMove);
     window.removeEventListener('pointerup', onWindowPointerUp);
@@ -1082,6 +1241,7 @@ function bindInteractiveCalendarGrid(container) {
       clearTimeout(g.pressTimer);
       clearTimeout(g.longPressTimer);
       g.cardEl.classList.remove('is-pressing');
+      closeCalendarNotePopover(true);
       closeCalendarContextMenu();
       try {
         g.cardEl.setPointerCapture?.(g.pointerId);
@@ -1250,10 +1410,32 @@ function bindInteractiveCalendarGrid(container) {
       window.addEventListener('pointercancel', onWindowPointerCancel);
     });
 
+    cardEl.addEventListener('pointerenter', (e) => {
+      if (g || (e.pointerType && e.pointerType !== 'mouse')) return;
+      if (CAL_UI.notePinnedId) return;
+      const appt = getAppt();
+      if (!appt) return;
+      const info = getAppointmentNoteInfo(appt);
+      if (info.hasAnyNote) {
+        openCalendarNotePopover(appt, cardEl, { pinned: false });
+      }
+    });
+
+    cardEl.addEventListener('pointerleave', (e) => {
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      scheduleHideCalendarNotePopover();
+    });
+
     cardEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (Date.now() < CAL_UI.suppressClickUntil) return;
       if (e.target.closest('.cal-resize-handle')) return;
+      const noteTrigger = e.target.closest('.cal-event-note-flag');
+      if (noteTrigger) {
+        const appt = getAppt();
+        if (appt) openCalendarNotePopover(appt, noteTrigger, { pinned: true });
+        return;
+      }
       const appt = getAppt();
       if (appt) openAppointmentModal(appt);
     });
@@ -1270,6 +1452,7 @@ function renderCalendar() {
     CAL_UI.cleanupGesture();
     CAL_UI.cleanupGesture = null;
   }
+  closeCalendarNotePopover(true);
   closeCalendarContextMenu();
 
   if (STATE.calMode === 'list') {
@@ -1384,25 +1567,32 @@ function renderCalendar() {
           ? `left: calc(${(laneInfo.lane * 100) / laneInfo.laneCount}% + 2px); width: calc(${(colSpan * 100) / laneInfo.laneCount}% - 4px); right: auto;`
           : '';
 
-      const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
+      const noteInfo = getAppointmentNoteInfo(appt);
       const opColor = appt.operator_color || '#d47491';
       const opName = appt.operator_name || 'Giulia';
       const dur = Math.max(10, Number(appt.duration_minutes) || 60);
-      const isCompact = heightPx < 34;
-      const isNoService = !isCompact && heightPx < 42;
-      const isShortNote = heightPx < 62;
+      const heightFlags = getEventCardHeightClasses(heightPx, noteInfo.hasCardNote);
       const isNarrow = laneInfo.laneCount > 1 && colSpan === 1;
-      const rangeTooltip = `${formatTimeRangeLabel(appt.start_time, dur)} (${dur} min) • ${appt.client_name} • ${appt.services_summary} • ${opName}`;
+      const tooltipParts = [`${formatTimeRangeLabel(appt.start_time, dur)} (${dur} min)`, appt.client_name, appt.services_summary, opName];
+      if (noteInfo.apptNote) tooltipParts.push(`Note: ${noteInfo.apptNote}`);
+      if (noteInfo.allergyNote) tooltipParts.push(`Allergie: ${noteInfo.allergyNote}`);
+      if (noteInfo.clientNote) tooltipParts.push(`Scheda cliente: ${noteInfo.clientNote}`);
+      const rangeTooltip = tooltipParts.join(' • ');
       const clsList = [
         'cal-event-card',
         `status-${escapeHtml(appt.status)}`,
-        isCompact ? 'is-compact' : '',
-        isNoService ? 'is-no-service' : '',
-        isShortNote ? 'is-short-note' : '',
+        heightFlags.isCompact ? 'is-compact' : '',
+        heightFlags.isNotePriority ? 'is-note-priority' : '',
+        heightFlags.isNoService ? 'is-no-service' : '',
+        heightFlags.isNoteSingleLine ? 'is-note-single-line' : '',
+        heightFlags.isNoteTall ? 'is-note-tall' : '',
         isNarrow ? 'is-narrow' : '',
       ]
         .filter(Boolean)
         .join(' ');
+      const noteChipHtml = noteInfo.hasCardNote
+        ? `<button type="button" class="cal-event-note-flag${noteInfo.allergyNote ? ' is-allergy' : ''}" title="Clicca per leggere le note complete senza aprire la modifica">${escapeHtml(noteInfo.cardPreviewText)}</button>`
+        : '';
       html += `
         <div class="${clsList}"
              data-appt-id="${appt.id}"
@@ -1411,7 +1601,7 @@ function renderCalendar() {
           <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
-          ${hasAnyNote ? `<div class="cal-event-note-flag">📝 ${escapeHtml(appt.notes || appt.allergies_notes)}</div>` : ''}
+          ${noteChipHtml}
           <div class="cal-resize-handle" title="Trascina per modificare la durata"></div>
         </div>
       `;
@@ -1450,13 +1640,16 @@ function renderListCalendar(container) {
 
   let rows = '';
   STATE.appointments.forEach((a) => {
+    const nInfo = getAppointmentNoteInfo(a);
     rows += `
       <tr data-appt-id="${a.id}" style="cursor: pointer;">
         <td><strong>${escapeHtml(a.appointment_date)}</strong><br /><span style="font-size:0.75rem;color:var(--ink-muted);">${escapeHtml(a.start_time)} (${a.duration_minutes} min)</span></td>
         <td><strong>${escapeHtml(a.client_name)}</strong><br /><span style="font-size:0.75rem;color:var(--ink-soft);">${escapeHtml(a.client_phone)}</span></td>
         <td>
           ${escapeHtml(a.services_summary)}
-          ${a.notes ? `<br /><span style="font-size:0.74rem;color:var(--ink-muted);">📝 ${escapeHtml(a.notes)}</span>` : ''}
+          ${nInfo.apptNote ? `<br /><span style="font-size:0.74rem;color:#4b1d24;background:#fff9ec;padding:1px 6px;border-radius:6px;display:inline-block;margin-top:3px;">📝 ${escapeHtml(nInfo.apptNote)}</span>` : ''}
+          ${nInfo.allergyNote ? `<br /><span style="font-size:0.74rem;color:#7c2d08;background:#fff1e6;padding:1px 6px;border-radius:6px;display:inline-block;margin-top:3px;">⚠ ${escapeHtml(nInfo.allergyNote)}</span>` : ''}
+          ${!nInfo.apptNote && nInfo.clientNote ? `<br /><span style="font-size:0.72rem;color:var(--ink-muted);">👩 ${escapeHtml(nInfo.clientNote)}</span>` : ''}
         </td>
         <td><strong>${Number(a.total_price).toFixed(0)} €</strong></td>
         <td>
@@ -1600,6 +1793,7 @@ function setClientPickerMode(mode) {
 }
 
 function openAppointmentModal(appt = null, presetDate = null, presetTime = null) {
+  closeCalendarNotePopover(true);
   const modal = document.getElementById('apptModal');
   const alertEl = document.getElementById('apptModalAlert');
   alertEl.hidden = true;

@@ -689,10 +689,37 @@ body {
 }
 
 .cal-event-card.is-compact .cal-event-service,
-.cal-event-card.is-compact .cal-event-note-flag,
 .cal-event-card.is-no-service .cal-event-service,
-.cal-event-card.is-short-note .cal-event-note-flag {
+.cal-event-card.is-note-priority .cal-event-service {
   display: none;
+}
+
+.cal-event-card.is-compact .cal-event-note-flag {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  max-width: 46%;
+  margin-top: 0;
+  padding: 0 6px;
+  font-size: 0.6rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 999px;
+}
+
+.cal-event-card.is-note-single-line .cal-event-note-flag {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 1px 5px;
+  -webkit-line-clamp: unset;
+}
+
+.cal-event-card.is-note-tall .cal-event-note-flag {
+  -webkit-line-clamp: 5;
 }
 
 .cal-event-card.is-compact .cal-resize-handle {
@@ -852,6 +879,25 @@ body {
   font-size: 0.72rem;
   color: var(--ink-muted);
   margin-top: 2px;
+}
+
+.cal-ctx-notes {
+  margin-top: 7px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fff9ec;
+  border: 1px solid rgba(181, 88, 107, 0.25);
+  color: #4b1d24;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cal-ctx-notes-warn {
+  margin-top: 4px;
+  color: #8c2d08;
+  font-weight: 600;
 }
 
 .cal-ctx-btn {
@@ -1391,12 +1437,127 @@ body {
 }
 
 .cal-event-note-flag {
-  font-size: 0.66rem;
-  opacity: 0.92;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 1px;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.65rem;
+  line-height: 1.25;
+  font-weight: 500;
+  color: #4b1d24;
+  background: rgba(255, 252, 240, 0.92);
+  border: 1px solid rgba(181, 88, 107, 0.28);
+  border-radius: 6px;
+  padding: 2px 5px;
+  margin-top: 3px;
+  white-space: normal;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.cal-event-note-flag:hover {
+  background: #fff8de;
+  border-color: var(--rose);
+}
+
+.cal-event-note-flag.is-allergy {
+  background: #fff1e6;
+  border-color: rgba(188, 80, 22, 0.38);
+  color: #7c2d08;
+}
+
+/* Floating Read-Only Event Note Popover (No Edit Modal Needed) */
+.cal-note-popover[hidden] {
+  display: none !important;
+}
+
+.cal-note-popover {
+  position: fixed;
+  z-index: 1350;
+  width: min(330px, calc(100vw - 24px));
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(42, 10, 15, 0.22);
+  padding: 12px 14px;
+  animation: ctxPopIn 0.12s ease-out;
+}
+
+.cal-note-pop-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(168, 108, 114, 0.18);
+}
+
+.cal-note-pop-title {
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.cal-note-pop-sub {
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.cal-note-pop-close {
+  border: 1px solid var(--border-strong);
+  background: #fdf8f7;
+  color: var(--ink-soft);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cal-note-pop-block {
+  background: #fffbf0;
+  border: 1px solid rgba(181, 88, 107, 0.24);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 7px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cal-note-pop-block:last-child {
+  margin-bottom: 0;
+}
+
+.cal-note-pop-block.is-allergy {
+  background: #fff1e6;
+  border-color: rgba(188, 80, 22, 0.35);
+  color: #7c2d08;
+}
+
+.cal-note-pop-block.is-client {
+  background: #fdf6f5;
+  border-color: var(--border);
+}
+
+.cal-note-pop-label {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+  opacity: 0.85;
 }
 
 .badge-birthday {
