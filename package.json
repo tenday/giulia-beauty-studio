@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "init-db": "node backend/init-db.js",
-    "seed:local": "node backend/seed-local.js"
+    "seed:local": "node backend/seed-local.js",
+    "test": "node scripts/ci-test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

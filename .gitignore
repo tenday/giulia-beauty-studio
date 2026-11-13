@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 .local-dev-db.json
+.tmp-*.json
 
 # Node.js dependencies & logs
 node_modules/

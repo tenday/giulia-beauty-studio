@@ -49,6 +49,7 @@ app.use((req, res, next) => {
     reqPath.startsWith('/.local-dev-db') ||
     reqPath.startsWith('/.git') ||
     reqPath.startsWith('/backend') ||
+    reqPath.startsWith('/scripts') ||
     reqPath.startsWith('/node_modules') ||
     reqPath === '/server.js' ||
     reqPath === '/package.json' ||
