@@ -521,23 +521,32 @@ function checkGdprDefaults() {
   const privacySignHtml = fs.readFileSync(path.join(ROOT_DIR, 'privacy-sign.html'), 'utf8');
   const adminJs = fs.readFileSync(path.join(ROOT_DIR, 'admin.js'), 'utf8');
   const appJs = fs.readFileSync(path.join(ROOT_DIR, 'app.js'), 'utf8');
+  const { GBS_LEGAL_DOCS } = require(path.join(ROOT_DIR, 'legal-content.js'));
 
   assert(!/id="apptNewClientPrivacy"[^>]*\bchecked\b/i.test(agendaHtml), 'agenda.html #apptNewClientPrivacy non deve avere checked');
   assert(!/id="clientPrivacyCrmCheck"[^>]*\bchecked\b/i.test(agendaHtml), 'agenda.html #clientPrivacyCrmCheck non deve avere checked');
   assert(!/id="privacyConsentCheckbox"[^>]*\bchecked\b/i.test(indexHtml), 'index.html #privacyConsentCheckbox non deve avere checked');
   assert(!/id="acceptPrivacyCheck"[^>]*\bchecked\b/i.test(privacySignHtml), 'privacy-sign.html #acceptPrivacyCheck non deve avere checked');
+  assert(!/id="acceptMarketingCheck"[^>]*\bchecked\b/i.test(privacySignHtml), 'privacy-sign.html #acceptMarketingCheck non deve avere checked');
+  assert(indexHtml.includes('legal-content.js'), 'index.html deve includere legal-content.js');
+  assert(privacySignHtml.includes('legal-content.js'), 'privacy-sign.html deve includere legal-content.js');
+  assert(privacySignHtml.includes('signLegalPanelPrivacy') && privacySignHtml.includes('signLegalPanelTerms') && privacySignHtml.includes('signLegalPanelCookies'), 'privacy-sign.html deve esporre i 3 pannelli legali condivisi con la vetrina');
+  assert(GBS_LEGAL_DOCS.privacy.includes('Art. 13 Regolamento UE 2016/679'), 'legal-content.js deve contenere informativa Art. 13 completa');
+  assert(GBS_LEGAL_DOCS.terms.includes('Termini e Condizioni di Prenotazione'), 'legal-content.js deve contenere i Termini e Condizioni completi');
+  assert(GBS_LEGAL_DOCS.cookies.includes('Informativa sull’uso dei Cookie'), 'legal-content.js deve contenere la Cookie Policy completa');
   assert(adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = false;"), 'admin.js deve azzerare apptNewClientPrivacy a false');
   assert(adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = false;"), 'admin.js deve azzerare clientPrivacyCrmCheck a false');
   assert(!adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = true;"));
   assert(!adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = true;"));
   assert(!/privacy_accepted:\s*true/.test(appJs), 'app.js non deve inviare privacy_accepted hardcoded a true');
-  console.log('[CI] GDPR Defaults OK');
+  console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 
 (async () => {
   const jsFiles = [
     'server.js',
     'gbs-loader.js',
+    'legal-content.js',
     'app.js',
     'admin.js',
     'morpho.js',

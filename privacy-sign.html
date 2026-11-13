@@ -33,7 +33,7 @@
       padding: 20px 14px 40px;
     }
     .sign-wrap {
-      max-width: 560px;
+      max-width: 680px;
       margin: 0 auto;
       background: var(--card);
       border: 1px solid var(--border);
@@ -63,17 +63,82 @@
       color: var(--rose-deep);
       font-weight: 700;
     }
+    .legal-tabs-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .legal-tabs-bar::-webkit-scrollbar { display: none; }
+    .legal-tab-btn {
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--ink-soft);
+      font-family: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .legal-tab-btn.active {
+      background: var(--ink);
+      color: #ffffff;
+      border-color: var(--ink);
+    }
     .gdpr-scroll {
       background: #fdf9fa;
       border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 14px;
-      max-height: 200px;
+      padding: 16px 18px;
+      max-height: clamp(230px, 38dvh, 340px);
       overflow-y: auto;
-      font-size: 0.78rem;
-      line-height: 1.55;
+      font-size: 0.8rem;
+      line-height: 1.64;
       color: var(--ink-soft);
       margin-bottom: 18px;
+    }
+    .legal-tab-panel { display: none; }
+    .legal-tab-panel.active { display: block; }
+    .legal-tab-panel h4 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.32rem;
+      color: var(--ink);
+      margin: 0 0 10px;
+      line-height: 1.22;
+    }
+    .legal-tab-panel h5 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.08rem;
+      color: var(--ink);
+      margin: 14px 0 6px;
+    }
+    .legal-tab-panel p { margin: 0 0 10px; }
+    .legal-tab-panel ul { padding-left: 18px; margin: 0 0 10px; }
+    .legal-tab-panel li { margin-bottom: 6px; }
+    .legal-tab-panel code {
+      font-size: 0.76rem;
+      background: rgba(184, 86, 117, 0.08);
+      padding: 1px 5px;
+      border-radius: 5px;
+    }
+    .legal-tab-panel a { color: var(--rose-deep); }
+    .inline-legal-link {
+      border: none;
+      background: none;
+      padding: 0;
+      font: inherit;
+      font-weight: 700;
+      color: var(--rose-deep);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
     }
     .form-group { margin-bottom: 14px; }
     label {
@@ -170,10 +235,22 @@
     <div id="statusBox" class="alert alert-err" hidden></div>
 
     <div id="signFormContainer" hidden>
-      <div class="gdpr-scroll">
-        <strong>Titolare del Trattamento: Giulia Beauty Studio</strong> — Via Principe Amedeo 17, Verdellino (BG).<br /><br />
-        Ai sensi del Regolamento UE 2016/679 (GDPR), i tuoi dati anagrafici, recapiti WhatsApp/email e le eventuali informazioni su allergie, sensibilità cutanee/oculari o schede trattamenti sono trattati esclusivamente per l'erogazione dei servizi estetici richiesti, gestione appuntamenti, promemoria e adempimenti fiscali.<br /><br />
-        Puoi esercitare in qualsiasi momento i diritti di accesso, rettifica, limitazione e cancellazione scrivendo allo studio. La versione corrente del documento è indicata qui sotto ed è verificata tramite firma elettronica con codice OTP personale.
+      <div class="legal-tabs-bar" role="tablist" aria-label="Documentazione Legale">
+        <button type="button" class="legal-tab-btn active" data-legal-tab="privacy" role="tab" aria-selected="true">
+          Informativa Privacy (GDPR)
+        </button>
+        <button type="button" class="legal-tab-btn" data-legal-tab="terms" role="tab" aria-selected="false">
+          Termini e Condizioni
+        </button>
+        <button type="button" class="legal-tab-btn" data-legal-tab="cookies" role="tab" aria-selected="false">
+          Cookie Policy
+        </button>
+      </div>
+
+      <div class="gdpr-scroll" id="gdprLegalScroll">
+        <div class="legal-tab-panel active" id="signLegalPanelPrivacy" role="tabpanel"></div>
+        <div class="legal-tab-panel" id="signLegalPanelTerms" role="tabpanel"></div>
+        <div class="legal-tab-panel" id="signLegalPanelCookies" role="tabpanel"></div>
       </div>
 
       <form id="privacySignForm">
@@ -195,10 +272,12 @@
           </div>
         </div>
 
-        <label class="check-row">
+        <div class="check-row">
           <input type="checkbox" id="acceptPrivacyCheck" required />
-          <span><strong>Accetto l'Informativa Privacy (GDPR) e i Termini e Condizioni</strong> dello studio. *</span>
-        </label>
+          <span>
+            <label for="acceptPrivacyCheck" style="display:inline;margin:0;font-weight:400;">Dichiaro di aver letto e accettato l’</label><button type="button" class="inline-legal-link" data-open-legal="privacy">Informativa Privacy (GDPR)</button><label for="acceptPrivacyCheck" style="display:inline;margin:0;font-weight:400;"> e i </label><button type="button" class="inline-legal-link" data-open-legal="terms">Termini e Condizioni</button><label for="acceptPrivacyCheck" style="display:inline;margin:0;font-weight:400;"> di prenotazione, disdetta e vendita. *</label>
+          </span>
+        </div>
 
         <label class="check-row">
           <input type="checkbox" id="acceptMarketingCheck" />
@@ -213,6 +292,7 @@
   </div>
 
   <script src="gbs-loader.js?v=1"></script>
+  <script src="legal-content.js?v=1"></script>
   <script>
     (function () {
       const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000/api' : `${window.location.origin}/api`;
@@ -223,6 +303,28 @@
       const statusBoxEl = document.getElementById('statusBox');
       const formContainerEl = document.getElementById('signFormContainer');
       const doneBoxEl = document.getElementById('signedDoneBox');
+      const gdprScrollEl = document.getElementById('gdprLegalScroll');
+
+      const selectLegalTab = window.initLegalPanels
+        ? window.initLegalPanels({
+            tabButtons: document.querySelectorAll('.legal-tab-btn'),
+            panels: {
+              privacy: document.getElementById('signLegalPanelPrivacy'),
+              terms: document.getElementById('signLegalPanelTerms'),
+              cookies: document.getElementById('signLegalPanelCookies'),
+            },
+            scrollContainer: gdprScrollEl,
+          })
+        : () => {};
+
+      document.querySelectorAll('[data-open-legal]').forEach((trigger) => {
+        trigger.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectLegalTab(trigger.dataset.openLegal);
+          gdprScrollEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+      });
 
       const canvas = document.getElementById('sigCanvas');
       const ctx = canvas.getContext('2d');

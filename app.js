@@ -642,22 +642,23 @@ function initApp() {
     terms: document.getElementById('legalPanelTerms'),
     cookies: document.getElementById('legalPanelCookies')
   };
+  const selectLegalTab = window.initLegalPanels
+    ? window.initLegalPanels({ tabButtons: legalTabBtns, panels: legalPanels })
+    : (tabKey = 'privacy') => {
+        legalTabBtns.forEach((btn) => {
+          const isMatch = btn.dataset.legalTab === tabKey;
+          btn.classList.toggle('active', isMatch);
+          btn.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+        });
+        Object.entries(legalPanels).forEach(([key, panel]) => {
+          if (panel) panel.classList.toggle('active', key === tabKey);
+        });
+      };
 
   function openLegalModal(tabKey = 'privacy') {
-    legalTabBtns.forEach((btn) => {
-      const isMatch = btn.dataset.legalTab === tabKey;
-      btn.classList.toggle('active', isMatch);
-      btn.setAttribute('aria-selected', isMatch ? 'true' : 'false');
-    });
-    Object.entries(legalPanels).forEach(([key, panel]) => {
-      if (panel) panel.classList.toggle('active', key === tabKey);
-    });
+    selectLegalTab(tabKey);
     legalModal?.classList.add('open');
   }
-
-  legalTabBtns.forEach((btn) => {
-    btn.addEventListener('click', () => openLegalModal(btn.dataset.legalTab));
-  });
 
   document.querySelectorAll('[data-open-legal]').forEach((trigger) => {
     trigger.addEventListener('click', (e) => {
