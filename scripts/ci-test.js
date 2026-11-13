@@ -488,12 +488,50 @@ async function runApiSuite() {
     assert(msgsAfter.json.logs.some((l) => l.status === 'sent' && l.trigger_source === 'job_birthday'));
     assert(msgsAfter.json.logs.some((l) => l.status === 'sent' && l.trigger_source === 'job_winback'));
 
+    // GDPR default false checks: creating client / appointment without explicit consent stores privacy_accepted=0
+    const noGdprApptRes = await req('POST', '/api/admin/appointments', {
+      action: 'create',
+      operator_id: sara.id,
+      appointment_date: '2026-12-10',
+      start_time: '12:00',
+      duration_minutes: 30,
+      services_summary: 'Consulenza',
+      total_price: 0,
+      client_name: 'Sofia NoGdpr',
+      client_phone: '+39 349 888 7766',
+      status: 'confirmed',
+      send_whatsapp: false,
+    });
+    assert.strictEqual(noGdprApptRes.status, 201);
+    const noGdprClientRes = await req('GET', `/api/admin/clients?id=${noGdprApptRes.json.client_id}`);
+    assert.strictEqual(noGdprClientRes.status, 200);
+    assert.strictEqual(Number(noGdprClientRes.json.client.privacy_accepted), 0);
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_WHATSAPP_FETCH__;
     await new Promise((r) => server.close(r));
     if (fs.existsSync(TMP_DB_PATH)) fs.unlinkSync(TMP_DB_PATH);
   }
+}
+
+function checkGdprDefaults() {
+  const agendaHtml = fs.readFileSync(path.join(ROOT_DIR, 'agenda.html'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const privacySignHtml = fs.readFileSync(path.join(ROOT_DIR, 'privacy-sign.html'), 'utf8');
+  const adminJs = fs.readFileSync(path.join(ROOT_DIR, 'admin.js'), 'utf8');
+  const appJs = fs.readFileSync(path.join(ROOT_DIR, 'app.js'), 'utf8');
+
+  assert(!/id="apptNewClientPrivacy"[^>]*\bchecked\b/i.test(agendaHtml), 'agenda.html #apptNewClientPrivacy non deve avere checked');
+  assert(!/id="clientPrivacyCrmCheck"[^>]*\bchecked\b/i.test(agendaHtml), 'agenda.html #clientPrivacyCrmCheck non deve avere checked');
+  assert(!/id="privacyConsentCheckbox"[^>]*\bchecked\b/i.test(indexHtml), 'index.html #privacyConsentCheckbox non deve avere checked');
+  assert(!/id="acceptPrivacyCheck"[^>]*\bchecked\b/i.test(privacySignHtml), 'privacy-sign.html #acceptPrivacyCheck non deve avere checked');
+  assert(adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = false;"), 'admin.js deve azzerare apptNewClientPrivacy a false');
+  assert(adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = false;"), 'admin.js deve azzerare clientPrivacyCrmCheck a false');
+  assert(!adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = true;"));
+  assert(!adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = true;"));
+  assert(!/privacy_accepted:\s*true/.test(appJs), 'app.js non deve inviare privacy_accepted hardcoded a true');
+  console.log('[CI] GDPR Defaults OK');
 }
 
 (async () => {
@@ -512,6 +550,7 @@ async function runApiSuite() {
   checkDomIds(['admin.js', 'morpho.js'], ['agenda.html', 'admin.html']);
   checkDomIds(['app.js'], ['index.html']);
   console.log('[CI] DOM Alignment OK');
+  checkGdprDefaults();
   await runApiSuite();
 })().catch((err) => {
   console.error('[CI FAILED]', err);

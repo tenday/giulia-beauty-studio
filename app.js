@@ -779,7 +779,7 @@ function initApp() {
           client_email: clientEmail,
           notes: clientNotes,
           payment_method: selectedPaymentMethod,
-          privacy_accepted: true,
+          privacy_accepted: Boolean(privacyCheckbox?.checked),
         }),
       });
 

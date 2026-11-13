@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS `appointments` (
   `status` ENUM('pending', 'confirmed', 'completed', 'cancelled') NOT NULL DEFAULT 'confirmed',
   `notes` TEXT NULL,
   `reminder_sent_at` DATETIME NULL DEFAULT NULL,
-  `privacy_accepted` TINYINT(1) NOT NULL DEFAULT 1,
+  `privacy_accepted` TINYINT(1) NOT NULL DEFAULT 0,
   `privacy_accepted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

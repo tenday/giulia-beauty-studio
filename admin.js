@@ -2308,7 +2308,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptNewClientEmail').value = '';
     document.getElementById('apptNewClientBirthDate').value = '';
     document.getElementById('apptNewClientPrefNotes').value = '';
-    document.getElementById('apptNewClientPrivacy').checked = true;
+    document.getElementById('apptNewClientPrivacy').checked = false;
     document.getElementById('apptDateInput').value = presetDate || toIsoDate(STATE.anchorDate);
     document.getElementById('apptTimeInput').value = presetTime || '10:00';
     document.getElementById('apptDurationInput').value = 60;
@@ -2508,7 +2508,7 @@ async function openClientModal(clientId = null) {
     document.getElementById('clientBirthDateInput').value = '';
     document.getElementById('clientAllergiesInput').value = '';
     document.getElementById('clientPreferencesInput').value = '';
-    document.getElementById('clientPrivacyCrmCheck').checked = true;
+    document.getElementById('clientPrivacyCrmCheck').checked = false;
     document.getElementById('clientMarketingCrmCheck').checked = false;
     historyGrid.hidden = true;
     delBtn.hidden = true;
