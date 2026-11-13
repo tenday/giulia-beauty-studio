@@ -667,6 +667,49 @@ async function persistAppointmentQuickChange(appt, patch, successMsg) {
   }
 }
 
+const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'insights', 'settings'];
+
+function switchAdminView(viewName) {
+  if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
+  STATE.activeView = viewName;
+  document.querySelectorAll('.admin-tab-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.view === viewName);
+  });
+  ALL_ADMIN_VIEWS.forEach((v) => {
+    const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
+    if (el) el.hidden = v !== viewName;
+  });
+  if (viewName === 'clients') renderClientsTable();
+  if (viewName === 'inventory') renderInventoryView();
+  if (viewName === 'messages') renderMessagesView();
+  if (viewName === 'insights') renderInsightsView();
+  if (viewName === 'settings') renderSettingsView();
+}
+
+function resolveAppointmentClientId(appt) {
+  if (!appt) return 0;
+  if (Number(appt.client_id) > 0) return Number(appt.client_id);
+  const cleanPhone = String(appt.client_phone || '').replace(/[^\d]/g, '');
+  const matched = (STATE.clients || []).find((c) => {
+    const cp = String(c.phone || '').replace(/[^\d]/g, '');
+    return (cleanPhone && cp && cp.endsWith(cleanPhone.slice(-9))) ||
+      (appt.client_name && String(c.full_name || '').toLowerCase() === String(appt.client_name).toLowerCase());
+  });
+  return matched ? Number(matched.id) : 0;
+}
+
+async function redirectToClientProfile(appt) {
+  const clientId = typeof appt === 'number' ? appt : resolveAppointmentClientId(appt);
+  if (!clientId) {
+    showAgendaToast('Scheda cliente non trovata per questo appuntamento.', 'error');
+    return;
+  }
+  closeCalendarContextMenu();
+  document.getElementById('apptModal')?.classList.remove('open');
+  switchAdminView('clients');
+  await openClientModal(clientId);
+}
+
 function openCalendarContextMenu(appt, clientX, clientY) {
   const menu = document.getElementById('calContextMenu');
   if (!menu || !appt) return;
@@ -694,6 +737,7 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       <div class="cal-ctx-meta">${escapeHtml(appt.services_summary)}</div>
     </div>
     <button type="button" class="cal-ctx-btn" data-ctx-action="edit">✏️ Apri / Modifica dettaglio</button>
+    <button type="button" class="cal-ctx-btn" data-ctx-action="open-client">👩 Vai alla Scheda Cliente</button>
     ${appt.status !== 'confirmed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-confirmed">✓ Segna Confermato</button>' : ''}
     ${appt.status !== 'completed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-completed">★ Segna Completato</button>' : ''}
     <div class="cal-ctx-divider"></div>
@@ -728,6 +772,8 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       if (action === 'edit') {
         closeCalendarContextMenu();
         openAppointmentModal(appt);
+      } else if (action === 'open-client') {
+        await redirectToClientProfile(appt);
       } else if (action === 'status-confirmed' || action === 'status-completed') {
         const nextStatus = action === 'status-confirmed' ? 'confirmed' : 'completed';
         closeCalendarContextMenu();
@@ -1306,7 +1352,12 @@ function renderListCalendar(container) {
           <span class="status-badge badge-${escapeHtml(a.status)}">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span>
           ${a.reminder_sent_at ? '<br /><span style="font-size:0.68rem;color:#2e6b4a;">📲 Promemoria inviato</span>' : ''}
         </td>
-        <td><button type="button" class="btn-outline-sm">Apri</button></td>
+        <td>
+          <div class="list-actions-cell">
+            <button type="button" class="btn-outline-sm">Apri</button>
+            <button type="button" class="btn-outline-sm list-open-client-btn" title="Vai alla scheda cliente">👩 Scheda</button>
+          </div>
+        </td>
       </tr>
     `;
   });
@@ -1332,6 +1383,11 @@ function renderListCalendar(container) {
   container.querySelectorAll('tr[data-appt-id]').forEach((tr) => {
     const getAppt = () => STATE.appointments.find((a) => Number(a.id) === Number(tr.dataset.apptId));
     attachLongPressAndContextMenu(tr, getAppt);
+    tr.querySelector('.list-open-client-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const appt = getAppt();
+      if (appt) redirectToClientProfile(appt);
+    });
     tr.addEventListener('click', () => {
       if (Date.now() < CAL_UI.suppressClickUntil) return;
       const appt = getAppt();
@@ -1445,11 +1501,29 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   const deleteBtn = document.getElementById('deleteApptBtn');
   const waBtn = document.getElementById('apptWhatsappReminderBtn');
   const clientSection = document.getElementById('apptClientSection');
+  const existingClientBar = document.getElementById('apptExistingClientBar');
+  const existingClientNameEl = document.getElementById('apptExistingClientName');
+  const existingClientMetaEl = document.getElementById('apptExistingClientMeta');
+  const openClientFromApptBtn = document.getElementById('openClientFromApptBtn');
 
   if (appt) {
     document.getElementById('apptModalTitle').textContent = `Appuntamento • ${appt.client_name}`;
     document.getElementById('apptIdInput').value = appt.id;
     clientSection.hidden = true;
+    if (existingClientBar) {
+      const clientObj = (STATE.clients || []).find((c) => Number(c.id) === resolveAppointmentClientId(appt));
+      const metaParts = [];
+      if (appt.client_phone) metaParts.push(appt.client_phone);
+      if (clientObj?.allergies_notes) metaParts.push(`⚠ Allergie: ${clientObj.allergies_notes}`);
+      else if (appt.allergies_notes) metaParts.push(`⚠ Allergie: ${appt.allergies_notes}`);
+      if (clientObj && Number(clientObj.privacy_accepted) !== 1) metaParts.push('GDPR da firmare');
+      if (existingClientNameEl) existingClientNameEl.textContent = appt.client_name || 'Cliente';
+      if (existingClientMetaEl) existingClientMetaEl.textContent = metaParts.join(' • ') || 'Cliente registrata';
+      if (openClientFromApptBtn) {
+        openClientFromApptBtn.onclick = () => redirectToClientProfile(appt);
+      }
+      existingClientBar.hidden = false;
+    }
     document.getElementById('apptDateInput').value = appt.appointment_date;
     document.getElementById('apptTimeInput').value = appt.start_time;
     document.getElementById('apptDurationInput').value = appt.duration_minutes;
@@ -1470,6 +1544,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   } else {
     document.getElementById('apptModalTitle').textContent = 'Nuovo Appuntamento';
     document.getElementById('apptIdInput').value = '';
+    if (existingClientBar) existingClientBar.hidden = true;
     clientSection.hidden = false;
     setClientPickerMode(STATE.clients.length > 0 ? 'existing' : 'new');
     document.getElementById('apptClientSelect').value = '';
@@ -1830,21 +1905,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Main View Tabs
-  const allViews = ['agenda', 'clients', 'inventory', 'messages', 'insights', 'settings'];
   document.querySelectorAll('.admin-tab-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.admin-tab-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      STATE.activeView = btn.dataset.view;
-      allViews.forEach((v) => {
-        const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
-        if (el) el.hidden = STATE.activeView !== v;
-      });
-      if (STATE.activeView === 'inventory') renderInventoryView();
-      if (STATE.activeView === 'messages') renderMessagesView();
-      if (STATE.activeView === 'insights') renderInsightsView();
-      if (STATE.activeView === 'settings') renderSettingsView();
-    });
+    btn.addEventListener('click', () => switchAdminView(btn.dataset.view));
   });
 
   // Calendar Navigation & Modes

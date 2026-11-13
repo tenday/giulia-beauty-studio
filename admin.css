@@ -1215,6 +1215,40 @@ body {
   flex-wrap: wrap;
 }
 
+.appt-client-shortcut-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: #fdf6f5;
+  border: 1px solid var(--border-strong);
+}
+
+.appt-client-shortcut-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.appt-client-shortcut-meta strong {
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.appt-client-shortcut-meta span {
+  font-size: 0.76rem;
+}
+
+.list-actions-cell {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .dossier-history-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

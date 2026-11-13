@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=3" />
+  <link rel="stylesheet" href="admin.css?v=4" />
 </head>
 <body>
 
@@ -478,6 +478,14 @@
 
       <form id="apptForm" class="admin-modal-body">
         <input type="hidden" id="apptIdInput" value="" />
+
+        <div id="apptExistingClientBar" class="appt-client-shortcut-bar" hidden>
+          <div class="appt-client-shortcut-meta">
+            <strong id="apptExistingClientName">—</strong>
+            <span id="apptExistingClientMeta" class="muted-text"></span>
+          </div>
+          <button type="button" class="btn-outline-sm" id="openClientFromApptBtn">👩 Apri Scheda Cliente →</button>
+        </div>
 
         <div id="apptClientSection" class="modal-section-box">
           <div class="client-mode-toggle">
@@ -1032,6 +1040,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=3"></script>
+  <script src="admin.js?v=4"></script>
 </body>
 </html>
