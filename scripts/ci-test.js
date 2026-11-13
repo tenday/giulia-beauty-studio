@@ -149,6 +149,54 @@ async function runApiSuite() {
     const insights = await req('GET', '/api/admin/insights');
     assert.strictEqual(insights.status, 200);
     assert(Array.isArray(insights.json.insights.operator_stats));
+
+    // Interactive calendar reschedule (drag/drop + duration resize)
+    const apptsBefore = await req('GET', `/api/admin/appointments?start_date=${testDate}&end_date=${testDate}`);
+    const targetAppt = apptsBefore.json.appointments.find((a) => Number(a.id) === Number(booked.json.appointment_id));
+    assert(targetAppt);
+
+    const movedDate = '2026-12-03';
+    const resched = await req('POST', '/api/admin/appointments', {
+      action: 'reschedule',
+      id: targetAppt.id,
+      appointment_date: movedDate,
+      start_time: '16:15',
+      duration_minutes: 105,
+    });
+    assert.strictEqual(resched.status, 200);
+    assert.strictEqual(resched.json.duration_minutes, 105);
+
+    const apptsAfter = await req('GET', `/api/admin/appointments?start_date=${movedDate}&end_date=${movedDate}`);
+    const movedAppt = apptsAfter.json.appointments.find((a) => Number(a.id) === Number(targetAppt.id));
+    assert(movedAppt);
+    assert.strictEqual(movedAppt.start_time, '16:15');
+    assert.strictEqual(movedAppt.duration_minutes, 105);
+    assert.strictEqual(movedAppt.services_summary, targetAppt.services_summary);
+    assert.strictEqual(Number(movedAppt.total_price), Number(targetAppt.total_price));
+
+    const badTime = await req('POST', '/api/admin/appointments', {
+      action: 'reschedule',
+      id: targetAppt.id,
+      appointment_date: movedDate,
+      start_time: '29:99',
+      duration_minutes: 60,
+    });
+    assert.strictEqual(badTime.status, 422);
+
+    const missingId = await req('POST', '/api/admin/appointments', {
+      action: 'reschedule',
+      id: 999999,
+      appointment_date: movedDate,
+      start_time: '10:00',
+      duration_minutes: 60,
+    });
+    assert.strictEqual(missingId.status, 404);
+
+    const delRes = await req('POST', '/api/admin/appointments', {
+      action: 'delete',
+      id: targetAppt.id,
+    });
+    assert.strictEqual(delRes.status, 200);
     console.log('[CI] API Regression Suite OK');
   } finally {
     await new Promise((r) => server.close(r));

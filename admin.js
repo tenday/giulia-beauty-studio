@@ -488,13 +488,685 @@ async function openRemindersModal() {
 /* ==========================================================================
    GOOGLE CALENDAR-STYLE AGENDA RENDERER
    ========================================================================== */
+/* ==========================================================================
+   CALENDAR VIEW (WEEK / DAY / LIST + INTERACTIVE DRAG, RESIZE & LONG-PRESS)
+   ========================================================================== */
+const CAL_START_HOUR = 8;
+const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
+const CAL_HOUR_PX = 64; // 64px per ora -> 16px = 15 min
+const CAL_SNAP_MIN = 15;
+const CAL_MIN_DURATION = 15;
+const CAL_MAX_DURATION = 480;
+const CAL_LONG_PRESS_MS = 480;
+
+const CAL_UI = {
+  suppressClickUntil: 0,
+  toastTimer: null,
+  cleanupGesture: null,
+  ctxDismissHandler: null,
+  ctxKeyHandler: null,
+  ctxLastOpenedId: 0,
+  ctxLastOpenedAt: 0,
+};
+
+function parseTimeToMinutes(hhmm) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || '09:00').trim());
+  if (!match) return 9 * 60;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function minutesToTimeStr(totalMins) {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(totalMins)));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function snapMinutes(mins, step = CAL_SNAP_MIN) {
+  return Math.round(mins / step) * step;
+}
+
+function computeEventTopPx(startTimeStr) {
+  const minutesFromStart = parseTimeToMinutes(startTimeStr) - CAL_START_HOUR * 60;
+  return Math.max(2, (minutesFromStart / 60) * CAL_HOUR_PX);
+}
+
+function computeEventHeightPx(durationMinutes) {
+  const dur = Math.max(CAL_MIN_DURATION, Number(durationMinutes) || 60);
+  return Math.max(22, (dur / 60) * CAL_HOUR_PX - 3);
+}
+
+function formatTimeRangeLabel(startTimeStr, durationMinutes) {
+  const startMin = parseTimeToMinutes(startTimeStr);
+  const endMin = startMin + Math.max(CAL_MIN_DURATION, Number(durationMinutes) || 60);
+  return `${minutesToTimeStr(startMin)} – ${minutesToTimeStr(endMin)}`;
+}
+
+function layoutDayEvents(dayAppts) {
+  const items = dayAppts
+    .map((appt) => {
+      const start = parseTimeToMinutes(appt.start_time);
+      const end = start + Math.max(CAL_MIN_DURATION, Number(appt.duration_minutes) || 60);
+      return { id: Number(appt.id), start, end };
+    })
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+
+  const layoutMap = new Map();
+  let cluster = [];
+  let clusterEnd = -1;
+
+  function flushCluster() {
+    if (cluster.length === 0) return;
+    const laneEnds = [];
+    const assigned = [];
+    for (const item of cluster) {
+      let lane = laneEnds.findIndex((endT) => endT <= item.start);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(item.end);
+      } else {
+        laneEnds[lane] = item.end;
+      }
+      assigned.push({ id: item.id, lane });
+    }
+    const laneCount = Math.max(1, laneEnds.length);
+    for (const entry of assigned) {
+      layoutMap.set(entry.id, { lane: entry.lane, laneCount });
+    }
+    cluster = [];
+    clusterEnd = -1;
+  }
+
+  for (const item of items) {
+    if (cluster.length > 0 && item.start >= clusterEnd) {
+      flushCluster();
+    }
+    cluster.push(item);
+    clusterEnd = Math.max(clusterEnd, item.end);
+  }
+  flushCluster();
+  return layoutMap;
+}
+
+function showAgendaToast(message, variant = 'info') {
+  const toastEl = document.getElementById('calToast');
+  if (!toastEl) return;
+  clearTimeout(CAL_UI.toastTimer);
+  toastEl.textContent = message;
+  toastEl.classList.toggle('is-error', variant === 'error');
+  toastEl.hidden = false;
+  CAL_UI.toastTimer = setTimeout(() => {
+    toastEl.hidden = true;
+  }, 2700);
+}
+
+function closeCalendarContextMenu() {
+  const menu = document.getElementById('calContextMenu');
+  if (menu) {
+    menu.hidden = true;
+    menu.innerHTML = '';
+  }
+  if (CAL_UI.ctxDismissHandler) {
+    document.removeEventListener('pointerdown', CAL_UI.ctxDismissHandler, true);
+    CAL_UI.ctxDismissHandler = null;
+  }
+  if (CAL_UI.ctxKeyHandler) {
+    document.removeEventListener('keydown', CAL_UI.ctxKeyHandler, true);
+    CAL_UI.ctxKeyHandler = null;
+  }
+}
+
+async function performDeleteAppointment(id) {
+  const target = STATE.appointments.find((a) => Number(a.id) === Number(id));
+  await apiFetch('admin/appointments', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'delete', id: Number(id) }),
+  });
+  STATE.appointments = STATE.appointments.filter((a) => Number(a.id) !== Number(id));
+  closeCalendarContextMenu();
+  document.getElementById('apptModal')?.classList.remove('open');
+  renderCalendar();
+  updateKpis();
+  loadTomorrowReminders().then(updateKpis).catch(() => {});
+  loadInsights().catch(() => {});
+  showAgendaToast(target ? `Appuntamento di ${target.client_name} eliminato` : 'Appuntamento eliminato');
+}
+
+async function persistAppointmentQuickChange(appt, patch, successMsg) {
+  const prev = {
+    appointment_date: appt.appointment_date,
+    start_time: appt.start_time,
+    duration_minutes: appt.duration_minutes,
+    operator_id: appt.operator_id,
+    status: appt.status,
+  };
+  Object.assign(appt, patch);
+  renderCalendar();
+  updateKpis();
+
+  try {
+    await apiFetch('admin/appointments', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'reschedule',
+        id: Number(appt.id),
+        appointment_date: appt.appointment_date,
+        start_time: appt.start_time,
+        duration_minutes: Number(appt.duration_minutes) || 60,
+        operator_id: appt.operator_id ? Number(appt.operator_id) : undefined,
+        status: appt.status,
+      }),
+    });
+    if (successMsg) showAgendaToast(successMsg);
+    loadTomorrowReminders().then(updateKpis).catch(() => {});
+  } catch (err) {
+    Object.assign(appt, prev);
+    renderCalendar();
+    updateKpis();
+    showAgendaToast(err.message || 'Errore nel salvataggio della modifica', 'error');
+  }
+}
+
+function openCalendarContextMenu(appt, clientX, clientY) {
+  const menu = document.getElementById('calContextMenu');
+  if (!menu || !appt) return;
+  const now = Date.now();
+  if (!menu.hidden && CAL_UI.ctxLastOpenedId === Number(appt.id) && now - CAL_UI.ctxLastOpenedAt < 450) {
+    return;
+  }
+
+  closeCalendarContextMenu();
+  CAL_UI.ctxLastOpenedId = Number(appt.id);
+  CAL_UI.ctxLastOpenedAt = now;
+  try {
+    window.getSelection?.()?.removeAllRanges?.();
+  } catch {}
+
+  const dur = Number(appt.duration_minutes) || 60;
+  const dateObj = parseIsoDate(appt.appointment_date);
+  const dateLabel = `${DAYS_IT[dateObj.getDay()]} ${dateObj.getDate()} ${MONTHS_IT[dateObj.getMonth()].slice(0, 3)}`;
+  const timeRange = formatTimeRangeLabel(appt.start_time, dur);
+
+  menu.innerHTML = `
+    <div class="cal-ctx-header">
+      <div class="cal-ctx-client">${escapeHtml(appt.client_name)}</div>
+      <div class="cal-ctx-meta">${escapeHtml(dateLabel)} • ${escapeHtml(timeRange)} (${dur} min)</div>
+      <div class="cal-ctx-meta">${escapeHtml(appt.services_summary)}</div>
+    </div>
+    <button type="button" class="cal-ctx-btn" data-ctx-action="edit">✏️ Apri / Modifica dettaglio</button>
+    ${appt.status !== 'confirmed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-confirmed">✓ Segna Confermato</button>' : ''}
+    ${appt.status !== 'completed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-completed">★ Segna Completato</button>' : ''}
+    <div class="cal-ctx-divider"></div>
+    <button type="button" class="cal-ctx-btn is-danger" data-ctx-action="ask-delete">🗑️ Elimina appuntamento</button>
+    <div class="cal-ctx-confirm" data-ctx-confirm hidden>
+      <p>Eliminare definitivamente questo appuntamento?</p>
+      <div class="cal-ctx-confirm-actions">
+        <button type="button" class="cal-ctx-btn-yes" data-ctx-action="confirm-delete">Sì, elimina</button>
+        <button type="button" class="cal-ctx-btn-no" data-ctx-action="cancel-delete">Annulla</button>
+      </div>
+    </div>
+  `;
+
+  menu.style.visibility = 'hidden';
+  menu.hidden = false;
+  const menuW = menu.offsetWidth || 250;
+  const menuH = menu.offsetHeight || 220;
+  const pad = 10;
+  const left = Math.max(pad, Math.min(window.innerWidth - menuW - pad, (clientX || window.innerWidth / 2)));
+  const top = Math.max(pad, Math.min(window.innerHeight - menuH - pad, (clientY || window.innerHeight / 2)));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = 'visible';
+
+  const confirmBox = menu.querySelector('[data-ctx-confirm]');
+  const askDeleteBtn = menu.querySelector('[data-ctx-action="ask-delete"]');
+
+  menu.querySelectorAll('[data-ctx-action]').forEach((btn) => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const action = btn.dataset.ctxAction;
+      if (action === 'edit') {
+        closeCalendarContextMenu();
+        openAppointmentModal(appt);
+      } else if (action === 'status-confirmed' || action === 'status-completed') {
+        const nextStatus = action === 'status-confirmed' ? 'confirmed' : 'completed';
+        closeCalendarContextMenu();
+        await persistAppointmentQuickChange(
+          appt,
+          { status: nextStatus },
+          `Stato aggiornato: ${STATUS_LABELS[nextStatus] || nextStatus}`
+        );
+      } else if (action === 'ask-delete') {
+        if (askDeleteBtn) askDeleteBtn.hidden = true;
+        if (confirmBox) confirmBox.hidden = false;
+      } else if (action === 'cancel-delete') {
+        if (confirmBox) confirmBox.hidden = true;
+        if (askDeleteBtn) askDeleteBtn.hidden = false;
+      } else if (action === 'confirm-delete') {
+        btn.disabled = true;
+        btn.textContent = 'Elimino...';
+        try {
+          await performDeleteAppointment(appt.id);
+        } catch (err) {
+          closeCalendarContextMenu();
+          showAgendaToast(err.message || 'Errore durante eliminazione', 'error');
+        }
+      }
+    });
+  });
+
+  CAL_UI.ctxDismissHandler = (ev) => {
+    if (!menu.contains(ev.target)) {
+      closeCalendarContextMenu();
+    }
+  };
+  CAL_UI.ctxKeyHandler = (ev) => {
+    if (ev.key === 'Escape') {
+      closeCalendarContextMenu();
+    }
+  };
+  setTimeout(() => {
+    if (!menu.hidden) {
+      document.addEventListener('pointerdown', CAL_UI.ctxDismissHandler, true);
+      document.addEventListener('keydown', CAL_UI.ctxKeyHandler, true);
+    }
+  }, 20);
+}
+
+function attachLongPressAndContextMenu(el, getAppt) {
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    CAL_UI.suppressClickUntil = Date.now() + 450;
+    const appt = getAppt();
+    if (appt) openCalendarContextMenu(appt, e.clientX, e.clientY);
+  });
+
+  let lpTimer = null;
+  let startX = 0;
+  let startY = 0;
+
+  const cancelLp = () => {
+    clearTimeout(lpTimer);
+    lpTimer = null;
+    el.classList.remove('is-pressing');
+  };
+
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    startX = e.clientX;
+    startY = e.clientY;
+    cancelLp();
+    lpTimer = setTimeout(() => {
+      lpTimer = null;
+      CAL_UI.suppressClickUntil = Date.now() + 650;
+      try {
+        navigator.vibrate?.(25);
+      } catch {}
+      const appt = getAppt();
+      if (appt) openCalendarContextMenu(appt, startX, startY);
+    }, CAL_LONG_PRESS_MS);
+  });
+
+  el.addEventListener('pointermove', (e) => {
+    if (!lpTimer) return;
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > 8) {
+      cancelLp();
+    }
+  });
+  el.addEventListener('pointerup', cancelLp);
+  el.addEventListener('pointercancel', cancelLp);
+}
+
+function bindInteractiveCalendarGrid(container) {
+  if (CAL_UI.cleanupGesture) {
+    CAL_UI.cleanupGesture();
+    CAL_UI.cleanupGesture = null;
+  }
+
+  const dayCols = Array.from(container.querySelectorAll('.cal-day-col'));
+  let g = null;
+  let autoScrollRaf = null;
+
+  function findDayColAtX(clientX) {
+    if (dayCols.length === 0) return null;
+    for (const col of dayCols) {
+      const r = col.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right) return col;
+    }
+    let nearest = dayCols[0];
+    let bestDist = Infinity;
+    for (const col of dayCols) {
+      const r = col.getBoundingClientRect();
+      const center = (r.left + r.right) / 2;
+      const dist = Math.abs(clientX - center);
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = col;
+      }
+    }
+    return nearest;
+  }
+
+  function updateDragVisuals() {
+    if (!g || g.mode !== 'drag') return;
+    const deltaScrollY = container.scrollTop - g.startScrollTop;
+    const totalDeltaY = g.lastY - g.startY + deltaScrollY;
+    const deltaMins = snapMinutes((totalDeltaY / CAL_HOUR_PX) * 60);
+    const maxStartMin = CAL_END_HOUR * 60 - CAL_SNAP_MIN;
+    g.targetStartMin = Math.max(CAL_START_HOUR * 60, Math.min(maxStartMin, g.initialStartMin + deltaMins));
+
+    const targetCol = STATE.calMode === 'week' ? findDayColAtX(g.lastX) || g.originColEl : g.originColEl;
+    if (targetCol && targetCol !== g.currentDropCol) {
+      g.currentDropCol?.classList.remove('is-drop-target');
+      targetCol.classList.add('is-drop-target');
+      targetCol.appendChild(g.ghostEl);
+      g.currentDropCol = targetCol;
+    }
+    g.targetDate = targetCol?.dataset.date || g.initialDate;
+
+    const nextStartStr = minutesToTimeStr(g.targetStartMin);
+    const topPx = computeEventTopPx(nextStartStr);
+    const heightPx = computeEventHeightPx(g.initialDuration);
+    g.ghostEl.style.top = `${topPx}px`;
+    g.ghostEl.style.height = `${heightPx}px`;
+
+    const rangeLabel = formatTimeRangeLabel(nextStartStr, g.initialDuration);
+    let prefix = '';
+    if (STATE.calMode === 'week' && g.targetDate !== g.initialDate) {
+      const dObj = parseIsoDate(g.targetDate);
+      prefix = `${DAYS_IT[dObj.getDay()]} ${dObj.getDate()} • `;
+    }
+    g.livePillEl.textContent = `${prefix}${rangeLabel}`;
+  }
+
+  function updateResizeVisuals() {
+    if (!g || g.mode !== 'resize') return;
+    const deltaScrollY = container.scrollTop - g.startScrollTop;
+    const totalDeltaY = g.lastY - g.startY + deltaScrollY;
+    const deltaMins = snapMinutes((totalDeltaY / CAL_HOUR_PX) * 60);
+    const maxEndMin = (CAL_END_HOUR + 1) * 60;
+    const maxAllowedDur = Math.min(CAL_MAX_DURATION, maxEndMin - g.initialStartMin);
+    g.targetDuration = Math.max(CAL_MIN_DURATION, Math.min(maxAllowedDur, g.initialDuration + deltaMins));
+
+    const heightPx = computeEventHeightPx(g.targetDuration);
+    g.cardEl.style.height = `${heightPx}px`;
+    g.cardEl.classList.toggle('is-compact', heightPx < 36);
+
+    const startStr = minutesToTimeStr(g.initialStartMin);
+    const rangeLabel = formatTimeRangeLabel(startStr, g.targetDuration);
+    g.livePillEl.textContent = `${rangeLabel} • ${g.targetDuration} min`;
+  }
+
+  function runAutoScroll() {
+    autoScrollRaf = null;
+    if (!g || (g.mode !== 'drag' && g.mode !== 'resize')) return;
+    const rect = container.getBoundingClientRect();
+    const edge = 44;
+    let dx = 0;
+    let dy = 0;
+
+    if (g.lastY < rect.top + edge) {
+      dy = -Math.ceil(((rect.top + edge - g.lastY) / edge) * 10);
+    } else if (g.lastY > rect.bottom - edge) {
+      dy = Math.ceil(((g.lastY - (rect.bottom - edge)) / edge) * 10);
+    }
+
+    if (g.mode === 'drag' && STATE.calMode === 'week') {
+      if (g.lastX < rect.left + edge) {
+        dx = -Math.ceil(((rect.left + edge - g.lastX) / edge) * 12);
+      } else if (g.lastX > rect.right - edge) {
+        dx = Math.ceil(((g.lastX - (rect.right - edge)) / edge) * 12);
+      }
+    }
+
+    if (dx !== 0 || dy !== 0) {
+      container.scrollTop += dy;
+      container.scrollLeft += dx;
+      if (g.mode === 'drag') updateDragVisuals();
+      else updateResizeVisuals();
+      autoScrollRaf = requestAnimationFrame(runAutoScroll);
+    }
+  }
+
+  function ensureAutoScrollRunning() {
+    if (!autoScrollRaf) {
+      autoScrollRaf = requestAnimationFrame(runAutoScroll);
+    }
+  }
+
+  function cleanupActiveGesture() {
+    if (!g) return;
+    clearTimeout(g.pressTimer);
+    clearTimeout(g.longPressTimer);
+    cancelAnimationFrame(autoScrollRaf);
+    autoScrollRaf = null;
+    g.cardEl.classList.remove('is-pressing', 'is-dragging', 'is-resizing');
+    g.currentDropCol?.classList.remove('is-drop-target');
+    g.ghostEl?.remove();
+    if (g.resizePillEl) g.resizePillEl.remove();
+    if (g.cardEl && g.mode === 'resize') {
+      const origH = computeEventHeightPx(g.initialDuration);
+      g.cardEl.style.height = `${origH}px`;
+      g.cardEl.classList.toggle('is-compact', origH < 36);
+    }
+    window.removeEventListener('pointermove', onWindowPointerMove);
+    window.removeEventListener('pointerup', onWindowPointerUp);
+    window.removeEventListener('pointercancel', onWindowPointerCancel);
+    g = null;
+  }
+
+  CAL_UI.cleanupGesture = cleanupActiveGesture;
+
+  function onWindowPointerMove(e) {
+    if (!g || e.pointerId !== g.pointerId) return;
+    g.lastX = e.clientX;
+    g.lastY = e.clientY;
+
+    if (g.mode === 'pending') {
+      const threshold = g.isResize ? 3 : g.pointerType === 'mouse' ? 5 : 8;
+      if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < threshold) {
+        return;
+      }
+
+      clearTimeout(g.pressTimer);
+      clearTimeout(g.longPressTimer);
+      g.cardEl.classList.remove('is-pressing');
+      closeCalendarContextMenu();
+      try {
+        g.cardEl.setPointerCapture?.(g.pointerId);
+      } catch {}
+
+      if (g.isResize) {
+        g.mode = 'resize';
+        g.cardEl.classList.add('is-resizing');
+        const pill = document.createElement('div');
+        pill.className = 'cal-live-pill is-bottom';
+        g.cardEl.appendChild(pill);
+        g.livePillEl = pill;
+        g.resizePillEl = pill;
+        updateResizeVisuals();
+      } else {
+        g.mode = 'drag';
+        g.cardEl.classList.add('is-dragging');
+        const ghost = document.createElement('div');
+        ghost.className = 'cal-drag-ghost';
+        ghost.style.borderLeftColor = g.cardEl.style.borderLeftColor || 'var(--rose)';
+        ghost.innerHTML = `
+          <div class="cal-live-pill"></div>
+          <div class="cal-event-client">${escapeHtml(g.appt.client_name)}</div>
+          <div class="cal-event-service">${escapeHtml(g.appt.services_summary)}</div>
+        `;
+        g.ghostEl = ghost;
+        g.livePillEl = ghost.querySelector('.cal-live-pill');
+        g.currentDropCol = g.originColEl;
+        g.currentDropCol?.classList.add('is-drop-target');
+        g.currentDropCol?.appendChild(ghost);
+        updateDragVisuals();
+      }
+      ensureAutoScrollRunning();
+      return;
+    }
+
+    if (g.mode === 'drag') {
+      e.preventDefault();
+      updateDragVisuals();
+      ensureAutoScrollRunning();
+    } else if (g.mode === 'resize') {
+      e.preventDefault();
+      updateResizeVisuals();
+      ensureAutoScrollRunning();
+    }
+  }
+
+  async function onWindowPointerUp(e) {
+    if (!g || e.pointerId !== g.pointerId) return;
+    const finished = g;
+    if (finished.mode === 'drag') {
+      CAL_UI.suppressClickUntil = Date.now() + 350;
+      const newDate = finished.targetDate;
+      const newStartStr = minutesToTimeStr(finished.targetStartMin);
+      const changed = newDate !== finished.initialDate || finished.targetStartMin !== finished.initialStartMin;
+      cleanupActiveGesture();
+      if (changed) {
+        const dObj = parseIsoDate(newDate);
+        const dateTxt = `${DAYS_IT[dObj.getDay()]} ${dObj.getDate()} ${MONTHS_IT[dObj.getMonth()].slice(0, 3)}`;
+        await persistAppointmentQuickChange(
+          finished.appt,
+          { appointment_date: newDate, start_time: newStartStr },
+          `Spostato a ${dateTxt}, ore ${newStartStr}`
+        );
+      }
+      return;
+    }
+
+    if (finished.mode === 'resize') {
+      CAL_UI.suppressClickUntil = Date.now() + 350;
+      const newDur = finished.targetDuration;
+      const changed = newDur !== finished.initialDuration;
+      cleanupActiveGesture();
+      if (changed) {
+        const rangeTxt = formatTimeRangeLabel(finished.appt.start_time, newDur);
+        await persistAppointmentQuickChange(
+          finished.appt,
+          { duration_minutes: newDur },
+          `Durata aggiornata: ${newDur} min (${rangeTxt})`
+        );
+      }
+      return;
+    }
+
+    cleanupActiveGesture();
+  }
+
+  function onWindowPointerCancel(e) {
+    if (!g || e.pointerId !== g.pointerId) return;
+    cleanupActiveGesture();
+  }
+
+  container.querySelectorAll('.cal-event-card').forEach((cardEl) => {
+    const getAppt = () => STATE.appointments.find((a) => Number(a.id) === Number(cardEl.dataset.apptId));
+
+    cardEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      CAL_UI.suppressClickUntil = Date.now() + 450;
+      cleanupActiveGesture();
+      const appt = getAppt();
+      if (appt) openCalendarContextMenu(appt, e.clientX, e.clientY);
+    });
+
+    cardEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const appt = getAppt();
+      if (!appt) return;
+
+      cleanupActiveGesture();
+      const isResize = Boolean(e.target.closest('.cal-resize-handle'));
+      const initialStartMin = parseTimeToMinutes(appt.start_time);
+      const initialDuration = Math.max(CAL_MIN_DURATION, Number(appt.duration_minutes) || 60);
+
+      g = {
+        cardEl,
+        appt,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType || 'mouse',
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        isResize,
+        mode: 'pending',
+        initialStartMin,
+        initialDuration,
+        initialDate: appt.appointment_date,
+        targetDate: appt.appointment_date,
+        targetStartMin: initialStartMin,
+        targetDuration: initialDuration,
+        originColEl: cardEl.closest('.cal-day-col'),
+        startScrollTop: container.scrollTop,
+        startScrollLeft: container.scrollLeft,
+        currentDropCol: null,
+        ghostEl: null,
+        livePillEl: null,
+        resizePillEl: null,
+        pressTimer: null,
+        longPressTimer: null,
+      };
+
+      if (!isResize && g.pointerType !== 'mouse') {
+        g.pressTimer = setTimeout(() => {
+          if (g && g.mode === 'pending') {
+            g.cardEl.classList.add('is-pressing');
+          }
+        }, 180);
+
+        g.longPressTimer = setTimeout(() => {
+          if (!g || g.mode !== 'pending') return;
+          const openX = g.lastX;
+          const openY = g.lastY;
+          const targetAppt = g.appt;
+          CAL_UI.suppressClickUntil = Date.now() + 650;
+          cleanupActiveGesture();
+          try {
+            navigator.vibrate?.(25);
+          } catch {}
+          openCalendarContextMenu(targetAppt, openX, openY);
+        }, CAL_LONG_PRESS_MS);
+      }
+
+      window.addEventListener('pointermove', onWindowPointerMove, { passive: false });
+      window.addEventListener('pointerup', onWindowPointerUp);
+      window.addEventListener('pointercancel', onWindowPointerCancel);
+    });
+
+    cardEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (Date.now() < CAL_UI.suppressClickUntil) return;
+      if (e.target.closest('.cal-resize-handle')) return;
+      const appt = getAppt();
+      if (appt) openAppointmentModal(appt);
+    });
+  });
+}
+
 function renderCalendar() {
   const container = document.getElementById('calendarContainer');
   const titleEl = document.getElementById('calRangeTitle');
+  const prevScrollTop = container.scrollTop;
+  const prevScrollLeft = container.scrollLeft;
+
+  if (CAL_UI.cleanupGesture) {
+    CAL_UI.cleanupGesture();
+    CAL_UI.cleanupGesture = null;
+  }
+  closeCalendarContextMenu();
 
   if (STATE.calMode === 'list') {
     titleEl.textContent = 'Elenco Appuntamenti';
     renderListCalendar(container);
+    container.scrollTop = prevScrollTop;
+    container.scrollLeft = prevScrollLeft;
     return;
   }
 
@@ -516,7 +1188,7 @@ function renderCalendar() {
   }
 
   const hours = [];
-  for (let h = 8; h <= 20; h++) {
+  for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) {
     hours.push(h);
   }
 
@@ -558,30 +1230,36 @@ function renderCalendar() {
     const dow = d.getDay();
     const isClosed = dow === 0 || dow === 2;
     const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
+    const lanesMap = layoutDayEvents(dayAppts);
 
-    html += `<div class="cal-day-col ${isClosed ? 'is-closed' : ''}">`;
+    html += `<div class="cal-day-col ${isClosed ? 'is-closed' : ''}" data-date="${iso}">`;
     hours.forEach((h) => {
       const slotTime = `${String(h).padStart(2, '0')}:00`;
-      html += `<div class="cal-hour-slot" data-date="${iso}" data-time="${slotTime}" title="Clicca per aggiungere appuntamento alle ${slotTime}"></div>`;
+      html += `<div class="cal-hour-slot" data-date="${iso}" data-hour="${h}" data-time="${slotTime}" title="Clicca per aggiungere appuntamento alle ${slotTime}"></div>`;
     });
 
     dayAppts.forEach((appt) => {
-      const [ah, am] = String(appt.start_time || '09:00').split(':').map(Number);
-      const minutesFromStart = (ah - 8) * 60 + (am || 0);
-      const topPx = Math.max(2, (minutesFromStart / 60) * 58);
-      const heightPx = Math.max(38, ((Number(appt.duration_minutes) || 60) / 60) * 58 - 3);
+      const topPx = computeEventTopPx(appt.start_time);
+      const heightPx = computeEventHeightPx(appt.duration_minutes);
+      const laneInfo = lanesMap.get(Number(appt.id)) || { lane: 0, laneCount: 1 };
+      const laneStyle =
+        laneInfo.laneCount > 1
+          ? `left: calc(${(laneInfo.lane * 100) / laneInfo.laneCount}% + 3px); width: calc(${100 / laneInfo.laneCount}% - 6px); right: auto;`
+          : '';
 
       const hasAnyNote = Boolean(appt.notes || appt.allergies_notes);
       const opColor = appt.operator_color || '#d47491';
       const opName = appt.operator_name || 'Giulia';
+      const isCompact = heightPx < 36;
       html += `
-        <div class="cal-event-card status-${escapeHtml(appt.status)}"
+        <div class="cal-event-card status-${escapeHtml(appt.status)}${isCompact ? ' is-compact' : ''}"
              data-appt-id="${appt.id}"
-             style="top:${topPx}px; height:${heightPx}px; border-left: 4px solid ${escapeHtml(opColor)};">
+             style="top:${topPx}px; height:${heightPx}px; ${laneStyle} border-left: 4px solid ${escapeHtml(opColor)};">
           <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
           ${hasAnyNote ? `<div class="cal-event-note-flag">📝 ${escapeHtml(appt.notes || appt.allergies_notes)}</div>` : ''}
+          <div class="cal-resize-handle" title="Trascina per modificare la durata"></div>
         </div>
       `;
     });
@@ -591,21 +1269,20 @@ function renderCalendar() {
 
   html += `</div>`;
   container.innerHTML = html;
+  container.scrollTop = prevScrollTop;
+  container.scrollLeft = prevScrollLeft;
 
   container.querySelectorAll('.cal-hour-slot').forEach((slotEl) => {
-    slotEl.addEventListener('click', () => {
-      openAppointmentModal(null, slotEl.dataset.date, slotEl.dataset.time);
+    slotEl.addEventListener('click', (e) => {
+      if (Date.now() < CAL_UI.suppressClickUntil) return;
+      const rect = slotEl.getBoundingClientRect();
+      const mins = e.clientY - rect.top >= CAL_HOUR_PX / 2 ? '30' : '00';
+      const clickedTime = `${String(Number(slotEl.dataset.hour)).padStart(2, '0')}:${mins}`;
+      openAppointmentModal(null, slotEl.dataset.date, clickedTime);
     });
   });
 
-  container.querySelectorAll('.cal-event-card').forEach((cardEl) => {
-    cardEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = Number(cardEl.dataset.apptId);
-      const appt = STATE.appointments.find((a) => Number(a.id) === id);
-      if (appt) openAppointmentModal(appt);
-    });
-  });
+  bindInteractiveCalendarGrid(container);
 }
 
 function renderListCalendar(container) {
@@ -653,9 +1330,11 @@ function renderListCalendar(container) {
   `;
 
   container.querySelectorAll('tr[data-appt-id]').forEach((tr) => {
+    const getAppt = () => STATE.appointments.find((a) => Number(a.id) === Number(tr.dataset.apptId));
+    attachLongPressAndContextMenu(tr, getAppt);
     tr.addEventListener('click', () => {
-      const id = Number(tr.dataset.apptId);
-      const appt = STATE.appointments.find((a) => Number(a.id) === id);
+      if (Date.now() < CAL_UI.suppressClickUntil) return;
+      const appt = getAppt();
       if (appt) openAppointmentModal(appt);
     });
   });
@@ -1280,12 +1959,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('deleteApptBtn').addEventListener('click', async () => {
     const id = Number(document.getElementById('apptIdInput').value);
     if (!id || !confirm('Eliminare definitivamente questo appuntamento dall\'agenda?')) return;
-    await apiFetch('admin/appointments', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'delete', id }),
-    });
-    document.getElementById('apptModal').classList.remove('open');
-    await refreshAllData();
+    try {
+      await performDeleteAppointment(id);
+    } catch (err) {
+      showAgendaToast(err.message || 'Errore durante eliminazione', 'error');
+    }
   });
 
   // Client Search & CRM Modals

@@ -511,6 +511,23 @@ async function updateAppointment(
   }
 }
 
+async function rescheduleAppointment(id, { date, time, duration, operatorId, status }) {
+  const pool = getPool();
+  const sets = ['appointment_date = ?', 'start_time = ?', 'duration_minutes = ?'];
+  const params = [date, `${time}:00`, duration];
+  if (operatorId !== undefined) {
+    sets.push('operator_id = ?');
+    params.push(operatorId || null);
+  }
+  if (status !== undefined) {
+    sets.push('status = ?');
+    params.push(status);
+  }
+  params.push(id);
+  const [result] = await pool.query(`UPDATE appointments SET ${sets.join(', ')} WHERE id = ?`, params);
+  return Number(result?.affectedRows || 0) > 0;
+}
+
 async function createAdminAppointment({
   clientId,
   clientName,
@@ -1301,6 +1318,7 @@ module.exports = {
   deleteAppointment,
   markAppointmentReminder,
   updateAppointment,
+  rescheduleAppointment,
   createAdminAppointment,
   getClientDossier,
   listClients,

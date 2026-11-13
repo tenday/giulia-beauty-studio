@@ -580,6 +580,45 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
       return res.json({ ok: true, id, reminder_sent_at: sentAt });
     }
 
+    if (action === 'reschedule') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
+
+      const date = String(body.appointment_date || '').trim();
+      const time = String(body.start_time || '').trim();
+      if (!isValidIsoDate(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+        return sendError(res, 'Data o orario non validi.', 422);
+      }
+
+      const rawDuration = Number.parseInt(String(body.duration_minutes ?? '60'), 10);
+      const duration = Math.max(15, Math.min(600, Number.isFinite(rawDuration) ? rawDuration : 60));
+      const operatorId =
+        body.operator_id !== undefined ? Number.parseInt(String(body.operator_id || '0'), 10) || null : undefined;
+      let status;
+      if (body.status !== undefined) {
+        if (!ALLOWED_APPT_STATUSES.includes(body.status)) {
+          return sendError(res, 'Stato appuntamento non valido.', 422);
+        }
+        status = body.status;
+      }
+
+      const updated = await store.rescheduleAppointment(id, {
+        date,
+        time,
+        duration,
+        operatorId,
+        status,
+      });
+      if (!updated) return sendError(res, 'Appuntamento non trovato.', 404);
+      return res.json({
+        ok: true,
+        updated_id: id,
+        appointment_date: date,
+        start_time: time,
+        duration_minutes: duration,
+      });
+    }
+
     if (action === 'update') {
       const id = Number.parseInt(body.id || '0', 10) || 0;
       if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);

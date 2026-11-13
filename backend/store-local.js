@@ -568,6 +568,20 @@ async function updateAppointment(
   writeDb(db);
 }
 
+async function rescheduleAppointment(id, { date, time, duration, operatorId, status }) {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  if (!appt) return false;
+  appt.appointment_date = date;
+  appt.start_time = `${time}:00`;
+  appt.duration_minutes = duration;
+  if (operatorId !== undefined) appt.operator_id = operatorId || null;
+  if (status !== undefined) appt.status = status;
+  appt.updated_at = formatRomeNow();
+  writeDb(db);
+  return true;
+}
+
 async function createAdminAppointment({
   clientId,
   clientName,
@@ -1382,6 +1396,7 @@ module.exports = {
   deleteAppointment,
   markAppointmentReminder,
   updateAppointment,
+  rescheduleAppointment,
   createAdminAppointment,
   getClientDossier,
   listClients,
