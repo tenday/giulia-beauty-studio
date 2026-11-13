@@ -4,6 +4,14 @@
  */
 
 const API_BASE = 'api';
+
+function publicFetchWithLoader(url, options = {}, loaderOptions = {}) {
+  const run = () => fetch(url, options);
+  if (window.GBSLoader && typeof window.GBSLoader.track === 'function') {
+    return window.GBSLoader.track(run, loaderOptions);
+  }
+  return run();
+}
 const STUDIO_CATALOG = window.STUDIO_CATALOG || [];
 const SERVICE_MAP = window.SERVICE_MAP || new Map();
 
@@ -366,8 +374,10 @@ async function refreshAvailableSlots(dateStr) {
   const buttons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
 
   try {
-    const res = await fetch(
-      `${API_BASE}/public/slots?date=${encodeURIComponent(dateStr)}&duration=${totalMin}&operator_id=${operatorId}`
+    const res = await publicFetchWithLoader(
+      `${API_BASE}/public/slots?date=${encodeURIComponent(dateStr)}&duration=${totalMin}&operator_id=${operatorId}`,
+      {},
+      { label: 'Verifica orari disponibili…', blocking: false, delayMs: 70 }
     );
     if (!res.ok) throw new Error('API offline');
     const data = await res.json();
@@ -418,7 +428,11 @@ async function loadPublicOperators() {
   const selEl = document.getElementById('bookingOperatorSelect');
   if (!groupEl || !selEl) return;
   try {
-    const res = await fetch(`${API_BASE}/public/operators`);
+    const res = await publicFetchWithLoader(`${API_BASE}/public/operators`, {}, {
+      label: 'Caricamento operatori…',
+      blocking: false,
+      delayMs: 140,
+    });
     if (!res.ok) return;
     const data = await res.json();
     const ops = data.operators || [];
@@ -763,7 +777,7 @@ function initApp() {
     confirmBtn.textContent = 'Salvataggio in corso...';
 
     try {
-      const res = await fetch(`${API_BASE}/public/book`, {
+      const res = await publicFetchWithLoader(`${API_BASE}/public/book`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -781,7 +795,7 @@ function initApp() {
           payment_method: selectedPaymentMethod,
           privacy_accepted: Boolean(privacyCheckbox?.checked),
         }),
-      });
+      }, { label: 'Conferma prenotazione in corso…', blocking: true, delayMs: 0 });
 
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {

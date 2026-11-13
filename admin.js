@@ -258,24 +258,89 @@ function syncCalModePills() {
   });
 }
 
-async function apiFetch(endpoint, options = {}) {
-  const res = await fetch(`${API_BASE}/${endpoint}`, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+function inferApiLoaderMeta(endpoint, method = 'GET') {
+  const path = String(endpoint || '').split('?')[0];
+  const upperMethod = String(method || 'GET').toUpperCase();
+  const isMutation = upperMethod !== 'GET' && upperMethod !== 'HEAD';
 
-  const data = await res.json().catch(() => ({ ok: false, error: 'Risposta non valida dal server.' }));
-  if (!res.ok || data.ok === false) {
-    const err = new Error(data.error || `Errore HTTP ${res.status}`);
-    err.code = data.code;
-    err.status = res.status;
-    throw err;
+  if (path === 'auth/me') return { label: 'Verifica sessione…', blocking: false, delayMs: 120 };
+  if (path === 'auth/login') return { label: 'Accesso area studio…', blocking: true, delayMs: 0 };
+  if (path === 'auth/logout') return { label: 'Disconnessione…', blocking: true, delayMs: 0 };
+  if (path === 'admin/ai-chat') return { label: 'Analisi AI Studio in corso…', blocking: true, delayMs: 0 };
+  if (path.startsWith('admin/whatsapp/') || path === 'admin/automation/test-whatsapp') {
+    return { label: 'Invio tramite WhatsApp Business…', blocking: true, delayMs: 0 };
   }
-  return data;
+  if (path === 'admin/automation/run') return { label: 'Esecuzione invii automatici…', blocking: true, delayMs: 0 };
+  if (path.includes('/privacy-request')) return { label: 'Generazione link Firma OTP…', blocking: true, delayMs: 0 };
+  if (path.startsWith('admin/morpho') || path.includes('/morpho')) {
+    return {
+      label: isMutation ? 'Aggiornamento scheda morfologica…' : 'Caricamento schede morfologiche…',
+      blocking: isMutation,
+      delayMs: isMutation ? 0 : 60,
+    };
+  }
+  if (path === 'admin/gift-cards') {
+    return {
+      label: isMutation ? 'Salvataggio Gift Card…' : 'Caricamento Gift Card…',
+      blocking: isMutation,
+      delayMs: isMutation ? 0 : 80,
+    };
+  }
+  if (path === 'admin/appointments') {
+    return {
+      label: isMutation ? 'Aggiornamento agenda…' : 'Caricamento appuntamenti…',
+      blocking: isMutation,
+      delayMs: isMutation ? 0 : 60,
+    };
+  }
+  if (path === 'admin/clients') {
+    const hasId = String(endpoint || '').includes('id=');
+    return {
+      label: isMutation ? 'Salvataggio scheda cliente…' : hasId ? 'Apertura dossier cliente…' : 'Caricamento clienti…',
+      blocking: isMutation || hasId,
+      delayMs: isMutation ? 0 : hasId ? 0 : 70,
+    };
+  }
+  if (isMutation) {
+    return { label: 'Salvataggio in corso…', blocking: true, delayMs: 0 };
+  }
+  return { label: 'Sincronizzazione dati studio…', blocking: false, delayMs: 80 };
+}
+
+async function apiFetch(endpoint, options = {}) {
+  const { loaderLabel, loaderBlocking, loaderDelayMs, silentLoader, ...fetchOptions } = options || {};
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const inferred = inferApiLoaderMeta(endpoint, method);
+
+  const runRequest = async () => {
+    const res = await fetch(`${API_BASE}/${endpoint}`, {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(fetchOptions.headers || {}),
+      },
+      ...fetchOptions,
+    });
+
+    const data = await res.json().catch(() => ({ ok: false, error: 'Risposta non valida dal server.' }));
+    if (!res.ok || data.ok === false) {
+      const err = new Error(data.error || `Errore HTTP ${res.status}`);
+      err.code = data.code;
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  };
+
+  if (silentLoader || !window.GBSLoader) {
+    return runRequest();
+  }
+
+  return window.GBSLoader.track(runRequest, {
+    label: loaderLabel ?? inferred.label,
+    blocking: loaderBlocking !== undefined ? loaderBlocking : inferred.blocking,
+    delayMs: loaderDelayMs !== undefined ? loaderDelayMs : inferred.delayMs,
+  });
 }
 
 /* ==========================================================================

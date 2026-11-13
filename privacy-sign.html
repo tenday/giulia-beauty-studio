@@ -212,6 +212,7 @@
     <div id="signedDoneBox" class="alert alert-ok" hidden></div>
   </div>
 
+  <script src="gbs-loader.js?v=1"></script>
   <script>
     (function () {
       const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000/api' : `${window.location.origin}/api`;
@@ -281,7 +282,13 @@
           return;
         }
         try {
-          const res = await fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`);
+          const res = await (window.GBSLoader
+            ? window.GBSLoader.track(() => fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`), {
+                label: 'Caricamento modulo Privacy…',
+                blocking: true,
+                delayMs: 0,
+              })
+            : fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`));
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || 'Richiesta non trovata.');
           const r = data.request;
@@ -311,17 +318,21 @@
         btn.disabled = true;
         btn.textContent = 'Verifica OTP & Salvataggio...';
         try {
-          const res = await fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              otp_code: document.getElementById('otpInput').value.trim(),
-              signature_name: document.getElementById('signatureNameInput').value.trim(),
-              signature_data: canvas.toDataURL('image/png'),
-              privacy_accepted: document.getElementById('acceptPrivacyCheck').checked,
-              marketing_consent: document.getElementById('acceptMarketingCheck').checked,
-            }),
-          });
+          const doSign = () =>
+            fetch(`${API_BASE}/public/privacy-sign/${encodeURIComponent(token)}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                otp_code: document.getElementById('otpInput').value.trim(),
+                signature_name: document.getElementById('signatureNameInput').value.trim(),
+                signature_data: canvas.toDataURL('image/png'),
+                privacy_accepted: document.getElementById('acceptPrivacyCheck').checked,
+                marketing_consent: document.getElementById('acceptMarketingCheck').checked,
+              }),
+            });
+          const res = await (window.GBSLoader
+            ? window.GBSLoader.track(doSign, { label: 'Verifica OTP e firma digitale…', blocking: true, delayMs: 0 })
+            : doSign());
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || 'Errore durante la firma.');
           formContainerEl.hidden = true;

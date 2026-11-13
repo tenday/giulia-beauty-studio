@@ -537,6 +537,7 @@ function checkGdprDefaults() {
 (async () => {
   const jsFiles = [
     'server.js',
+    'gbs-loader.js',
     'app.js',
     'admin.js',
     'morpho.js',
