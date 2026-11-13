@@ -174,6 +174,42 @@ async function runApiSuite() {
     assert.strictEqual(movedAppt.services_summary, targetAppt.services_summary);
     assert.strictEqual(Number(movedAppt.total_price), Number(targetAppt.total_price));
 
+    // Direct in-agenda appointment duplication (clone to another day/slot via create action)
+    const dupDate = '2026-12-04';
+    const dupRes = await req('POST', '/api/admin/appointments', {
+      action: 'create',
+      client_id: movedAppt.client_id,
+      client_name: movedAppt.client_name,
+      client_phone: movedAppt.client_phone,
+      operator_id: movedAppt.operator_id,
+      appointment_date: dupDate,
+      start_time: '11:15',
+      duration_minutes: movedAppt.duration_minutes,
+      services_summary: movedAppt.services_summary,
+      total_price: Number(movedAppt.total_price),
+      status: 'confirmed',
+      notes: 'Duplicato in agenda',
+      send_whatsapp: false,
+    });
+    assert.strictEqual(dupRes.status, 201);
+    assert.strictEqual(dupRes.json.ok, true);
+    assert(dupRes.json.id && Number(dupRes.json.id) !== Number(movedAppt.id), 'Duplicate deve creare un nuovo ID');
+
+    const apptsDup = await req('GET', `/api/admin/appointments?start_date=${dupDate}&end_date=${dupDate}`);
+    const clonedAppt = apptsDup.json.appointments.find((a) => Number(a.id) === Number(dupRes.json.id));
+    assert(clonedAppt);
+    assert.strictEqual(clonedAppt.start_time, '11:15');
+    assert.strictEqual(clonedAppt.duration_minutes, movedAppt.duration_minutes);
+    assert.strictEqual(clonedAppt.services_summary, movedAppt.services_summary);
+    assert.strictEqual(Number(clonedAppt.total_price), Number(movedAppt.total_price));
+    assert.strictEqual(clonedAppt.notes, 'Duplicato in agenda');
+
+    const delDupRes = await req('POST', '/api/admin/appointments', {
+      action: 'delete',
+      id: clonedAppt.id,
+    });
+    assert.strictEqual(delDupRes.status, 200);
+
     const badTime = await req('POST', '/api/admin/appointments', {
       action: 'reschedule',
       id: targetAppt.id,

@@ -675,6 +675,12 @@ const CAL_UI = {
   notePinnedId: 0,
   noteDismissHandler: null,
   noteKeyHandler: null,
+  duplicatingAppt: null,
+  duplicateStartedAt: 0,
+  duplicateSaving: false,
+  duplicateKeyHandler: null,
+  lastDuplicatedId: 0,
+  cleanupDupHover: null,
 };
 
 function getAppointmentNoteInfo(appt) {
@@ -1013,10 +1019,201 @@ async function persistAppointmentQuickChange(appt, patch, successMsg) {
   }
 }
 
+function parseAppointmentServices(appt) {
+  if (!appt) return [];
+  if (Array.isArray(appt.services)) return appt.services;
+  if (typeof appt.services_json === 'string' && appt.services_json.trim()) {
+    try {
+      const parsed = JSON.parse(appt.services_json);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function computeSlotTimeFromDayColY(colEl, clientY, stepMin = CAL_SNAP_MIN) {
+  if (!colEl) return null;
+  const hourPx = getCalHourPx() || 88;
+  const rect = colEl.getBoundingClientRect();
+  const relY = Math.max(0, clientY - rect.top);
+  const rawMins = CAL_START_HOUR * 60 + (relY / hourPx) * 60;
+  const step = Math.max(5, Number(stepMin) || CAL_SNAP_MIN);
+  const maxStartMin = CAL_END_HOUR * 60 - CAL_SNAP_MIN;
+  const snapped = Math.floor(rawMins / step) * step;
+  const totalMins = Math.max(CAL_START_HOUR * 60, Math.min(maxStartMin, snapped));
+  return { totalMins, timeStr: minutesToTimeStr(totalMins) };
+}
+
+function syncDuplicateBanner() {
+  const banner = document.getElementById('calDuplicateBanner');
+  if (!banner) return;
+  const appt = CAL_UI.duplicatingAppt;
+  if (!appt) {
+    banner.hidden = true;
+    CAL_UI.cleanupDupHover?.();
+    return;
+  }
+
+  const textEl = document.getElementById('calDupBannerText');
+  const waWrap = document.getElementById('calDupSendWaWrap');
+  const duration = Math.max(10, Number(appt.duration_minutes) || 60);
+  const summary = appt.services_summary || 'Appuntamento';
+  if (textEl) {
+    textEl.innerHTML = `Duplicando <strong>${escapeHtml(appt.client_name || 'Cliente')}</strong> — ${escapeHtml(summary)} (${duration} min). Tocca uno slot in agenda (Esc per annullare).`;
+  }
+  if (waWrap) {
+    waWrap.hidden = !isWhatsAppApiActive();
+  }
+  banner.hidden = false;
+}
+
+function cancelAppointmentDuplicateMode({ silent = false, rerender = true } = {}) {
+  const wasActive = Boolean(CAL_UI.duplicatingAppt);
+  CAL_UI.duplicatingAppt = null;
+  CAL_UI.duplicateStartedAt = 0;
+  CAL_UI.duplicateSaving = false;
+  if (CAL_UI.duplicateKeyHandler) {
+    document.removeEventListener('keydown', CAL_UI.duplicateKeyHandler, true);
+    CAL_UI.duplicateKeyHandler = null;
+  }
+  CAL_UI.cleanupDupHover?.();
+  syncDuplicateBanner();
+  if (rerender && STATE.activeView === 'agenda') {
+    renderCalendar();
+  }
+  if (!silent && wasActive) {
+    showAgendaToast('Duplicazione annullata');
+  }
+}
+
+async function startAppointmentDuplicateMode(appt) {
+  if (!appt) return;
+  closeCalendarNotePopover(true);
+  closeCalendarContextMenu();
+  CAL_UI.cleanupGesture?.();
+  document.getElementById('apptModal')?.classList.remove('open');
+
+  CAL_UI.duplicatingAppt = appt;
+  CAL_UI.duplicateStartedAt = Date.now();
+  CAL_UI.duplicateSaving = false;
+
+  const waCheck = document.getElementById('calDupSendWaCheck');
+  if (waCheck) {
+    waCheck.checked = isWhatsAppApiActive();
+  }
+
+  if (CAL_UI.duplicateKeyHandler) {
+    document.removeEventListener('keydown', CAL_UI.duplicateKeyHandler, true);
+  }
+  CAL_UI.duplicateKeyHandler = (ev) => {
+    if (ev.key === 'Escape' && CAL_UI.duplicatingAppt) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancelAppointmentDuplicateMode();
+    }
+  };
+  document.addEventListener('keydown', CAL_UI.duplicateKeyHandler, true);
+
+  if (STATE.calMode === 'list') {
+    STATE.calMode = 'week';
+    document.querySelectorAll('.mode-pill').forEach((p) => {
+      p.classList.toggle('active', p.dataset.calmode === 'week');
+    });
+    syncDuplicateBanner();
+    try {
+      await loadAppointments();
+    } catch {}
+    CAL_UI.duplicateStartedAt = Date.now();
+    renderCalendar();
+  } else {
+    syncDuplicateBanner();
+    renderCalendar();
+  }
+
+  document.getElementById('calDuplicateBanner')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function executeDuplicateAppointmentAtSlot(targetDate, targetTime) {
+  const src = CAL_UI.duplicatingAppt;
+  if (!src || CAL_UI.duplicateSaving || !targetDate || !targetTime) return;
+
+  CAL_UI.duplicateSaving = true;
+  const clientId = resolveAppointmentClientId(src);
+  const opId = STATE.operatorFilter > 0 ? STATE.operatorFilter : Number(src.operator_id) || undefined;
+  const sendWa = isWhatsAppApiActive() && Boolean(document.getElementById('calDupSendWaCheck')?.checked);
+
+  const payload = {
+    action: 'create',
+    client_id: clientId > 0 ? clientId : undefined,
+    client_name: src.client_name || '',
+    client_phone: src.client_phone || '',
+    operator_id: opId,
+    appointment_date: targetDate,
+    start_time: targetTime,
+    duration_minutes: Math.max(10, Number(src.duration_minutes) || 60),
+    services: parseAppointmentServices(src),
+    services_summary: String(src.services_summary || '').trim(),
+    total_price: Number(src.total_price) || 0,
+    mode: src.mode === 'voucher' ? 'voucher' : 'booking',
+    payment_method: src.payment_method || 'studio',
+    status: 'confirmed',
+    notes: String(src.notes || '').trim(),
+    send_whatsapp: sendWa,
+  };
+
+  try {
+    const res = await apiFetch('admin/appointments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const newId = Number(res?.id || 0);
+    cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+    CAL_UI.lastDuplicatedId = newId;
+    await Promise.all([
+      loadAppointments(),
+      loadTomorrowReminders(),
+      ...(res?.whatsapp_sent ? [loadMessagesData()] : []),
+    ]);
+    updateKpis();
+    renderSmartAssistBar();
+    renderCalendar();
+    setTimeout(() => {
+      if (CAL_UI.lastDuplicatedId === newId) CAL_UI.lastDuplicatedId = 0;
+    }, 1800);
+
+    const dateLabel = formatShortItDate(targetDate);
+    if (res?.whatsapp_sent) {
+      showAgendaToast(`Appuntamento duplicato su ${dateLabel} ${targetTime} e conferma WhatsApp inviata ✓`);
+    } else if (res?.whatsapp_dispatch?.error) {
+      showAgendaToast(`Duplicato su ${dateLabel} ${targetTime} (WhatsApp non inviato: ${res.whatsapp_dispatch.error})`, 'error');
+    } else {
+      showAgendaToast(`Appuntamento duplicato su ${dateLabel} alle ${targetTime} ✓`);
+    }
+  } catch (err) {
+    CAL_UI.duplicateSaving = false;
+    showAgendaToast(err.message || 'Errore durante la duplicazione', 'error');
+  }
+}
+
+function handleDuplicateGridTap(colEl, clientY) {
+  if (!CAL_UI.duplicatingAppt || CAL_UI.duplicateSaving) return false;
+  if (Date.now() - CAL_UI.duplicateStartedAt < 350) return true;
+  const targetDate = colEl?.dataset?.date;
+  const slotInfo = computeSlotTimeFromDayColY(colEl, clientY, CAL_SNAP_MIN);
+  if (!targetDate || !slotInfo) return true;
+  executeDuplicateAppointmentAtSlot(targetDate, slotInfo.timeStr);
+  return true;
+}
+
 const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
+  if (viewName !== 'agenda' && CAL_UI.duplicatingAppt) {
+    cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+  }
   STATE.activeView = viewName;
   document.querySelectorAll('.admin-tab-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.view === viewName);
@@ -1094,6 +1291,7 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       ${ctxNotesHtml}
     </div>
     <button type="button" class="cal-ctx-btn" data-ctx-action="edit">✏️ Apri / Modifica dettaglio</button>
+    <button type="button" class="cal-ctx-btn" data-ctx-action="duplicate">📋 Duplica su altro orario…</button>
     <button type="button" class="cal-ctx-btn" data-ctx-action="open-client">👩 Vai alla Scheda Cliente</button>
     ${appt.status !== 'confirmed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-confirmed">✓ Segna Confermato</button>' : ''}
     ${appt.status !== 'completed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-completed">★ Segna Completato</button>' : ''}
@@ -1129,6 +1327,8 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       if (action === 'edit') {
         closeCalendarContextMenu();
         openAppointmentModal(appt);
+      } else if (action === 'duplicate') {
+        await startAppointmentDuplicateMode(appt);
       } else if (action === 'open-client') {
         await redirectToClientProfile(appt);
       } else if (action === 'status-confirmed' || action === 'status-completed') {
@@ -1196,7 +1396,7 @@ function attachLongPressAndContextMenu(el, getAppt) {
   };
 
   el.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') return;
+    if (e.pointerType === 'mouse' || CAL_UI.duplicatingAppt) return;
     startX = e.clientX;
     startY = e.clientY;
     cancelLp();
@@ -1485,6 +1685,7 @@ function bindInteractiveCalendarGrid(container) {
     });
 
     cardEl.addEventListener('pointerdown', (e) => {
+      if (CAL_UI.duplicatingAppt) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const appt = getAppt();
       if (!appt) return;
@@ -1567,6 +1768,10 @@ function bindInteractiveCalendarGrid(container) {
     cardEl.addEventListener('click', (e) => {
       e.stopPropagation();
       if (Date.now() < CAL_UI.suppressClickUntil) return;
+      if (CAL_UI.duplicatingAppt) {
+        handleDuplicateGridTap(cardEl.closest('.cal-day-col'), e.clientY);
+        return;
+      }
       if (e.target.closest('.cal-resize-handle')) return;
       const noteTrigger = e.target.closest('.cal-event-note-flag');
       if (noteTrigger) {
@@ -1578,6 +1783,72 @@ function bindInteractiveCalendarGrid(container) {
       if (appt) openAppointmentModal(appt);
     });
   });
+}
+
+function bindDuplicateHoverPreview(container) {
+  CAL_UI.cleanupDupHover?.();
+  const src = CAL_UI.duplicatingAppt;
+  if (!src || !container) return;
+
+  let ghostEl = null;
+  let lastKey = '';
+  const duration = Math.max(10, Number(src.duration_minutes) || 60);
+
+  const removeGhost = () => {
+    if (ghostEl) {
+      ghostEl.remove();
+      ghostEl = null;
+    }
+    lastKey = '';
+  };
+
+  const onPointerMove = (e) => {
+    if (e.pointerType !== 'mouse' || !CAL_UI.duplicatingAppt || CAL_UI.duplicateSaving) {
+      removeGhost();
+      return;
+    }
+    const colEl = e.target.closest?.('.cal-day-col');
+    if (!colEl) {
+      removeGhost();
+      return;
+    }
+    const slotInfo = computeSlotTimeFromDayColY(colEl, e.clientY, CAL_SNAP_MIN);
+    if (!slotInfo) {
+      removeGhost();
+      return;
+    }
+    if (!ghostEl) {
+      ghostEl = document.createElement('div');
+      ghostEl.className = 'cal-dup-slot-ghost';
+    }
+    if (ghostEl.parentElement !== colEl) {
+      colEl.appendChild(ghostEl);
+    }
+    const topPx = computeEventTopPx(slotInfo.timeStr);
+    const heightPx = computeEventHeightPx(duration);
+    ghostEl.style.top = `${topPx}px`;
+    ghostEl.style.height = `${heightPx}px`;
+    const key = `${colEl.dataset.date || ''}_${slotInfo.timeStr}`;
+    if (key !== lastKey) {
+      lastKey = key;
+      ghostEl.innerHTML = `
+        <div class="cal-live-pill">${escapeHtml(formatTimeRangeLabel(slotInfo.timeStr, duration))}</div>
+        <div class="cal-event-client">${escapeHtml(src.client_name || 'Cliente')}</div>
+        <div class="cal-event-service">${escapeHtml(src.services_summary || 'Appuntamento')}</div>
+      `;
+    }
+  };
+
+  const onPointerLeave = () => removeGhost();
+
+  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('pointerleave', onPointerLeave);
+  CAL_UI.cleanupDupHover = () => {
+    container.removeEventListener('pointermove', onPointerMove);
+    container.removeEventListener('pointerleave', onPointerLeave);
+    removeGhost();
+    CAL_UI.cleanupDupHover = null;
+  };
 }
 
 function renderCalendar() {
@@ -1716,6 +1987,7 @@ function renderCalendar() {
       if (noteInfo.allergyNote) tooltipParts.push(`Allergie: ${noteInfo.allergyNote}`);
       if (noteInfo.clientNote) tooltipParts.push(`Scheda cliente: ${noteInfo.clientNote}`);
       const rangeTooltip = tooltipParts.join(' • ');
+      const dupSourceId = Number(CAL_UI.duplicatingAppt?.id || 0);
       const clsList = [
         'cal-event-card',
         `status-${escapeHtml(appt.status)}`,
@@ -1725,6 +1997,8 @@ function renderCalendar() {
         heightFlags.isNoteSingleLine ? 'is-note-single-line' : '',
         heightFlags.isNoteTall ? 'is-note-tall' : '',
         isNarrow ? 'is-narrow' : '',
+        dupSourceId && Number(appt.id) === dupSourceId ? 'is-duplicate-source' : '',
+        CAL_UI.lastDuplicatedId && Number(appt.id) === CAL_UI.lastDuplicatedId ? 'is-just-duplicated' : '',
       ]
         .filter(Boolean)
         .join(' ');
@@ -1752,22 +2026,24 @@ function renderCalendar() {
   container.innerHTML = html;
   container.scrollTop = prevScrollTop;
   container.scrollLeft = prevScrollLeft;
+  container.classList.toggle('is-duplicating', Boolean(CAL_UI.duplicatingAppt));
+  syncDuplicateBanner();
 
   container.querySelectorAll('.cal-hour-slot').forEach((slotEl) => {
     slotEl.addEventListener('click', (e) => {
       if (Date.now() < CAL_UI.suppressClickUntil) return;
-      const rect = slotEl.getBoundingClientRect();
-      const relY = Math.max(0, e.clientY - rect.top);
-      const quarterStep = hourPx >= 80 ? 15 : 30;
-      const fraction = Math.min(0.99, relY / (rect.height || hourPx));
-      const minsVal = Math.floor((fraction * 60) / quarterStep) * quarterStep;
-      const mins = String(Math.max(0, Math.min(45, minsVal))).padStart(2, '0');
-      const clickedTime = `${String(Number(slotEl.dataset.hour)).padStart(2, '0')}:${mins}`;
-      openAppointmentModal(null, slotEl.dataset.date, clickedTime);
+      const colEl = slotEl.closest('.cal-day-col');
+      if (handleDuplicateGridTap(colEl, e.clientY)) return;
+      const stepMin = hourPx >= 80 ? CAL_SNAP_MIN : 30;
+      const slotInfo = computeSlotTimeFromDayColY(colEl, e.clientY, stepMin);
+      if (slotInfo) {
+        openAppointmentModal(null, slotEl.dataset.date, slotInfo.timeStr);
+      }
     });
   });
 
   bindInteractiveCalendarGrid(container);
+  bindDuplicateHoverPreview(container);
 }
 
 function renderListCalendar(container) {
@@ -1797,6 +2073,7 @@ function renderListCalendar(container) {
         <td>
           <div class="list-actions-cell">
             <button type="button" class="btn-outline-sm">Apri</button>
+            <button type="button" class="btn-outline-sm list-duplicate-btn" title="Duplica appuntamento in agenda">📋 Duplica</button>
             <button type="button" class="btn-outline-sm list-open-client-btn" title="Vai alla scheda cliente">👩 Scheda</button>
           </div>
         </td>
@@ -1822,9 +2099,16 @@ function renderListCalendar(container) {
     </div>
   `;
 
+  container.classList.remove('is-duplicating');
+  CAL_UI.cleanupDupHover?.();
   container.querySelectorAll('tr[data-appt-id]').forEach((tr) => {
     const getAppt = () => STATE.appointments.find((a) => Number(a.id) === Number(tr.dataset.apptId));
     attachLongPressAndContextMenu(tr, getAppt);
+    tr.querySelector('.list-duplicate-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const appt = getAppt();
+      if (appt) startAppointmentDuplicateMode(appt);
+    });
     tr.querySelector('.list-open-client-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       const appt = getAppt();
@@ -1942,6 +2226,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   });
 
   const deleteBtn = document.getElementById('deleteApptBtn');
+  const duplicateBtn = document.getElementById('duplicateApptBtn');
   const waBtn = document.getElementById('apptWhatsappReminderBtn');
   const sendWaWrap = document.getElementById('apptSendWaConfirmWrap');
   const sendWaCheck = document.getElementById('apptSendWaConfirmCheck');
@@ -1981,6 +2266,10 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptNotesInput').value = appt.notes || '';
 
     deleteBtn.hidden = false;
+    if (duplicateBtn) {
+      duplicateBtn.hidden = false;
+      duplicateBtn.onclick = () => startAppointmentDuplicateMode(appt);
+    }
     waBtn.hidden = false;
     const { vars, messageText } = getTomorrowReminderTemplatePayload(appt);
     waBtn.href = `https://wa.me/${formatWaNumber(appt.client_phone)}?text=${encodeURIComponent(messageText)}`;
@@ -2028,6 +2317,10 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptStatusSelect').value = 'confirmed';
     document.getElementById('apptNotesInput').value = '';
     deleteBtn.hidden = true;
+    if (duplicateBtn) {
+      duplicateBtn.hidden = true;
+      duplicateBtn.onclick = null;
+    }
     waBtn.hidden = true;
     waBtn.onclick = null;
   }
@@ -2471,9 +2764,16 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.mode-pill').forEach((p) => p.classList.remove('active'));
       pill.classList.add('active');
       STATE.calMode = pill.dataset.calmode;
+      if (STATE.calMode === 'list' && CAL_UI.duplicatingAppt) {
+        cancelAppointmentDuplicateMode({ silent: true, rerender: false });
+      }
       await loadAppointments();
       renderCalendar();
     });
+  });
+
+  document.getElementById('calDupCancelBtn')?.addEventListener('click', () => {
+    cancelAppointmentDuplicateMode();
   });
 
   // New Appointment Quick Button, Reminders Modal & Tabs

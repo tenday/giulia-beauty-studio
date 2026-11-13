@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=8" />
+  <link rel="stylesheet" href="admin.css?v=9" />
 </head>
 <body>
 
@@ -135,8 +135,22 @@
 
         <div id="smartAssistBar" class="smart-assist-bar" hidden></div>
 
+        <div id="calDuplicateBanner" class="cal-duplicate-banner" role="status" aria-live="polite" hidden>
+          <div class="cal-duplicate-banner-info">
+            <span class="cal-duplicate-pill">📋 DUPLICA</span>
+            <span id="calDupBannerText">Seleziona lo slot orario su cui vuoi duplicare l'appuntamento.</span>
+          </div>
+          <div class="cal-duplicate-banner-actions">
+            <label class="cal-dup-wa-opt" id="calDupSendWaWrap">
+              <input type="checkbox" id="calDupSendWaCheck" />
+              <span>Invia conferma WhatsApp</span>
+            </label>
+            <button type="button" class="btn-outline-sm" id="calDupCancelBtn">✕ Annulla</button>
+          </div>
+        </div>
+
         <div class="calendar-scroll-hint">
-          <span>Trascina gli appuntamenti per spostarli • Tira il bordo inferiore per estendere la durata • Tasto destro (o tieni premuto su tablet) per eliminare • Clicca uno spazio vuoto per aggiungere</span>
+          <span>Trascina gli appuntamenti per spostarli • Tira il bordo inferiore per estendere la durata • Tasto destro (o tieni premuto su tablet) per modificare, duplicare o eliminare • Clicca uno spazio vuoto per aggiungere</span>
         </div>
 
         <div id="calendarContainer" class="calendar-surface" tabindex="0" aria-label="Calendario appuntamenti scorrevole"></div>
@@ -942,6 +956,7 @@
         <div class="admin-modal-footer">
           <div class="modal-footer-left">
             <button type="button" class="btn-danger-outline" id="deleteApptBtn" hidden>Elimina</button>
+            <button type="button" class="btn-outline-sm" id="duplicateApptBtn" hidden>📋 Duplica</button>
             <a href="#" target="_blank" rel="noopener" class="btn-outline-sm" id="apptWhatsappReminderBtn" hidden>💬 Invia WhatsApp Cliente</a>
           </div>
           <button type="submit" class="btn-primary-admin" id="saveApptBtn">Salva Appuntamento</button>
@@ -1417,6 +1432,6 @@
 
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=8"></script>
+  <script src="admin.js?v=9"></script>
 </body>
 </html>
