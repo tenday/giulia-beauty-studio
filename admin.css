@@ -450,6 +450,111 @@ body {
   color: #ffffff;
 }
 
+/* Auto-refresh Live Pill */
+.cal-autorefresh-group {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.cal-autorefresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 0.69rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cal-autorefresh-pill:hover {
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+
+.cal-autorefresh-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2f9e66;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 0 rgba(47, 158, 102, 0.45);
+  animation: calLivePulse 2.4s ease-out infinite;
+}
+
+.cal-autorefresh-pill.is-paused .cal-autorefresh-dot {
+  background: #b58d94;
+  animation: none;
+  box-shadow: none;
+}
+
+.cal-autorefresh-pill.is-error .cal-autorefresh-dot {
+  background: #c7513c;
+  animation: none;
+}
+
+.cal-autorefresh-pill.is-paused {
+  color: var(--ink-muted);
+}
+
+.cal-refresh-now-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cal-refresh-now-btn:hover {
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+
+.cal-refresh-now-btn.is-syncing {
+  animation: calSyncSpin 0.8s linear infinite;
+  color: var(--rose);
+}
+
+@keyframes calLivePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(47, 158, 102, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(47, 158, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 158, 102, 0);
+  }
+}
+
+@keyframes calSyncSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Calendar Grid (Google Calendar Style — Dual Axis Scrollable + Sticky Headers) */
 .calendar-surface {
   --cal-hour-px: 96px;

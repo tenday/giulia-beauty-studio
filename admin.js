@@ -389,6 +389,7 @@ async function checkAuth() {
 
   try {
     await refreshAllData();
+    startAgendaAutoRefresh();
   } catch (err) {
     console.error('[Giulia Beauty Studio] Errore caricamento dati gestionale:', err);
     if (err.status === 401 && workspace) {
@@ -419,10 +420,13 @@ async function refreshAllData() {
   renderGiftCardsView();
   renderInsightsView();
   renderSettingsView();
+  CAL_UI.lastCalendarSyncAt = Date.now();
+  CAL_UI.lastCalendarSyncLabel = formatSyncClockLabel(new Date());
+  updateAutoRefreshBadgeUi('idle');
 }
 
-async function loadOperators() {
-  const data = await apiFetch('admin/operators', { method: 'GET' });
+async function loadOperators({ silentLoader = false } = {}) {
+  const data = await apiFetch('admin/operators', { method: 'GET', silentLoader });
   STATE.operators = data.operators || [];
   STATE.absences = data.absences || [];
   populateOperatorDropdowns();
@@ -491,20 +495,30 @@ async function loadInsights() {
   if (data.privacy_version) STATE.privacyVersion = data.privacy_version;
 }
 
-async function loadTomorrowReminders() {
+async function loadTomorrowReminders({ silentLoader = false } = {}) {
   const tomorrow = getTomorrowIso();
-  const data = await apiFetch(`admin/appointments?start_date=${tomorrow}&end_date=${tomorrow}`, { method: 'GET' });
+  const data = await apiFetch(`admin/appointments?start_date=${tomorrow}&end_date=${tomorrow}`, { method: 'GET', silentLoader });
   STATE.tomorrowAppointments = (data.appointments || []).filter((a) => a.status !== 'cancelled');
 }
 
-async function loadClients(query = '') {
+async function loadClients(query = '', { silentLoader = false } = {}) {
   const qParam = query ? `?q=${encodeURIComponent(query)}` : '';
-  const data = await apiFetch(`admin/clients${qParam}`, { method: 'GET' });
+  const data = await apiFetch(`admin/clients${qParam}`, { method: 'GET', silentLoader });
   STATE.clients = data.clients || [];
   populateClientSelect();
 }
 
-async function loadAppointments() {
+function getCalendarScopeKey() {
+  return [
+    STATE.calMode,
+    toIsoDate(STATE.anchorDate),
+    STATE.statusFilter || '',
+    Number(STATE.operatorFilter || 0),
+  ].join('|');
+}
+
+async function loadAppointments({ silentLoader = false } = {}) {
+  const requestScope = getCalendarScopeKey();
   const params = new URLSearchParams();
   if (STATE.calMode === 'week') {
     const mon = getMondayOfWeek(STATE.anchorDate);
@@ -528,8 +542,10 @@ async function loadAppointments() {
     params.set('operator_id', String(STATE.operatorFilter));
   }
 
-  const data = await apiFetch(`admin/appointments?${params.toString()}`, { method: 'GET' });
-  STATE.appointments = data.appointments || [];
+  const data = await apiFetch(`admin/appointments?${params.toString()}`, { method: 'GET', silentLoader });
+  if (getCalendarScopeKey() === requestScope) {
+    STATE.appointments = data.appointments || [];
+  }
 }
 
 function updateKpis() {
@@ -759,6 +775,16 @@ const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
 const CAL_MAX_DURATION = 480;
 const CAL_LONG_PRESS_MS = 480;
+const CAL_AUTO_REFRESH_MS = 20000;
+const CAL_AUTO_REFRESH_STORAGE_KEY = 'gb_cal_autorefresh';
+
+function getInitialCalAutoRefresh() {
+  try {
+    return localStorage.getItem(CAL_AUTO_REFRESH_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
 
 function getCalHourPx() {
   const v = Number(STATE.calHourPx);
@@ -769,6 +795,7 @@ const CAL_UI = {
   suppressClickUntil: 0,
   toastTimer: null,
   cleanupGesture: null,
+  isGestureActive: false,
   ctxDismissHandler: null,
   ctxKeyHandler: null,
   ctxLastOpenedId: 0,
@@ -787,6 +814,15 @@ const CAL_UI = {
   miniPickerMonth: null,
   miniPickerDismissHandler: null,
   miniPickerKeyHandler: null,
+  autoRefreshEnabled: getInitialCalAutoRefresh(),
+  autoRefreshTimer: null,
+  autoRefreshListenersBound: false,
+  autoRefreshInFlight: false,
+  lastCalendarSyncAt: 0,
+  lastCalendarSyncLabel: '',
+  lastApptsSnapshotSig: '',
+  lastScheduleSnapshotSig: '',
+  lastMetaSnapshotSig: '',
 };
 
 function getAppointmentNoteInfo(appt) {
@@ -1488,6 +1524,246 @@ function toggleMiniCalendarPicker() {
   document.addEventListener('keydown', CAL_UI.miniPickerKeyHandler, true);
 }
 
+function formatSyncClockLabel(dt = new Date()) {
+  const d = dt instanceof Date ? dt : new Date(dt);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function computeCalendarSnapshots() {
+  const scopeKey = getCalendarScopeKey();
+
+  const sortedAppts = [...(STATE.appointments || [])].sort((a, b) => Number(a.id) - Number(b.id));
+  const apptsSig = `${scopeKey}::${sortedAppts
+    .map((a) =>
+      [
+        Number(a.id),
+        String(a.appointment_date || '').slice(0, 10),
+        String(a.start_time || '').slice(0, 5),
+        Number(a.duration_minutes || 0),
+        String(a.status || ''),
+        String(a.client_name || ''),
+        String(a.client_phone || ''),
+        String(a.services_summary || ''),
+        Number(a.total_price || 0),
+        String(a.notes || ''),
+        String(a.allergies_notes || ''),
+        String(a.preferences_notes || ''),
+        Number(a.operator_id || 0),
+        String(a.operator_name || ''),
+        String(a.operator_color || ''),
+        String(a.reminder_sent_at || ''),
+      ].join('\u001f')
+    )
+    .join('\u001e')}`;
+
+  const opsSig = [...(STATE.operators || [])]
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .map((o) => `${o.id}|${o.name || ''}|${o.role || ''}|${o.color || ''}|${Number(o.active) !== 0 ? 1 : 0}`)
+    .join(';');
+
+  const absSig = [...(STATE.absences || [])]
+    .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
+    .map((ab) => `${ab.id || ''}|${ab.operator_id || ''}|${ab.start_date || ''}|${ab.end_date || ''}|${ab.start_time || ''}|${ab.end_time || ''}|${ab.type || ''}`)
+    .join(';');
+
+  const tomorrowSig = [...(STATE.tomorrowAppointments || [])]
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .map((a) => `${a.id}|${a.status || ''}|${a.reminder_sent_at || ''}`)
+    .join(';');
+
+  return {
+    scopeKey,
+    apptsSig,
+    scheduleSig: `${opsSig}##${absSig}`,
+    metaSig: `${tomorrowSig}##${(STATE.clients || []).length}`,
+  };
+}
+
+function markCalendarSnapshotCurrent() {
+  const snap = computeCalendarSnapshots();
+  CAL_UI.lastApptsSnapshotSig = snap.apptsSig;
+  CAL_UI.lastScheduleSnapshotSig = snap.scheduleSig;
+  CAL_UI.lastMetaSnapshotSig = snap.metaSig;
+  return snap;
+}
+
+function isAgendaInteractionBusy() {
+  if (document.hidden) return true;
+  if (STATE.activeView !== 'agenda') return true;
+  if (CAL_UI.isGestureActive) return true;
+  if (CAL_UI.duplicatingAppt || CAL_UI.duplicateSaving) return true;
+  if (CAL_UI.miniPickerOpen) return true;
+  if (CAL_UI.notePinnedId > 0) return true;
+  const notePop = document.getElementById('calNotePopover');
+  if (notePop && !notePop.hidden) return true;
+  const ctxMenu = document.getElementById('calContextMenu');
+  if (ctxMenu && !ctxMenu.hidden) return true;
+  if (document.querySelector('.admin-modal-overlay.open')) return true;
+  return false;
+}
+
+function updateAutoRefreshBadgeUi(statusState = 'idle') {
+  const toggleBtn = document.getElementById('calAutoRefreshToggleBtn');
+  const labelEl = document.getElementById('calAutoRefreshLabel');
+  const manualBtn = document.getElementById('calManualRefreshBtn');
+  if (!toggleBtn || !labelEl) return;
+
+  toggleBtn.setAttribute('aria-pressed', CAL_UI.autoRefreshEnabled ? 'true' : 'false');
+  toggleBtn.classList.toggle('is-active', CAL_UI.autoRefreshEnabled);
+  toggleBtn.classList.toggle('is-paused', !CAL_UI.autoRefreshEnabled);
+  toggleBtn.classList.toggle('is-error', statusState === 'error');
+  if (manualBtn) {
+    manualBtn.classList.toggle('is-syncing', statusState === 'syncing');
+  }
+
+  if (!CAL_UI.autoRefreshEnabled) {
+    labelEl.textContent = 'Auto off';
+    return;
+  }
+  if (statusState === 'error') {
+    labelEl.textContent = 'Offline • ritento';
+    return;
+  }
+  if (statusState === 'syncing') {
+    labelEl.textContent = CAL_UI.lastCalendarSyncLabel ? `Sync • ${CAL_UI.lastCalendarSyncLabel}` : 'Aggiorno…';
+    return;
+  }
+  labelEl.textContent = CAL_UI.lastCalendarSyncLabel ? `Auto • ${CAL_UI.lastCalendarSyncLabel}` : 'Auto';
+}
+
+function stopAgendaAutoRefresh() {
+  if (CAL_UI.autoRefreshTimer) {
+    clearInterval(CAL_UI.autoRefreshTimer);
+    CAL_UI.autoRefreshTimer = null;
+  }
+}
+
+async function syncAgendaAutomatically({ force = false, reason = 'interval' } = {}) {
+  if (!STATE.admin || !document.getElementById('adminWorkspace')) return false;
+  if (!force && !CAL_UI.autoRefreshEnabled) return false;
+  if (!force && isAgendaInteractionBusy()) return false;
+  if (CAL_UI.autoRefreshInFlight) return false;
+
+  const startScopeKey = getCalendarScopeKey();
+  const prevApptsSig = CAL_UI.lastApptsSnapshotSig;
+  const prevScheduleSig = CAL_UI.lastScheduleSnapshotSig;
+  const prevMetaSig = CAL_UI.lastMetaSnapshotSig;
+  const prevScopeKey = prevApptsSig ? prevApptsSig.split('::')[0] : '';
+
+  CAL_UI.autoRefreshInFlight = true;
+  updateAutoRefreshBadgeUi('syncing');
+
+  try {
+    const reqOpts = { silentLoader: true };
+    const searchInputVal = document.getElementById('clientSearchInput')?.value.trim() || '';
+    const tasks = [
+      loadOperators(reqOpts),
+      loadAppointments(reqOpts),
+      loadTomorrowReminders(reqOpts),
+    ];
+    if (!searchInputVal) {
+      tasks.push(loadClients('', reqOpts));
+    }
+    await Promise.all(tasks);
+
+    if (getCalendarScopeKey() !== startScopeKey) {
+      updateAutoRefreshBadgeUi('idle');
+      return false;
+    }
+
+    // Avoid tearing down DOM if the user started a gesture/menu/modal mid-request
+    if (!force && isAgendaInteractionBusy()) {
+      CAL_UI.lastCalendarSyncAt = Date.now();
+      CAL_UI.lastCalendarSyncLabel = formatSyncClockLabel(new Date());
+      updateAutoRefreshBadgeUi('idle');
+      return false;
+    }
+
+    const nextSnaps = computeCalendarSnapshots();
+    const sameScope = !prevScopeKey || prevScopeKey === nextSnaps.scopeKey;
+    const apptsChanged = nextSnaps.apptsSig !== prevApptsSig;
+    const scheduleChanged = nextSnaps.scheduleSig !== prevScheduleSig;
+    const metaChanged = nextSnaps.metaSig !== prevMetaSig;
+
+    if (apptsChanged || scheduleChanged) {
+      updateKpis();
+      renderSmartAssistBar();
+      renderCalendar();
+      if (!force && prevApptsSig && sameScope && apptsChanged) {
+        showAgendaToast('Agenda aggiornata automaticamente');
+      } else if (force) {
+        showAgendaToast('Agenda aggiornata ✓');
+      }
+    } else if (metaChanged) {
+      updateKpis();
+      renderSmartAssistBar();
+      markCalendarSnapshotCurrent();
+      if (force) {
+        showAgendaToast('Agenda già aggiornata ✓');
+      }
+    } else if (force) {
+      showAgendaToast('Agenda già aggiornata ✓');
+    }
+
+    CAL_UI.lastCalendarSyncAt = Date.now();
+    CAL_UI.lastCalendarSyncLabel = formatSyncClockLabel(new Date());
+    updateAutoRefreshBadgeUi('idle');
+    return true;
+  } catch (err) {
+    if (err && err.status === 401) {
+      stopAgendaAutoRefresh();
+      window.location.replace('admin.html');
+      return false;
+    }
+    updateAutoRefreshBadgeUi('error');
+    if (force) {
+      showAgendaToast(err.message || 'Impossibile aggiornare l’agenda', 'error');
+    }
+    return false;
+  } finally {
+    CAL_UI.autoRefreshInFlight = false;
+  }
+}
+
+function setAgendaAutoRefreshEnabled(enabled) {
+  CAL_UI.autoRefreshEnabled = Boolean(enabled);
+  try {
+    localStorage.setItem(CAL_AUTO_REFRESH_STORAGE_KEY, CAL_UI.autoRefreshEnabled ? '1' : '0');
+  } catch {}
+  updateAutoRefreshBadgeUi('idle');
+  if (CAL_UI.autoRefreshEnabled) {
+    syncAgendaAutomatically({ force: true, reason: 'resume' });
+  } else {
+    showAgendaToast('Aggiornamento automatico in pausa');
+  }
+}
+
+function startAgendaAutoRefresh() {
+  stopAgendaAutoRefresh();
+  CAL_UI.lastCalendarSyncAt = Date.now();
+  CAL_UI.lastCalendarSyncLabel = formatSyncClockLabel(new Date());
+  markCalendarSnapshotCurrent();
+  updateAutoRefreshBadgeUi('idle');
+
+  CAL_UI.autoRefreshTimer = setInterval(() => {
+    syncAgendaAutomatically({ reason: 'interval' });
+  }, CAL_AUTO_REFRESH_MS);
+
+  if (!CAL_UI.autoRefreshListenersBound) {
+    CAL_UI.autoRefreshListenersBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && Date.now() - CAL_UI.lastCalendarSyncAt >= 5000) {
+        syncAgendaAutomatically({ reason: 'visibility' });
+      }
+    });
+    window.addEventListener('focus', () => {
+      if (!document.hidden && Date.now() - CAL_UI.lastCalendarSyncAt >= 5000) {
+        syncAgendaAutomatically({ reason: 'focus' });
+      }
+    });
+  }
+}
+
 const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
@@ -1506,6 +1782,9 @@ function switchAdminView(viewName) {
     const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
     if (el) el.hidden = v !== viewName;
   });
+  if (viewName === 'agenda' && STATE.admin && Date.now() - CAL_UI.lastCalendarSyncAt >= 5000) {
+    syncAgendaAutomatically({ reason: 'view' });
+  }
   if (viewName === 'clients') renderClientsTable();
   if (viewName === 'inventory') renderInventoryView();
   if (viewName === 'messages') renderMessagesView();
@@ -1854,6 +2133,7 @@ function bindInteractiveCalendarGrid(container) {
     window.removeEventListener('pointerup', onWindowPointerUp);
     window.removeEventListener('pointercancel', onWindowPointerCancel);
     g = null;
+    CAL_UI.isGestureActive = false;
   }
 
   CAL_UI.cleanupGesture = cleanupActiveGesture;
@@ -1984,6 +2264,7 @@ function bindInteractiveCalendarGrid(container) {
       if (!appt) return;
 
       cleanupActiveGesture();
+      CAL_UI.isGestureActive = true;
       const isResize = Boolean(e.target.closest('.cal-resize-handle'));
       const initialStartMin = parseTimeToMinutes(appt.start_time);
       const initialDuration = Math.max(CAL_MIN_DURATION, Number(appt.duration_minutes) || 60);
@@ -2163,6 +2444,7 @@ function renderCalendar() {
     container.scrollTop = prevScrollTop;
     container.scrollLeft = prevScrollLeft;
     if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
+    markCalendarSnapshotCurrent();
     return;
   }
 
@@ -2172,6 +2454,7 @@ function renderCalendar() {
     container.scrollTop = prevScrollTop;
     container.scrollLeft = prevScrollLeft;
     if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
+    markCalendarSnapshotCurrent();
     return;
   }
 
@@ -2348,6 +2631,7 @@ function renderCalendar() {
   bindInteractiveCalendarGrid(container);
   bindDuplicateHoverPreview(container);
   if (CAL_UI.miniPickerOpen) renderMiniCalendarPopover();
+  markCalendarSnapshotCurrent();
 }
 
 function renderMonthCalendar(container) {
@@ -3125,6 +3409,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
+    stopAgendaAutoRefresh();
     await apiFetch('auth/logout', { method: 'POST' });
     window.location.href = 'admin.html';
   });
@@ -3140,6 +3425,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('calTodayBtn').addEventListener('click', () => {
     jumpAgendaToDate(new Date());
   });
+
+  document.getElementById('calAutoRefreshToggleBtn')?.addEventListener('click', () => {
+    setAgendaAutoRefreshEnabled(!CAL_UI.autoRefreshEnabled);
+  });
+  document.getElementById('calManualRefreshBtn')?.addEventListener('click', () => {
+    syncAgendaAutomatically({ force: true, reason: 'manual' });
+  });
+  updateAutoRefreshBadgeUi('idle');
 
   document.getElementById('calQuickJumpBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();

@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=11" />
+  <link rel="stylesheet" href="admin.css?v=13" />
 </head>
 <body>
 
@@ -136,6 +136,14 @@
               <button type="button" class="mode-pill" data-calmode="day">Giorno</button>
               <button type="button" class="mode-pill" data-calmode="month">Mese</button>
               <button type="button" class="mode-pill" data-calmode="list">Lista</button>
+            </div>
+
+            <div class="cal-autorefresh-group" title="Aggiornamento automatico dell'agenda ogni 20 secondi">
+              <button type="button" class="cal-autorefresh-pill is-active" id="calAutoRefreshToggleBtn" aria-pressed="true" title="Attiva o metti in pausa l'aggiornamento automatico ogni 20 secondi">
+                <span class="cal-autorefresh-dot" aria-hidden="true"></span>
+                <span id="calAutoRefreshLabel">Auto</span>
+              </button>
+              <button type="button" class="cal-refresh-now-btn" id="calManualRefreshBtn" aria-label="Aggiorna subito l'agenda" title="Aggiorna subito l'agenda">↻</button>
             </div>
           </div>
         </div>
@@ -1440,6 +1448,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=13"></script>
+  <script src="admin.js?v=14"></script>
 </body>
 </html>
