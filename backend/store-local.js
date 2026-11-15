@@ -13,7 +13,11 @@ const {
   getMinimumAllowedStartMinutes,
   DEFAULT_SAME_DAY_LEAD_MINUTES,
 } = require('./availability');
-const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
+const {
+  getDefaultOperatorPayload,
+  DEFAULT_MESSAGE_TEMPLATES,
+  DEFAULT_MONTHLY_PROMOTIONS,
+} = require('./defaults');
 
 const DB_FILE = path.resolve(process.cwd(), process.env.LOCAL_DB_FILE || '.local-dev-db.json');
 
@@ -36,6 +40,7 @@ function defaultState() {
       msg_log: 0,
       gift_card: 0,
       automation_run: 0,
+      promotion: 0,
     },
     admin_users: [],
     admin_sessions: [],
@@ -55,6 +60,7 @@ function defaultState() {
     gift_cards: [],
     studio_settings: [],
     automation_runs: [],
+    monthly_promotions: [],
   };
 }
 
@@ -109,6 +115,39 @@ function ensureLocalCollections(state) {
       });
       dirty = true;
     }
+  }
+  const hasPromoSeedFlag = (state.studio_settings || []).some((s) => s.setting_key === 'promotions_seeded');
+  if (!hasPromoSeedFlag) {
+    if ((state.monthly_promotions || []).length === 0) {
+      const now = formatRomeNow();
+      for (const promo of DEFAULT_MONTHLY_PROMOTIONS) {
+        state.monthly_promotions.push({
+          id: nextId(state, 'promotion'),
+          title: promo.title,
+          badge_text: promo.badge_text || null,
+          month_label: promo.month_label || null,
+          description: promo.description || null,
+          services_json: JSON.stringify(promo.services || []),
+          original_price: Number(promo.original_price || 0),
+          promo_price: Number(promo.promo_price || 0),
+          duration_minutes: Number(promo.duration_minutes || 60),
+          valid_from: promo.valid_from || null,
+          valid_until: promo.valid_until || null,
+          active: promo.active ? 1 : 0,
+          featured: promo.featured ? 1 : 0,
+          show_on_hero: promo.show_on_hero ? 1 : 0,
+          sort_order: Number(promo.sort_order || 0),
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    }
+    state.studio_settings.push({
+      setting_key: 'promotions_seeded',
+      setting_value: '1',
+      updated_at: formatRomeNow(),
+    });
+    dirty = true;
   }
   return dirty;
 }
@@ -1654,6 +1693,153 @@ async function deleteGiftCard(id) {
   writeDb(db);
 }
 
+/* ============================================================================
+   MONTHLY PROMOTIONS CRUD
+   ============================================================================ */
+function normalizePromotionRow(row) {
+  if (!row) return null;
+  let services = [];
+  if (Array.isArray(row.services)) {
+    services = row.services;
+  } else if (typeof row.services_json === 'string' && row.services_json.trim()) {
+    try {
+      const parsed = JSON.parse(row.services_json);
+      if (Array.isArray(parsed)) services = parsed;
+    } catch {
+      services = [];
+    }
+  }
+  return {
+    ...row,
+    id: Number(row.id),
+    original_price: Number(row.original_price || 0),
+    promo_price: Number(row.promo_price || 0),
+    duration_minutes: Math.max(10, Number(row.duration_minutes || 60)),
+    active: Number(row.active) !== 0 ? 1 : 0,
+    featured: Number(row.featured) === 1 ? 1 : 0,
+    show_on_hero: Number(row.show_on_hero) === 1 ? 1 : 0,
+    sort_order: Number(row.sort_order || 0),
+    valid_from: row.valid_from ? String(row.valid_from).slice(0, 10) : null,
+    valid_until: row.valid_until ? String(row.valid_until).slice(0, 10) : null,
+    services,
+    services_json: JSON.stringify(services),
+  };
+}
+
+function isPromotionActiveForDate(promo, todayIso) {
+  if (!promo || Number(promo.active) !== 1) return false;
+  if (todayIso) {
+    if (promo.valid_from && String(promo.valid_from) > todayIso) return false;
+    if (promo.valid_until && String(promo.valid_until) < todayIso) return false;
+  }
+  return true;
+}
+
+async function listPromotions({ activeOnly = false, todayIso = null } = {}) {
+  const db = readDb();
+  const list = (db.monthly_promotions || [])
+    .map(normalizePromotionRow)
+    .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.id - b.id);
+  if (!activeOnly) return list;
+  const checkDate = todayIso || getRomeToday();
+  return list.filter((p) => isPromotionActiveForDate(p, checkDate));
+}
+
+async function getPromotionById(id) {
+  const db = readDb();
+  const row = (db.monthly_promotions || []).find((p) => Number(p.id) === Number(id));
+  return normalizePromotionRow(row);
+}
+
+async function createPromotion({
+  title,
+  badgeText,
+  monthLabel,
+  description,
+  services,
+  originalPrice,
+  promoPrice,
+  durationMinutes,
+  validFrom,
+  validUntil,
+  active = 1,
+  featured = 0,
+  showOnHero = 0,
+  sortOrder = 0,
+}) {
+  const db = readDb();
+  const now = formatRomeNow();
+  if (showOnHero) {
+    (db.monthly_promotions || []).forEach((p) => {
+      p.show_on_hero = 0;
+    });
+  }
+  const row = {
+    id: nextId(db, 'promotion'),
+    title,
+    badge_text: badgeText || null,
+    month_label: monthLabel || null,
+    description: description || null,
+    services_json: JSON.stringify(Array.isArray(services) ? services : []),
+    original_price: Number(originalPrice || 0),
+    promo_price: Number(promoPrice || 0),
+    duration_minutes: Math.max(10, Number(durationMinutes || 60)),
+    valid_from: validFrom || null,
+    valid_until: validUntil || null,
+    active: active ? 1 : 0,
+    featured: featured ? 1 : 0,
+    show_on_hero: showOnHero ? 1 : 0,
+    sort_order: Number(sortOrder || 0),
+    created_at: now,
+    updated_at: now,
+  };
+  db.monthly_promotions = db.monthly_promotions || [];
+  db.monthly_promotions.push(row);
+  writeDb(db);
+  return normalizePromotionRow(row);
+}
+
+async function updatePromotion(id, updates = {}) {
+  const db = readDb();
+  const row = (db.monthly_promotions || []).find((p) => Number(p.id) === Number(id));
+  if (!row) return null;
+
+  const nextShowOnHero =
+    updates.showOnHero !== undefined ? (updates.showOnHero ? 1 : 0) : Number(row.show_on_hero) === 1 ? 1 : 0;
+  if (nextShowOnHero === 1) {
+    db.monthly_promotions.forEach((p) => {
+      if (Number(p.id) !== Number(id)) p.show_on_hero = 0;
+    });
+  }
+
+  const currentNorm = normalizePromotionRow(row);
+  const nextServices = Array.isArray(updates.services) ? updates.services : currentNorm.services;
+  if (updates.title !== undefined) row.title = updates.title;
+  if (updates.badgeText !== undefined) row.badge_text = updates.badgeText || null;
+  if (updates.monthLabel !== undefined) row.month_label = updates.monthLabel || null;
+  if (updates.description !== undefined) row.description = updates.description || null;
+  row.services_json = JSON.stringify(nextServices);
+  if (updates.originalPrice !== undefined) row.original_price = Number(updates.originalPrice || 0);
+  if (updates.promoPrice !== undefined) row.promo_price = Number(updates.promoPrice || 0);
+  if (updates.durationMinutes !== undefined) row.duration_minutes = Math.max(10, Number(updates.durationMinutes || 60));
+  if (updates.validFrom !== undefined) row.valid_from = updates.validFrom || null;
+  if (updates.validUntil !== undefined) row.valid_until = updates.validUntil || null;
+  if (updates.active !== undefined) row.active = updates.active ? 1 : 0;
+  if (updates.featured !== undefined) row.featured = updates.featured ? 1 : 0;
+  row.show_on_hero = nextShowOnHero;
+  if (updates.sortOrder !== undefined) row.sort_order = Number(updates.sortOrder || 0);
+  row.updated_at = formatRomeNow();
+
+  writeDb(db);
+  return normalizePromotionRow(row);
+}
+
+async function deletePromotion(id) {
+  const db = readDb();
+  db.monthly_promotions = (db.monthly_promotions || []).filter((p) => Number(p.id) !== Number(id));
+  writeDb(db);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1718,4 +1904,9 @@ module.exports = {
   createGiftCard,
   redeemGiftCard,
   deleteGiftCard,
+  listPromotions,
+  getPromotionById,
+  createPromotion,
+  updatePromotion,
+  deletePromotion,
 };

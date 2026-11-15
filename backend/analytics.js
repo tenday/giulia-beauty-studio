@@ -50,6 +50,7 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
   const products = Array.isArray(extra.products) ? extra.products : [];
   const movements = Array.isArray(extra.movements) ? extra.movements : [];
   const cards = Array.isArray(extra.cards) ? extra.cards : [];
+  const promotions = Array.isArray(extra.promotions) ? extra.promotions : [];
   const currentPrivacyVersion = extra.privacyVersion || process.env.PRIVACY_VERSION || 'v2.0-2026-11';
 
   const tomorrowIso = addDaysIso(todayIso, 1);
@@ -468,6 +469,24 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
     });
   }
 
+  const activePromotions = promotions.filter((p) => {
+    if (!p || Number(p.active) !== 1) return false;
+    if (p.valid_from && String(p.valid_from) > todayIso) return false;
+    if (p.valid_until && String(p.valid_until) < todayIso) return false;
+    return true;
+  });
+  const promoTitlesLower = activePromotions.map((p) => String(p.title || '').toLowerCase()).filter(Boolean);
+  const monthPromoBookingsCount = monthAppts.filter((a) => {
+    try {
+      const parsed = typeof a.services_json === 'string' && a.services_json.trim() ? JSON.parse(a.services_json) : [];
+      if (Array.isArray(parsed) && parsed.some((s) => s && (s.is_promotion || s.promo_id))) return true;
+    } catch {
+      // Ignore parse failure and inspect summary fallback
+    }
+    const sumLower = String(a.services_summary || '').toLowerCase();
+    return sumLower.startsWith('promo:') || promoTitlesLower.some((t) => sumLower.includes(t));
+  }).length;
+
   return {
     generated_at: todayIso,
     current_month: currentMonth,
@@ -503,6 +522,8 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
       low_stock_count: lowStockProducts.length,
       inventory_value: Math.round(inventoryValue * 100) / 100,
       active_cards_count: activeCardsCount,
+      active_promotions_count: activePromotions.length,
+      month_promo_bookings_count: monthPromoBookingsCount,
     },
     inactive_threshold_days: inactiveThresholdDays,
     inactive_clients: customThresholdClients,
@@ -521,6 +542,14 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
       retail_revenue_total: Math.round(totalRetailRevenue * 100) / 100,
     },
     upcoming_birthdays: upcomingBirthdays,
+    active_promotions: activePromotions.map((p) => ({
+      id: p.id,
+      title: p.title,
+      month_label: p.month_label,
+      original_price: Number(p.original_price || 0),
+      promo_price: Number(p.promo_price || 0),
+      duration_minutes: Number(p.duration_minutes || 60),
+    })),
     recommendations,
   };
 }
@@ -547,6 +576,7 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
   const isVipQ = /miglior|vip|fedel|spendon|valore nel tempo|ltv/.test(qLower);
   const isBirthdayQ = /compleann|augur/.test(qLower);
   const isTomorrowQ = /domani|promemoria|whatsapp/.test(qLower);
+  const isPromoQ = /promoz|promo|offert|scont/.test(qLower);
   const isReportQ = /report|riepilog|fatturat|incass|andamento|statistich|mese|guadagn|bilancio/.test(qLower);
 
   const lines = [];
@@ -624,6 +654,21 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
         lines.push(`• **${b.full_name}** (${b.birth_date}) — **${when}**`);
       });
     }
+  } else if (isPromoQ) {
+    const activePromos = insights.active_promotions || [];
+    lines.push(
+      `🏷️ **Promozioni del Mese (${activePromos.length} attive • ${s.month_promo_bookings_count || 0} prenotazioni nel mese):**`
+    );
+    if (activePromos.length === 0) {
+      lines.push('Nessuna promozione attiva in questo momento nella sezione Promo Mese.');
+    } else {
+      activePromos.forEach((p, idx) => {
+        const listinoTxt = p.original_price > p.promo_price ? ` (anziché ${p.original_price.toFixed(0)} €)` : '';
+        lines.push(
+          `${idx + 1}. **${p.title}** — **${p.promo_price.toFixed(0)} €**${listinoTxt} • ${p.duration_minutes} min`
+        );
+      });
+    }
   } else if (isTomorrowQ && !isReportQ) {
     lines.push(
       `📲 **Situazione Domani:** ${s.tomorrow_appointments_count} appuntamenti in agenda (${s.tomorrow_unsent_reminders} promemoria WhatsApp ancora da inviare).`
@@ -669,6 +714,7 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
       reorder_forecasts: localResult.insights.reorder_forecasts,
       cross_sell: localResult.insights.cross_sell,
       upcoming_birthdays: localResult.insights.upcoming_birthdays,
+      active_promotions: localResult.insights.active_promotions,
       recommendations: localResult.insights.recommendations,
     };
 

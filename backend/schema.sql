@@ -306,3 +306,25 @@ CREATE TABLE IF NOT EXISTS `gift_cards` (
   KEY `idx_gc_status` (`status`),
   KEY `idx_gc_client` (`client_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `monthly_promotions` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `title` VARCHAR(140) NOT NULL,
+  `badge_text` VARCHAR(80) NULL DEFAULT NULL,
+  `month_label` VARCHAR(80) NULL DEFAULT NULL,
+  `description` TEXT NULL,
+  `services_json` LONGTEXT NOT NULL,
+  `original_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `promo_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `duration_minutes` INT UNSIGNED NOT NULL DEFAULT 60,
+  `valid_from` DATE NULL DEFAULT NULL,
+  `valid_until` DATE NULL DEFAULT NULL,
+  `active` TINYINT(1) NOT NULL DEFAULT 1,
+  `featured` TINYINT(1) NOT NULL DEFAULT 0,
+  `show_on_hero` TINYINT(1) NOT NULL DEFAULT 0,
+  `sort_order` INT NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_promo_active_sort` (`active`, `sort_order`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

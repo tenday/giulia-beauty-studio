@@ -3244,3 +3244,129 @@ a.bcard-line:hover {
     font-size: 0.64rem;
   }
 }
+
+/* ==========================================================================
+   DYNAMIC MONTHLY PROMOTIONS & PROMO BAG DETAILS
+   ========================================================================== */
+.listino-promo-banner-wrap {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.listino-promo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(216, 122, 141, 0.45);
+  background: linear-gradient(135deg, rgba(255, 250, 249, 0.96), rgba(248, 222, 225, 0.72));
+  color: var(--ink-primary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  box-shadow: 0 6px 18px rgba(145, 78, 86, 0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.listino-promo-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(145, 78, 86, 0.14);
+}
+
+.packages-grid.has-1 {
+  grid-template-columns: 1fr;
+  max-width: 460px;
+  margin: 0 auto;
+}
+
+.packages-grid.has-2 {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.package-badges-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.package-badges-row .package-badge {
+  margin-bottom: 0;
+}
+
+.package-month-tag,
+.package-discount-pill {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(194, 141, 133, 0.35);
+  color: var(--rose-deep);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.package-discount-pill {
+  background: var(--ink-primary);
+  color: #ffffff;
+  border-color: var(--ink-primary);
+}
+
+.package-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.package-price-old {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+.package-duration-note {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.hero-floating-price-old {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+  margin-right: 4px;
+  font-weight: 500;
+}
+
+.bag-item-promo-sub {
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.bag-item-old-price {
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+  margin-right: 4px;
+}
+
+@media (max-width: 900px) {
+  .packages-grid.has-2 {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+  }
+}

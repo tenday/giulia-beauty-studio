@@ -377,6 +377,35 @@ app.get('/api/public/operators', async (_req, res, next) => {
   }
 });
 
+app.get('/api/public/promotions', async (_req, res, next) => {
+  try {
+    const today = getRomeToday();
+    const promotions = await getStore().listPromotions({ activeOnly: true, todayIso: today });
+    return res.json({
+      ok: true,
+      today,
+      promotions: promotions.map((p) => ({
+        id: Number(p.id),
+        title: p.title,
+        badge_text: p.badge_text,
+        month_label: p.month_label,
+        description: p.description,
+        services: Array.isArray(p.services) ? p.services : [],
+        original_price: Number(p.original_price || 0),
+        promo_price: Number(p.promo_price || 0),
+        duration_minutes: Number(p.duration_minutes || 60),
+        valid_from: p.valid_from || null,
+        valid_until: p.valid_until || null,
+        featured: Number(p.featured) === 1 ? 1 : 0,
+        show_on_hero: Number(p.show_on_hero) === 1 ? 1 : 0,
+        sort_order: Number(p.sort_order || 0),
+      })),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 app.get('/api/public/slots', async (req, res, next) => {
   try {
     const dateStr = String(req.query.date || '').trim();
@@ -522,7 +551,7 @@ app.post('/api/public/book', async (req, res, next) => {
     const marketingConsent = body.marketing_consent ? 1 : 0;
 
     const services = Array.isArray(body.services) ? body.services : [];
-    const totalPrice = Number(body.total_price || 0) || 0;
+    let totalPrice = Number(body.total_price || 0) || 0;
     let durationMinutes = Math.max(0, Number.parseInt(body.duration_minutes || '0', 10) || 0);
     let appointmentDate = String(body.appointment_date || getRomeToday()).trim();
     let startTime = String(body.start_time || '11:00').trim();
@@ -546,6 +575,46 @@ app.post('/api/public/book', async (req, res, next) => {
       return sendError(res, 'Seleziona almeno un trattamento o una Gift Card.', 422, 'SERVICES_REQUIRED');
     }
 
+    const store = getStore();
+    const hasPromoItem = services.some((s) => s && typeof s === 'object' && (s.is_promotion || Number(s.promo_id) > 0));
+    let normalizedServices = services;
+    if (hasPromoItem) {
+      const activePromos = await store.listPromotions({ activeOnly: true, todayIso: getRomeToday() });
+      const promoMap = new Map(activePromos.map((p) => [Number(p.id), p]));
+      normalizedServices = [];
+      for (const item of services) {
+        const promoId = Number(item?.promo_id || 0);
+        if (item?.is_promotion || promoId > 0) {
+          const matchedPromo = promoMap.get(promoId);
+          if (!matchedPromo) {
+            return sendError(
+              res,
+              'Una delle promozioni selezionate non è più attiva o è scaduta. Ricarica la vetrina per vedere le offerte aggiornate.',
+              422,
+              'PROMO_UNAVAILABLE'
+            );
+          }
+          normalizedServices.push({
+            id: `promo-${matchedPromo.id}`,
+            promo_id: matchedPromo.id,
+            is_promotion: true,
+            name: `Promo: ${matchedPromo.title}`,
+            price: Number(matchedPromo.promo_price || 0),
+            original_price: Number(matchedPromo.original_price || 0),
+            duration: Number(matchedPromo.duration_minutes || 60),
+            included_services: matchedPromo.services || [],
+          });
+        } else {
+          normalizedServices.push(item);
+        }
+      }
+      totalPrice = Number(
+        normalizedServices.reduce((sum, s) => sum + Number(s?.price || 0), 0).toFixed(2)
+      );
+      const sumDur = normalizedServices.reduce((sum, s) => sum + Math.max(0, Number(s?.duration || 0)), 0);
+      if (sumDur > 0) durationMinutes = sumDur;
+    }
+
     if (mode === 'booking') {
       if (!isValidIsoDate(appointmentDate)) return sendError(res, 'Data appuntamento non valida.', 422);
       if (!/^\d{2}:\d{2}$/.test(startTime)) return sendError(res, 'Orario non valido.', 422);
@@ -555,21 +624,20 @@ app.post('/api/public/book', async (req, res, next) => {
       if (!/^\d{2}:\d{2}$/.test(startTime)) startTime = '09:30';
     }
 
-    const serviceNames = services
+    const serviceNames = normalizedServices
       .map((s) => (s && typeof s === 'object' ? String(s.name || '').trim() : ''))
       .filter(Boolean);
     const servicesSummary = serviceNames.join(' + ').slice(0, 490) || 'Trattamento Studio';
     const privacyVersion = getPrivacyVersion();
     const nowStr = formatRomeNow();
 
-    const store = getStore();
     const created = await store.createPublicBooking({
       mode,
       appointmentDate,
       startTime,
       durationMinutes,
       operatorId,
-      servicesJson: JSON.stringify(services),
+      servicesJson: JSON.stringify(normalizedServices),
       servicesSummary,
       totalPrice,
       paymentMethod,
@@ -1575,18 +1643,19 @@ app.post('/api/admin/users', requireAdmin, async (req, res, next) => {
    ADMIN AI INSIGHTS & STUDIO REPORTS API (ALL MODULES UNIFIED)
    ============================================================================ */
 async function loadInsightsContext(store) {
-  const [clients, appointments, operators, products, movements, cards] = await Promise.all([
+  const [clients, appointments, operators, products, movements, cards, promotions] = await Promise.all([
     store.listClients(''),
     store.listAppointments({ startDate: '', endDate: '', status: '', clientId: 0 }),
     store.listOperators(false),
     store.listProducts(),
     store.listProductMovements(500),
     store.listClientCards(0),
+    store.listPromotions({ activeOnly: false }),
   ]);
   return {
     clients,
     appointments,
-    extra: { operators, products, movements, cards, privacyVersion: getPrivacyVersion() },
+    extra: { operators, products, movements, cards, promotions, privacyVersion: getPrivacyVersion() },
   };
 }
 
@@ -1736,6 +1805,113 @@ app.post('/api/admin/gift-cards', requireAdmin, async (req, res, next) => {
     });
 
     return res.status(201).json({ ok: true, gift_card: giftCard });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ============================================================================
+   ADMIN MONTHLY PROMOTIONS API (LIST, CREATE, UPDATE, TOGGLE, DELETE)
+   ============================================================================ */
+function sanitizePromotionServices(rawList) {
+  if (!Array.isArray(rawList)) return [];
+  const cleaned = [];
+  for (const item of rawList.slice(0, 20)) {
+    if (!item || typeof item !== 'object') continue;
+    const name = String(item.name || '').trim().slice(0, 140);
+    if (!name) continue;
+    cleaned.push({
+      id: item.id ? String(item.id).trim().slice(0, 60) : null,
+      name,
+      price: Math.max(0, Number(item.price || 0) || 0),
+      duration: Math.max(5, Math.min(480, Number.parseInt(item.duration || '30', 10) || 30)),
+    });
+  }
+  return cleaned;
+}
+
+app.get('/api/admin/promotions', requireAdmin, async (_req, res, next) => {
+  try {
+    const today = getRomeToday();
+    const promotions = await getStore().listPromotions({ activeOnly: false, todayIso: today });
+    return res.json({ ok: true, today, promotions });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/promotions', requireAdmin, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const action = String(body.action || 'create');
+    const store = getStore();
+
+    if (action === 'delete') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID promozione non valido.', 400);
+      await store.deletePromotion(id);
+      return res.json({ ok: true, deleted_id: id });
+    }
+
+    if (action === 'toggle_active') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID promozione non valido.', 400);
+      const existing = await store.getPromotionById(id);
+      if (!existing) return sendError(res, 'Promozione non trovata.', 404);
+      const nextActive = body.active !== undefined ? Boolean(body.active) : Number(existing.active) !== 1;
+      const promotion = await store.updatePromotion(id, { active: nextActive ? 1 : 0 });
+      return res.json({ ok: true, promotion });
+    }
+
+    const title = String(body.title || '').trim().slice(0, 135);
+    if (title.length < 2) {
+      return sendError(res, 'Inserisci un titolo valido per la promozione.', 422);
+    }
+
+    const services = sanitizePromotionServices(body.services);
+    const promoPrice = Math.max(0, Number(body.promo_price ?? body.promoPrice ?? 0) || 0);
+    let originalPrice = Math.max(0, Number(body.original_price ?? body.originalPrice ?? 0) || 0);
+    if (originalPrice === 0 && services.length > 0) {
+      originalPrice = services.reduce((s, item) => s + Number(item.price || 0), 0);
+    }
+    const durationMinutes = Math.max(
+      10,
+      Math.min(600, Number.parseInt(String(body.duration_minutes ?? body.durationMinutes ?? '60'), 10) || 60)
+    );
+
+    const validFrom = isValidIsoDate(body.valid_from) ? String(body.valid_from).trim() : null;
+    const validUntil = isValidIsoDate(body.valid_until) ? String(body.valid_until).trim() : null;
+    if (validFrom && validUntil && validFrom > validUntil) {
+      return sendError(res, 'La data di fine validità non può precedere la data di inizio.', 422);
+    }
+
+    const payload = {
+      title,
+      badgeText: String(body.badge_text || '').trim().slice(0, 75),
+      monthLabel: String(body.month_label || '').trim().slice(0, 75),
+      description: String(body.description || '').trim().slice(0, 1000),
+      services,
+      originalPrice: Number(originalPrice.toFixed(2)),
+      promoPrice: Number(promoPrice.toFixed(2)),
+      durationMinutes,
+      validFrom,
+      validUntil,
+      active: body.active !== undefined ? (body.active ? 1 : 0) : 1,
+      featured: body.featured ? 1 : 0,
+      showOnHero: body.show_on_hero ? 1 : 0,
+      sortOrder: Number.parseInt(String(body.sort_order ?? '0'), 10) || 0,
+    };
+
+    if (action === 'update') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID promozione non valido.', 400);
+      const promotion = await store.updatePromotion(id, payload);
+      if (!promotion) return sendError(res, 'Promozione non trovata.', 404);
+      return res.json({ ok: true, promotion });
+    }
+
+    const promotion = await store.createPromotion(payload);
+    return res.status(201).json({ ok: true, promotion });
   } catch (err) {
     return next(err);
   }

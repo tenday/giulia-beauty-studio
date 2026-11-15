@@ -135,6 +135,12 @@ async function ensureSchemaMigrations(targetPool = getPool()) {
     'meta_payload_type',
     "ALTER TABLE `message_logs` ADD COLUMN `meta_payload_type` VARCHAR(20) NOT NULL DEFAULT 'text' AFTER `trigger_source`"
   );
+  await ensureColumn(
+    targetPool,
+    'monthly_promotions',
+    'show_on_hero',
+    'ALTER TABLE `monthly_promotions` ADD COLUMN `show_on_hero` TINYINT(1) NOT NULL DEFAULT 0 AFTER `featured`'
+  );
   migrationsChecked = true;
 }
 

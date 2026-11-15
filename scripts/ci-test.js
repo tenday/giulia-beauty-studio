@@ -396,6 +396,103 @@ async function runApiSuite() {
     assert.strictEqual(gcDel.status, 200);
 
     // =========================================================================
+    // Monthly Promotions CRUD + Storefront Reflection + Authoritative Pricing
+    // =========================================================================
+    const initPublicPromos = await req('GET', '/api/public/promotions');
+    assert.strictEqual(initPublicPromos.status, 200);
+    assert(Array.isArray(initPublicPromos.json.promotions) && initPublicPromos.json.promotions.length >= 1, 'Promozioni default devono essere inizializzate');
+
+    const createPromo = await req('POST', '/api/admin/promotions', {
+      action: 'create',
+      title: 'Rituale Novembre Test Promo',
+      badge_text: '♡ Promo Test',
+      month_label: 'Novembre 2026',
+      description: 'Pacchetto test promozionale',
+      services: [
+        { id: 'nails-12', name: 'Manicure + semipermanente', price: 28, duration: 45 },
+        { id: 'lashes-1', name: 'Laminazione ciglia', price: 45, duration: 60 },
+      ],
+      original_price: 73,
+      promo_price: 59,
+      duration_minutes: 90,
+      active: true,
+      featured: true,
+      show_on_hero: true,
+      sort_order: 0,
+    });
+    assert.strictEqual(createPromo.status, 201);
+    const createdPromoId = createPromo.json.promotion.id;
+
+    const pubAfterCreate = await req('GET', '/api/public/promotions');
+    assert.strictEqual(pubAfterCreate.status, 200);
+    const foundHero = pubAfterCreate.json.promotions.find((p) => Number(p.id) === Number(createdPromoId));
+    assert(foundHero, 'La promo creata deve comparire in /api/public/promotions');
+    assert.strictEqual(Number(foundHero.show_on_hero), 1);
+
+    // Public booking with promo_id must use server authoritative promo_price (59, ignoring client 1)
+    const promoBookDate = '2026-12-07'; // Monday (Giulia open 09:00-15:00)
+    const promoBook = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: promoBookDate,
+      start_time: '11:00',
+      duration_minutes: 90,
+      operator_id: sara.id,
+      services: [{ promo_id: createdPromoId, is_promotion: true, name: 'Tampered Name', price: 1, duration: 15 }],
+      total_price: 1,
+      client_name: 'Elena Promo',
+      client_phone: '+39 339 777 8899',
+      payment_method: 'studio',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(promoBook.status, 201);
+
+    const apptsCheck = await req('GET', `/api/admin/appointments?start_date=${promoBookDate}&end_date=${promoBookDate}`);
+    const savedPromoAppt = apptsCheck.json.appointments.find((a) => a.booking_code === promoBook.json.booking_code);
+    assert(savedPromoAppt, 'Appuntamento con promo salvato in agenda');
+    assert.strictEqual(Number(savedPromoAppt.total_price), 59);
+    assert(savedPromoAppt.services_summary.includes('Rituale Novembre Test Promo'));
+
+    // Toggle inactive -> must hide from storefront and reject stale promo_id booking
+    const toggleOff = await req('POST', '/api/admin/promotions', {
+      action: 'toggle_active',
+      id: createdPromoId,
+      active: false,
+    });
+    assert.strictEqual(toggleOff.status, 200);
+    assert.strictEqual(Number(toggleOff.json.promotion.active), 0);
+
+    const pubAfterToggle = await req('GET', '/api/public/promotions');
+    assert(!pubAfterToggle.json.promotions.some((p) => Number(p.id) === Number(createdPromoId)));
+
+    const stalePromoBook = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: promoBookDate,
+      start_time: '12:45',
+      duration_minutes: 90,
+      operator_id: sara.id,
+      services: [{ promo_id: createdPromoId, is_promotion: true, name: 'Promo', price: 59, duration: 90 }],
+      total_price: 59,
+      client_name: 'Elena Scaduta',
+      client_phone: '+39 339 777 8890',
+      payment_method: 'studio',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(stalePromoBook.status, 422);
+    assert.strictEqual(stalePromoBook.json.code, 'PROMO_UNAVAILABLE');
+
+    // Reactivate briefly to verify AI chat knows about monthly promo, then clean up
+    await req('POST', '/api/admin/promotions', { action: 'toggle_active', id: createdPromoId, active: true });
+    const aiPromoRes = await req('POST', '/api/admin/ai-chat', { question: 'Quali promozioni sono attive questo mese?' });
+    assert.strictEqual(aiPromoRes.status, 200);
+    assert(aiPromoRes.json.answer.includes('Rituale Novembre Test Promo'));
+
+    const promoDel = await req('POST', '/api/admin/promotions', { action: 'delete', id: createdPromoId });
+    assert.strictEqual(promoDel.status, 200);
+    const adminPromosAfterDel = await req('GET', '/api/admin/promotions');
+    assert(!adminPromosAfterDel.json.promotions.some((p) => Number(p.id) === Number(createdPromoId)));
+    await req('POST', '/api/admin/appointments', { action: 'delete', id: savedPromoAppt.id });
+
+    // =========================================================================
     // WhatsApp Business Cloud API + Automated Jobs Regression Suite
     // =========================================================================
     const { getRomeToday } = require(path.join(ROOT_DIR, 'backend', 'helpers'));

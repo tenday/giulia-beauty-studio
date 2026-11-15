@@ -11,7 +11,11 @@ const {
   getMinimumAllowedStartMinutes,
   DEFAULT_SAME_DAY_LEAD_MINUTES,
 } = require('./availability');
-const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
+const {
+  getDefaultOperatorPayload,
+  DEFAULT_MESSAGE_TEMPLATES,
+  DEFAULT_MONTHLY_PROMOTIONS,
+} = require('./defaults');
 
 let defaultsSeeded = false;
 
@@ -42,6 +46,42 @@ async function ensureDefaults(targetPool = getPool()) {
     await targetPool.query(
       `INSERT IGNORE INTO message_templates (code, title, body_template) VALUES (?, ?, ?)`,
       [tpl.code, tpl.title, tpl.body_template]
+    );
+  }
+
+  const [promoSeedRows] = await targetPool.query(
+    "SELECT setting_value FROM studio_settings WHERE setting_key = 'promotions_seeded' LIMIT 1"
+  );
+  if (promoSeedRows.length === 0) {
+    const [promoCnt] = await targetPool.query('SELECT COUNT(*) AS cnt FROM monthly_promotions');
+    if (Number(promoCnt[0]?.cnt || 0) === 0) {
+      for (const promo of DEFAULT_MONTHLY_PROMOTIONS) {
+        await targetPool.query(
+          `INSERT INTO monthly_promotions
+            (title, badge_text, month_label, description, services_json, original_price, promo_price,
+             duration_minutes, valid_from, valid_until, active, featured, show_on_hero, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            promo.title,
+            promo.badge_text || null,
+            promo.month_label || null,
+            promo.description || null,
+            JSON.stringify(promo.services || []),
+            Number(promo.original_price || 0),
+            Number(promo.promo_price || 0),
+            Number(promo.duration_minutes || 60),
+            promo.valid_from || null,
+            promo.valid_until || null,
+            promo.active ? 1 : 0,
+            promo.featured ? 1 : 0,
+            promo.show_on_hero ? 1 : 0,
+            Number(promo.sort_order || 0),
+          ]
+        );
+      }
+    }
+    await targetPool.query(
+      "INSERT IGNORE INTO studio_settings (setting_key, setting_value) VALUES ('promotions_seeded', '1')"
     );
   }
   defaultsSeeded = true;
@@ -1618,6 +1658,159 @@ async function deleteGiftCard(id) {
   await pool.query('DELETE FROM gift_cards WHERE id = ?', [id]);
 }
 
+/* ============================================================================
+   MONTHLY PROMOTIONS CRUD
+   ============================================================================ */
+function normalizePromotionRow(row) {
+  if (!row) return null;
+  let services = [];
+  if (Array.isArray(row.services)) {
+    services = row.services;
+  } else if (typeof row.services_json === 'string' && row.services_json.trim()) {
+    try {
+      const parsed = JSON.parse(row.services_json);
+      if (Array.isArray(parsed)) services = parsed;
+    } catch {
+      services = [];
+    }
+  }
+  return {
+    ...row,
+    id: Number(row.id),
+    original_price: Number(row.original_price || 0),
+    promo_price: Number(row.promo_price || 0),
+    duration_minutes: Math.max(10, Number(row.duration_minutes || 60)),
+    active: Number(row.active) !== 0 ? 1 : 0,
+    featured: Number(row.featured) === 1 ? 1 : 0,
+    show_on_hero: Number(row.show_on_hero) === 1 ? 1 : 0,
+    sort_order: Number(row.sort_order || 0),
+    valid_from: row.valid_from ? String(row.valid_from).slice(0, 10) : null,
+    valid_until: row.valid_until ? String(row.valid_until).slice(0, 10) : null,
+    services,
+    services_json: JSON.stringify(services),
+  };
+}
+
+function isPromotionActiveForDate(promo, todayIso) {
+  if (!promo || Number(promo.active) !== 1) return false;
+  if (todayIso) {
+    if (promo.valid_from && String(promo.valid_from) > todayIso) return false;
+    if (promo.valid_until && String(promo.valid_until) < todayIso) return false;
+  }
+  return true;
+}
+
+async function listPromotions({ activeOnly = false, todayIso = null } = {}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query(
+    'SELECT * FROM monthly_promotions ORDER BY sort_order ASC, id ASC'
+  );
+  const list = rows.map(normalizePromotionRow);
+  if (!activeOnly) return list;
+  const checkDate = todayIso || getRomeToday();
+  return list.filter((p) => isPromotionActiveForDate(p, checkDate));
+}
+
+async function getPromotionById(id) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query('SELECT * FROM monthly_promotions WHERE id = ? LIMIT 1', [id]);
+  return normalizePromotionRow(rows[0]);
+}
+
+async function createPromotion({
+  title,
+  badgeText,
+  monthLabel,
+  description,
+  services,
+  originalPrice,
+  promoPrice,
+  durationMinutes,
+  validFrom,
+  validUntil,
+  active = 1,
+  featured = 0,
+  showOnHero = 0,
+  sortOrder = 0,
+}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  if (showOnHero) {
+    await pool.query('UPDATE monthly_promotions SET show_on_hero = 0');
+  }
+  const [ins] = await pool.query(
+    `INSERT INTO monthly_promotions
+      (title, badge_text, month_label, description, services_json, original_price, promo_price,
+       duration_minutes, valid_from, valid_until, active, featured, show_on_hero, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      title,
+      badgeText || null,
+      monthLabel || null,
+      description || null,
+      JSON.stringify(Array.isArray(services) ? services : []),
+      Number(originalPrice || 0),
+      Number(promoPrice || 0),
+      Math.max(10, Number(durationMinutes || 60)),
+      validFrom || null,
+      validUntil || null,
+      active ? 1 : 0,
+      featured ? 1 : 0,
+      showOnHero ? 1 : 0,
+      Number(sortOrder || 0),
+    ]
+  );
+  return getPromotionById(ins.insertId);
+}
+
+async function updatePromotion(id, updates = {}) {
+  const pool = getPool();
+  const existing = await getPromotionById(id);
+  if (!existing) return null;
+
+  const nextShowOnHero =
+    updates.showOnHero !== undefined ? (updates.showOnHero ? 1 : 0) : existing.show_on_hero;
+  if (nextShowOnHero === 1) {
+    await pool.query('UPDATE monthly_promotions SET show_on_hero = 0 WHERE id <> ?', [id]);
+  }
+
+  const nextServices = Array.isArray(updates.services) ? updates.services : existing.services;
+  await pool.query(
+    `UPDATE monthly_promotions
+     SET title = ?, badge_text = ?, month_label = ?, description = ?, services_json = ?,
+         original_price = ?, promo_price = ?, duration_minutes = ?,
+         valid_from = ?, valid_until = ?, active = ?, featured = ?, show_on_hero = ?, sort_order = ?
+     WHERE id = ?`,
+    [
+      updates.title !== undefined ? updates.title : existing.title,
+      updates.badgeText !== undefined ? updates.badgeText || null : existing.badge_text,
+      updates.monthLabel !== undefined ? updates.monthLabel || null : existing.month_label,
+      updates.description !== undefined ? updates.description || null : existing.description,
+      JSON.stringify(nextServices),
+      updates.originalPrice !== undefined ? Number(updates.originalPrice || 0) : existing.original_price,
+      updates.promoPrice !== undefined ? Number(updates.promoPrice || 0) : existing.promo_price,
+      updates.durationMinutes !== undefined
+        ? Math.max(10, Number(updates.durationMinutes || 60))
+        : existing.duration_minutes,
+      updates.validFrom !== undefined ? updates.validFrom || null : existing.valid_from,
+      updates.validUntil !== undefined ? updates.validUntil || null : existing.valid_until,
+      updates.active !== undefined ? (updates.active ? 1 : 0) : existing.active,
+      updates.featured !== undefined ? (updates.featured ? 1 : 0) : existing.featured,
+      nextShowOnHero,
+      updates.sortOrder !== undefined ? Number(updates.sortOrder || 0) : existing.sort_order,
+      id,
+    ]
+  );
+  return getPromotionById(id);
+}
+
+async function deletePromotion(id) {
+  const pool = getPool();
+  await pool.query('DELETE FROM monthly_promotions WHERE id = ?', [id]);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1682,4 +1875,9 @@ module.exports = {
   createGiftCard,
   redeemGiftCard,
   deleteGiftCard,
+  listPromotions,
+  getPromotionById,
+  createPromotion,
+  updatePromotion,
+  deletePromotion,
 };

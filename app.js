@@ -44,6 +44,72 @@ let selectedGiftAmount = 50;
 let purchaseMode = 'booking'; // 'booking' | 'voucher'
 let selectedTimeSlot = '11:00';
 let selectedPaymentMethod = 'carta';
+let publicPromotions = [];
+let heroOverridePromo = null;
+
+function escapePublicHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const FALLBACK_DEFAULT_PROMOTIONS = [
+  {
+    id: 'fallback-1',
+    title: 'Rituale Semipermanente Completo',
+    badge_text: 'Mani & Piedi Perfection',
+    month_label: 'Offerta del Mese',
+    description: 'Cura impeccabile e brillantezza a lunga durata per mani e piedi sempre perfetti in ogni stagione.',
+    services: [
+      { id: 'nails-12', name: 'Manicure + semipermanente', price: 28, duration: 45 },
+      { id: 'nails-8', name: 'Pedicure estetica + semipermanente', price: 34, duration: 50 },
+    ],
+    original_price: 62,
+    promo_price: 55,
+    duration_minutes: 95,
+    featured: 0,
+    show_on_hero: 0,
+  },
+  {
+    id: 'fallback-2',
+    title: 'Rituale Sguardo Magnetico & Glow',
+    badge_text: '♡ Sguardo & Viso Radioso',
+    month_label: 'Più Richiesta del Mese',
+    description:
+      'Laminazione completa per ciglia e sopracciglia unita alla pulizia viso su misura per un volto fresco e luminoso senza trucco.',
+    services: [
+      { id: 'lashes-1', name: 'Laminazione ciglia', price: 45, duration: 60 },
+      { id: 'lashes-2', name: 'Laminazione sopracciglia', price: 35, duration: 40 },
+      { id: 'viso-1', name: 'Pulizia viso', price: 45, duration: 60 },
+    ],
+    original_price: 125,
+    promo_price: 109,
+    duration_minutes: 150,
+    featured: 1,
+    show_on_hero: 0,
+  },
+  {
+    id: 'fallback-3',
+    title: 'Bridal Couture Experience',
+    badge_text: 'Speciale Sposa & Grandi Eventi',
+    month_label: 'Edizione Esclusiva',
+    description:
+      'Il pacchetto d’eccellenza per il tuo giorno più bello: preparazione della pelle, manicure spa + semipermanente e make up sposa.',
+    services: [
+      { id: 'makeup-1', name: 'Make up sposa', price: 150, duration: 120 },
+      { id: 'viso-2', name: 'Trattamento viso relax', price: 40, duration: 50 },
+      { id: 'nails-13', name: 'Manicure + semipermanente rinforzato', price: 33, duration: 55 },
+    ],
+    original_price: 223,
+    promo_price: 199,
+    duration_minutes: 225,
+    featured: 0,
+    show_on_hero: 0,
+  },
+];
 
 // DOM Elements
 const leftColEl = document.getElementById('listinoLeftCol');
@@ -233,6 +299,39 @@ function addMultipleServices(serviceIds, openDrawerAfter = true) {
 }
 
 /**
+ * Add a Monthly Promotion directly into the Beauty Bag with promo pricing & duration
+ */
+function addPromotionToBag(promo, openDrawerAfter = true) {
+  if (!promo) return;
+  const numericId = Number(promo.id);
+  const promoKey = `promo-${promo.id}`;
+  const alreadyIn = selectedBag.some((b) => b.id === promoKey);
+  if (!alreadyIn) {
+    const isPersistentPromo = Number.isFinite(numericId) && numericId > 0;
+    selectedBag.push({
+      uid: `${promoKey}-${Date.now()}-${Math.random()}`,
+      id: promoKey,
+      promo_id: isPersistentPromo ? numericId : null,
+      is_promotion: isPersistentPromo,
+      name: isPersistentPromo ? `Promo: ${promo.title}` : promo.title,
+      price: Number(promo.promo_price ?? promo.price ?? 0),
+      originalPrice: Number(promo.original_price ?? 0),
+      duration: Math.max(10, Number(promo.duration_minutes || 60)),
+      categoryTitle: promo.badge_text || 'PROMO DEL MESE',
+      isGiftCard: false,
+      included_services: Array.isArray(promo.services) ? promo.services : [],
+    });
+  }
+  updateBagUI();
+  renderListino();
+  const d = document.getElementById('bookingDateInput')?.value;
+  if (d && purchaseMode === 'booking') refreshAvailableSlots(d);
+  if (openDrawerAfter) {
+    openCheckoutDrawer();
+  }
+}
+
+/**
  * Remove item by UID from drawer
  */
 function removeBagItemByUid(uid) {
@@ -289,14 +388,20 @@ function updateBagUI() {
     selectedBag.forEach((item) => {
       const li = document.createElement('li');
       li.className = 'bag-item';
+      const hasDiscount = Number(item.originalPrice || 0) > Number(item.price || 0);
+      const subNames =
+        Array.isArray(item.included_services) && item.included_services.length > 0
+          ? `<div class="bag-item-promo-sub">${item.included_services.map((s) => escapePublicHtml(s.name)).join(' + ')}</div>`
+          : '';
       li.innerHTML = `
         <div>
-          <span class="bag-item-cat">${item.categoryTitle}</span>
-          <div class="bag-item-title">${item.name}</div>
+          <span class="bag-item-cat">${escapePublicHtml(item.categoryTitle)}</span>
+          <div class="bag-item-title">${escapePublicHtml(item.name)}</div>
+          ${subNames}
         </div>
         <div class="bag-item-right">
-          <span class="bag-item-price">${item.price} €</span>
-          <button type="button" class="btn-remove-item" aria-label="Rimuovi ${item.name}">✕</button>
+          <span class="bag-item-price">${hasDiscount ? `<del class="bag-item-old-price">${Number(item.originalPrice).toFixed(0)} €</del>` : ''}${item.price} €</span>
+          <button type="button" class="btn-remove-item" aria-label="Rimuovi ${escapePublicHtml(item.name)}">✕</button>
         </div>
       `;
       li.querySelector('.btn-remove-item').addEventListener('click', () => removeBagItemByUid(item.uid));
@@ -364,7 +469,12 @@ function buildWhatsAppUrl() {
   const clientNotes = document.getElementById('clientNotesInput')?.value.trim() || '';
   const bookingDate = document.getElementById('bookingDateInput')?.value || '';
   const totalEuro = selectedBag.reduce((acc, item) => acc + item.price, 0);
-  const listText = selectedBag.map((i) => `• ${i.name} (${i.price} €)`).join('\n');
+  const listText = selectedBag
+    .map((i) => {
+      const hasDiscount = Number(i.originalPrice || 0) > Number(i.price || 0);
+      return `• ${i.name} (${i.price} €${hasDiscount ? ` anziché ${Number(i.originalPrice).toFixed(0)} €` : ''})`;
+    })
+    .join('\n');
 
   const msg = `Ciao *Giulia Beauty Studio* ♡\nVorrei ${
     purchaseMode === 'booking'
@@ -525,8 +635,165 @@ async function loadPublicOperators() {
   }
 }
 
+function formatPromoValidityLabel(promo) {
+  if (!promo) return '';
+  if (promo.valid_until) {
+    const parts = String(promo.valid_until).split('-');
+    if (parts.length === 3) return `Fino al ${parts[2]}/${parts[1]}`;
+  }
+  return promo.month_label || '';
+}
+
+function syncHeroPromoSpotlight() {
+  const tagEl = document.getElementById('heroFloatingTag');
+  const titleEl = document.getElementById('heroFloatingTitle');
+  const metaEl = document.getElementById('heroFloatingMeta');
+  const priceEl = document.getElementById('heroFloatingPrice');
+  const btnEl = document.getElementById('heroQuickAddBtn');
+  if (!tagEl || !titleEl || !metaEl || !priceEl || !btnEl) return;
+
+  heroOverridePromo = publicPromotions.find((p) => Number(p.show_on_hero) === 1) || null;
+  if (!heroOverridePromo) {
+    tagEl.textContent = 'Più Richiesto in Studio';
+    titleEl.textContent = 'Manicure + Semipermanente & Laminazione Ciglia';
+    metaEl.textContent = 'Rituale Completo • 105 min';
+    priceEl.textContent = '73 €';
+    btnEl.textContent = '+ Aggiungi entrambi al Riepilogo';
+    return;
+  }
+
+  const orig = Number(heroOverridePromo.original_price || 0);
+  const val = Number(heroOverridePromo.promo_price || 0);
+  const dur = Number(heroOverridePromo.duration_minutes || 60);
+  const tagText = heroOverridePromo.badge_text || heroOverridePromo.month_label || 'Promo del Mese';
+
+  tagEl.textContent = tagText;
+  titleEl.textContent = heroOverridePromo.title;
+  metaEl.textContent = `${heroOverridePromo.month_label || 'Offerta Mese'} • ${dur} min`;
+  priceEl.innerHTML =
+    orig > val
+      ? `<del class="hero-floating-price-old">${orig.toFixed(0)} €</del>${val.toFixed(0)} €`
+      : `${val.toFixed(0)} €`;
+  btnEl.textContent = '+ Seleziona Promo al Riepilogo';
+}
+
+function renderPublicPromotions() {
+  const sectionEl = document.getElementById('percorsi-esclusivi');
+  const gridEl = document.getElementById('promotionsGrid');
+  const navLinkEl = document.getElementById('navPromotionsLink');
+  const mobLinkEl = document.getElementById('mobileNavPromotionsLink');
+  const bannerWrapEl = document.getElementById('listinoPromoBannerWrap');
+  const bannerTextEl = document.getElementById('listinoPromoBannerText');
+
+  const activeList = Array.isArray(publicPromotions) ? publicPromotions : [];
+  const hasAny = activeList.length > 0;
+
+  if (sectionEl) sectionEl.hidden = !hasAny;
+  if (navLinkEl) navLinkEl.hidden = !hasAny;
+  if (mobLinkEl) mobLinkEl.hidden = !hasAny;
+  if (bannerWrapEl) bannerWrapEl.hidden = !hasAny;
+
+  if (!hasAny) {
+    if (gridEl) gridEl.innerHTML = '';
+    syncHeroPromoSpotlight();
+    return;
+  }
+
+  if (bannerTextEl) {
+    bannerTextEl.textContent =
+      activeList.length === 1
+        ? `Promo del Mese: ${activeList[0].title} (${Number(activeList[0].promo_price || 0).toFixed(0)} €)`
+        : `${activeList.length} Promozioni del Mese attive — Scopri le offerte`;
+  }
+
+  if (!gridEl) return;
+  gridEl.classList.remove('has-1', 'has-2');
+  if (activeList.length === 1) gridEl.classList.add('has-1');
+  else if (activeList.length === 2) gridEl.classList.add('has-2');
+
+  gridEl.innerHTML = activeList
+    .map((p) => {
+      const orig = Number(p.original_price || 0);
+      const val = Number(p.promo_price || 0);
+      const dur = Number(p.duration_minutes || 60);
+      const hasDiscount = orig > val && orig > 0;
+      const pct = hasDiscount ? Math.round(((orig - val) / orig) * 100) : 0;
+      const validityLabel = formatPromoValidityLabel(p);
+      const itemsHtml =
+        Array.isArray(p.services) && p.services.length > 0
+          ? `<ul class="package-includes">${p.services
+              .map(
+                (it) =>
+                  `<li><span>${escapePublicHtml(it.name)}</span> <span class="inc-price">${Number(it.price || 0) > 0 ? `${Number(it.price).toFixed(0)} €` : 'Incluso'}</span></li>`
+              )
+              .join('')}</ul>`
+          : '';
+
+      return `
+        <article class="package-card ${Number(p.featured) === 1 ? 'featured' : ''}">
+          <div>
+            <div class="package-badges-row">
+              <span class="package-badge">${escapePublicHtml(p.badge_text || 'Offerta del Mese')}</span>
+              ${validityLabel ? `<span class="package-month-tag">${escapePublicHtml(validityLabel)}</span>` : ''}
+              ${pct > 0 ? `<span class="package-discount-pill">-${pct}%</span>` : ''}
+            </div>
+            <h3 class="package-title">${escapePublicHtml(p.title)}</h3>
+            ${p.description ? `<p class="package-desc">${escapePublicHtml(p.description)}</p>` : ''}
+            ${itemsHtml}
+          </div>
+          <div class="package-footer">
+            <div class="package-price-block">
+              <span class="package-total-label">${hasDiscount ? 'Prezzo Promo' : 'Prezzo Offerta'}</span>
+              <div class="package-price-row">
+                ${hasDiscount ? `<span class="package-price-old">${orig.toFixed(0)} €</span>` : ''}
+                <span class="package-total-price">${val.toFixed(0)} €</span>
+              </div>
+              <span class="package-duration-note">${dur} min stimati</span>
+            </div>
+            <button type="button" class="btn-primary-luxury pkg-add-btn" data-promo-id="${escapePublicHtml(p.id)}">
+              + Seleziona Promo
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+
+  gridEl.querySelectorAll('.pkg-add-btn[data-promo-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const promo = activeList.find((item) => String(item.id) === String(btn.dataset.promoId));
+      if (promo) addPromotionToBag(promo, true);
+    });
+  });
+
+  syncHeroPromoSpotlight();
+}
+
+async function loadPublicPromotions() {
+  try {
+    const res = await publicFetchWithLoader(`${API_BASE}/public/promotions`, {}, {
+      label: 'Caricamento promozioni…',
+      blocking: false,
+      delayMs: 260,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ok && Array.isArray(data.promotions)) {
+        publicPromotions = data.promotions;
+        renderPublicPromotions();
+        return;
+      }
+    }
+  } catch (_) {
+    // Fallback below if static environment without Node backend
+  }
+  publicPromotions = FALLBACK_DEFAULT_PROMOTIONS;
+  renderPublicPromotions();
+}
+
 function initApp() {
   loadPublicOperators();
+  loadPublicPromotions();
   const opSel = document.getElementById('bookingOperatorSelect');
   if (opSel) {
     opSel.addEventListener('change', () => {
@@ -567,17 +834,13 @@ function initApp() {
     renderListino();
   });
 
-  // Hero Quick Add Button
+  // Hero Quick Add Button (dynamic Promo spotlight or classic duo fallback)
   document.getElementById('heroQuickAddBtn').addEventListener('click', () => {
+    if (heroOverridePromo) {
+      addPromotionToBag(heroOverridePromo, true);
+      return;
+    }
     addMultipleServices(['nails-12', 'lashes-1'], true);
-  });
-
-  // Curated Packages Buttons
-  document.querySelectorAll('.pkg-add-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const ids = btn.dataset.services.split(',');
-      addMultipleServices(ids, true);
-    });
   });
 
   // Concierge Quiz Logic
@@ -887,6 +1150,8 @@ function initApp() {
           confirmBtn.textContent = originalBtnText;
           if (data.code === 'SLOT_OCCUPIED' || data.code === 'SLOT_TOO_SOON') {
             refreshAvailableSlots(bookingDate);
+          } else if (data.code === 'PROMO_UNAVAILABLE') {
+            loadPublicPromotions();
           }
           return;
         }

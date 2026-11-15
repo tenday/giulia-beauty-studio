@@ -37,6 +37,9 @@ const STATE = {
   automationRuns: [],
   giftCards: [],
   giftCardsSummary: null,
+  promotions: [],
+  promoEditorItems: [],
+  selectedApptPromoId: 0,
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
   insights: null,
@@ -122,6 +125,8 @@ function renderMessageTemplate(code, vars = {}) {
       'Ciao {nome} ♡ Il tuo appuntamento da *Giulia Beauty Studio* del *{data}* alle *{ora}* con {operatore} ({trattamenti}) è confermato! A presto.',
     gift_card:
       'Ciao {nome}! ♡ Ecco la tua *Gift Card Giulia Beauty Studio*{da_parte}: *{regalo}*{scadenza}.\n{dedica}\n🔑 Codice Univoco: *{codice}*\n📍 Via Principe Amedeo 17, Verdellino (BG) • Prenota su +39 331 504 5135',
+    promo_monthly:
+      'Ciao {nome} ♡ Questo mese da *Giulia Beauty Studio* c’è una promo speciale per te:\n✨ *{promo_titolo}* a *{promo_prezzo}* {promo_sconto}\n{promo_descrizione}\n\n📍 Via Principe Amedeo 17, Verdellino (BG) • Prenota su giuliabeautystudio.com o scrivici qui!',
   };
   let text = found?.body_template || fallbacks[code] || '';
   for (const [k, v] of Object.entries(vars)) {
@@ -408,6 +413,7 @@ async function refreshAllData() {
     loadMessagesData(),
     loadAutomationData(),
     loadGiftCards(),
+    loadPromotions(),
     loadAdminUsers(),
     loadInsights(),
   ]);
@@ -418,6 +424,7 @@ async function refreshAllData() {
   renderInventoryView();
   renderMessagesView();
   renderGiftCardsView();
+  renderPromotionsView();
   renderInsightsView();
   renderSettingsView();
   CAL_UI.lastCalendarSyncAt = Date.now();
@@ -480,6 +487,60 @@ async function loadGiftCards() {
   const data = await apiFetch('admin/gift-cards', { method: 'GET' });
   STATE.giftCards = data.gift_cards || [];
   STATE.giftCardsSummary = data.summary || null;
+}
+
+function getPromotionComputedStatus(promo, todayIso = toIsoDate(new Date())) {
+  if (!promo || Number(promo.active) !== 1) return 'inactive';
+  if (promo.valid_from && String(promo.valid_from) > todayIso) return 'scheduled';
+  if (promo.valid_until && String(promo.valid_until) < todayIso) return 'expired';
+  return 'active';
+}
+
+function getActivePromotionsList() {
+  const todayIso = toIsoDate(new Date());
+  return (STATE.promotions || []).filter((p) => getPromotionComputedStatus(p, todayIso) === 'active');
+}
+
+function isAppointmentPromo(appt) {
+  if (!appt) return false;
+  const parsed = parseAppointmentServices(appt);
+  if (parsed.some((s) => s && (s.is_promotion || Number(s.promo_id) > 0))) return true;
+  return /^promo:/i.test(String(appt.services_summary || '').trim());
+}
+
+function populateApptPromoSelector() {
+  const groupEl = document.getElementById('apptPromoGroup');
+  const sel = document.getElementById('apptPromoSelect');
+  if (!sel || !groupEl) return;
+  const activePromos = getActivePromotionsList();
+  groupEl.hidden = activePromos.length === 0;
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">— Nessuna promozione applicata —</option>${activePromos
+    .map((p) => {
+      const oldTxt = Number(p.original_price) > Number(p.promo_price) ? ` (listino ${Number(p.original_price).toFixed(0)}€)` : '';
+      return `<option value="${p.id}">${escapeHtml(p.title)} — ${Number(p.promo_price).toFixed(0)}€${oldTxt} • ${p.duration_minutes}m</option>`;
+    })
+    .join('')}`;
+  if (prev && activePromos.some((p) => String(p.id) === String(prev))) {
+    sel.value = prev;
+  }
+}
+
+async function loadPromotions() {
+  try {
+    const data = await apiFetch('admin/promotions', { method: 'GET' });
+    STATE.promotions = data.promotions || [];
+  } catch {
+    STATE.promotions = [];
+  }
+  const activeCount = getActivePromotionsList().length;
+  const navBadge = document.getElementById('promoNavBadge');
+  if (navBadge) {
+    navBadge.textContent = String(activeCount);
+    navBadge.hidden = activeCount === 0;
+  }
+  populateApptPromoSelector();
+  populateGiftCardSelectors();
 }
 
 async function loadAdminUsers() {
@@ -1947,7 +2008,7 @@ function startAgendaAutoRefresh() {
   }
 }
 
-const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'insights', 'settings'];
+const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'promotions', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
@@ -1972,6 +2033,7 @@ function switchAdminView(viewName) {
   if (viewName === 'inventory') renderInventoryView();
   if (viewName === 'messages') renderMessagesView();
   if (viewName === 'giftcards') renderGiftCardsView();
+  if (viewName === 'promotions') renderPromotionsView();
   if (viewName === 'insights') renderInsightsView();
   if (viewName === 'settings') renderSettingsView();
 }
@@ -2831,7 +2893,7 @@ function renderCalendar() {
              style="top:${topPx}px; height:${heightPx}px; ${laneStyle} border-left: 4px solid ${escapeHtml(opColor)};">
           <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
-          <div class="cal-event-service">${escapeHtml(appt.services_summary)}</div>
+          <div class="cal-event-service">${isAppointmentPromo(appt) ? '<span class="promo-appt-badge">Promo</span>' : ''}${escapeHtml(appt.services_summary)}</div>
           ${noteChipHtml}
           <div class="cal-resize-handle" title="Trascina per modificare la durata"></div>
         </div>
@@ -3099,6 +3161,9 @@ function buildCatalogPicker() {
     cb.addEventListener('change', () => {
       const checked = Array.from(box.querySelectorAll('input:checked'));
       if (checked.length > 0) {
+        STATE.selectedApptPromoId = 0;
+        const promoSel = document.getElementById('apptPromoSelect');
+        if (promoSel) promoSel.value = '';
         const names = checked.map((c) => c.dataset.name);
         const totalP = checked.reduce((s, c) => s + Number(c.dataset.price), 0);
         const totalD = checked.reduce((s, c) => s + Number(c.dataset.duration), 0);
@@ -3108,6 +3173,31 @@ function buildCatalogPicker() {
       }
     });
   });
+
+  const promoSel = document.getElementById('apptPromoSelect');
+  if (promoSel) {
+    promoSel.addEventListener('change', () => {
+      const promoId = Number(promoSel.value || 0);
+      if (!promoId) {
+        STATE.selectedApptPromoId = 0;
+        return;
+      }
+      const promo = (STATE.promotions || []).find((p) => Number(p.id) === promoId);
+      if (!promo) return;
+      STATE.selectedApptPromoId = Number(promo.id);
+
+      const includedIds = new Set(
+        (promo.services || []).map((s) => String(s.id || '').trim()).filter(Boolean)
+      );
+      box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.checked = includedIds.has(String(cb.value));
+      });
+
+      document.getElementById('apptServicesSummaryInput').value = `Promo: ${promo.title}`;
+      document.getElementById('apptPriceInput').value = Number(promo.promo_price || 0);
+      document.getElementById('apptDurationInput').value = Number(promo.duration_minutes || 60);
+    });
+  }
 }
 
 function renderSelectedClientNotePreview(clientId) {
@@ -3162,10 +3252,14 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   const alertEl = document.getElementById('apptModalAlert');
   alertEl.hidden = true;
 
-  // Reset checkboxes
+  // Reset checkboxes & promo selector
   document.querySelectorAll('#apptCatalogPicker input[type="checkbox"]').forEach((c) => {
     c.checked = false;
   });
+  populateApptPromoSelector();
+  STATE.selectedApptPromoId = 0;
+  const promoSelEl = document.getElementById('apptPromoSelect');
+  if (promoSelEl) promoSelEl.value = '';
 
   const deleteBtn = document.getElementById('deleteApptBtn');
   const duplicateBtn = document.getElementById('duplicateApptBtn');
@@ -3179,6 +3273,28 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   const openClientFromApptBtn = document.getElementById('openClientFromApptBtn');
 
   if (appt) {
+    const parsedApptServices = parseAppointmentServices(appt);
+    const matchedIds = new Set();
+    parsedApptServices.forEach((s) => {
+      if (s?.id) matchedIds.add(String(s.id));
+      if (Array.isArray(s?.included_services)) {
+        s.included_services.forEach((sub) => {
+          if (sub?.id) matchedIds.add(String(sub.id));
+        });
+      }
+      if ((s?.is_promotion || Number(s?.promo_id) > 0) && promoSelEl) {
+        const pid = Number(s.promo_id || 0);
+        if (pid > 0) {
+          STATE.selectedApptPromoId = pid;
+          if ([...promoSelEl.options].some((o) => Number(o.value) === pid)) {
+            promoSelEl.value = String(pid);
+          }
+        }
+      }
+    });
+    document.querySelectorAll('#apptCatalogPicker input[type="checkbox"]').forEach((c) => {
+      if (matchedIds.has(String(c.value))) c.checked = true;
+    });
     if (sendWaWrap) sendWaWrap.hidden = true;
     document.getElementById('apptModalTitle').textContent = `Appuntamento • ${appt.client_name}`;
     document.getElementById('apptIdInput').value = appt.id;
@@ -3799,15 +3915,52 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const id = document.getElementById('apptIdInput').value;
     const opSelect = document.getElementById('apptOperatorSelect');
+    const summaryVal = document.getElementById('apptServicesSummaryInput').value.trim();
+    const priceVal = Number(document.getElementById('apptPriceInput').value) || 0;
+    const durVal = Number(document.getElementById('apptDurationInput').value) || 60;
+
+    let selectedServicesPayload = [];
+    if (Number(STATE.selectedApptPromoId) > 0) {
+      const activePromo = (STATE.promotions || []).find((p) => Number(p.id) === Number(STATE.selectedApptPromoId));
+      if (activePromo) {
+        selectedServicesPayload = [
+          {
+            id: `promo-${activePromo.id}`,
+            promo_id: activePromo.id,
+            is_promotion: true,
+            name: summaryVal || `Promo: ${activePromo.title}`,
+            price: priceVal,
+            original_price: Number(activePromo.original_price || 0),
+            duration: durVal,
+            included_services: activePromo.services || [],
+          },
+        ];
+      }
+    }
+    if (selectedServicesPayload.length === 0) {
+      const checkedBoxes = Array.from(document.querySelectorAll('#apptCatalogPicker input[type="checkbox"]:checked'));
+      if (checkedBoxes.length > 0) {
+        selectedServicesPayload = checkedBoxes.map((c) => ({
+          id: c.value,
+          name: c.dataset.name,
+          price: Number(c.dataset.price || 0),
+          duration: Number(c.dataset.duration || 30),
+        }));
+      } else if (summaryVal) {
+        selectedServicesPayload = [{ id: null, name: summaryVal, price: priceVal, duration: durVal }];
+      }
+    }
+
     const payload = {
       action: id ? 'update' : 'create',
       id: id ? Number(id) : undefined,
       operator_id: opSelect && opSelect.value ? Number(opSelect.value) : undefined,
       appointment_date: document.getElementById('apptDateInput').value,
       start_time: document.getElementById('apptTimeInput').value,
-      duration_minutes: Number(document.getElementById('apptDurationInput').value) || 60,
-      services_summary: document.getElementById('apptServicesSummaryInput').value.trim(),
-      total_price: Number(document.getElementById('apptPriceInput').value) || 0,
+      duration_minutes: durVal,
+      services: selectedServicesPayload,
+      services_summary: summaryVal,
+      total_price: priceVal,
       status: document.getElementById('apptStatusSelect').value,
       notes: document.getElementById('apptNotesInput').value.trim(),
     };
@@ -4394,6 +4547,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initWhatsAppAutomationControls();
   initGiftCardGeneratorControls();
+  initPromotionsControls();
 });
 
 /* ==========================================================================
@@ -4447,7 +4601,7 @@ function renderInsightsView() {
     <div class="kpi-card">
       <span class="kpi-label">Ticket Medio Studio</span>
       <strong class="kpi-value">${s.avg_ticket.toFixed(0)} €</strong>
-      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Su ${s.total_active_appointments} appuntamenti</span>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Su ${s.total_active_appointments} app. • ${s.active_promotions_count || 0} promo (${s.month_promo_bookings_count || 0} nel mese)</span>
     </div>
     <div class="kpi-card">
       <span class="kpi-label">Assenti 30+ / 60+ Giorni</span>
@@ -4936,6 +5090,13 @@ function syncQuickMessagePreview() {
   const preview = document.getElementById('msgPreviewText');
   if (!cliSel || !tplSel || !preview) return;
   const client = STATE.clients.find((c) => Number(c.id) === Number(cliSel.value));
+  const topPromo = getActivePromotionsList()[0] || null;
+  const promoOrig = Number(topPromo?.original_price || 0);
+  const promoVal = Number(topPromo?.promo_price || 0);
+  const promoSconto =
+    topPromo && promoOrig > promoVal && promoOrig > 0
+      ? `(invece di ${promoOrig.toFixed(0)} €, -${Math.round(((promoOrig - promoVal) / promoOrig) * 100)}%)`
+      : '';
   preview.value = renderMessageTemplate(tplSel.value, {
     nome: client ? client.full_name : 'Cliente',
     data: toIsoDate(new Date()),
@@ -4944,6 +5105,11 @@ function syncQuickMessagePreview() {
     giorni_assenza: '45',
     link: `${window.location.origin}/privacy-sign.html`,
     otp: '123456',
+    promo_titolo: topPromo ? topPromo.title : 'Rituale Promo del Mese',
+    promo_prezzo: topPromo ? `${promoVal.toFixed(0)} €` : '55 €',
+    promo_listino: topPromo ? `${promoOrig.toFixed(0)} €` : '62 €',
+    promo_sconto: promoSconto,
+    promo_descrizione: topPromo?.description || 'Offerta esclusiva valida questo mese in studio.',
   });
 }
 
@@ -5945,11 +6111,25 @@ async function sendGiftCardViaWhatsapp(card) {
 function populateGiftCardSelectors() {
   const catSel = document.getElementById('gcCatalogSelect');
   if (catSel && window.STUDIO_CATALOG) {
+    const prev = catSel.value;
     const firstOpt = '<option value="">— Oppure scrivi manualmente qui sotto —</option>';
     const opts = [];
+    const activePromos = getActivePromotionsList();
+    if (activePromos.length > 0) {
+      opts.push('<optgroup label="🏷️ Promozioni del Mese Attive">');
+      activePromos.forEach((p) => {
+        opts.push(
+          `<option value="${escapeHtml(p.title)}" data-price="${Number(p.promo_price || 0)}">🏷️ ${escapeHtml(p.title)} — ${Number(p.promo_price || 0)} €</option>`
+        );
+      });
+      opts.push('</optgroup>');
+    }
     window.STUDIO_CATALOG.forEach((cat) => {
       opts.push(`<optgroup label="${escapeHtml(cat.title)}">`);
-      (cat.items || []).forEach((item) => {
+      const itemsList = Array.isArray(cat.items)
+        ? cat.items
+        : (cat.subgroups || []).flatMap((sg) => sg.items || []);
+      itemsList.forEach((item) => {
         opts.push(
           `<option value="${escapeHtml(item.name)}" data-price="${Number(item.price || 0)}">${escapeHtml(item.name)} — ${Number(item.price || 0)} €</option>`
         );
@@ -5957,6 +6137,7 @@ function populateGiftCardSelectors() {
       opts.push('</optgroup>');
     });
     catSel.innerHTML = firstOpt + opts.join('');
+    if (prev) catSel.value = prev;
   }
 
   const cliSel = document.getElementById('gcClientSelect');
@@ -6290,6 +6471,476 @@ function renderGiftCardsView() {
       await loadGiftCards();
       renderGiftCardsView();
       showAgendaToast('Gift Card eliminata');
+    });
+  });
+}
+
+/* ==========================================================================
+   PROMOZIONI DEL MESE (GESTIONE COMPLETA + ANTEPRIMA VETRINA)
+   ========================================================================== */
+function populatePromoCatalogDropdown() {
+  const sel = document.getElementById('promoCatalogAddSelect');
+  if (!sel || !window.STUDIO_CATALOG) return;
+  const opts = ['<option value="">— Aggiungi un trattamento dal listino —</option>'];
+  window.STUDIO_CATALOG.forEach((cat) => {
+    opts.push(`<optgroup label="${escapeHtml(cat.title)}">`);
+    const itemsList = (cat.subgroups || []).flatMap((sg) => sg.items || []);
+    itemsList.forEach((item) => {
+      opts.push(
+        `<option value="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}" data-price="${Number(item.price || 0)}" data-duration="${Number(item.duration || 30)}">${escapeHtml(item.name)} — ${Number(item.price || 0)} € (${Number(item.duration || 30)} min)</option>`
+      );
+    });
+    opts.push('</optgroup>');
+  });
+  sel.innerHTML = opts.join('');
+}
+
+function renderPromoSelectedItems() {
+  const box = document.getElementById('promoItemsContainer');
+  if (!box) return;
+  const items = STATE.promoEditorItems || [];
+  if (items.length === 0) {
+    box.innerHTML = '<p class="muted-text" style="font-size:0.78rem;margin:4px 0 0;">Nessun trattamento ancora aggiunto (opzionale ma consigliato per calcolare durata e listino).</p>';
+    return;
+  }
+  box.innerHTML = items
+    .map(
+      (item, idx) => `
+      <div class="promo-selected-item-row">
+        <div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <span class="promo-selected-item-meta"> • ${Number(item.price || 0).toFixed(0)} € • ${Number(item.duration || 30)} min</span>
+        </div>
+        <button type="button" class="btn-outline-sm btn-xs promo-remove-item-btn" data-idx="${idx}" title="Rimuovi voce">✕</button>
+      </div>`
+    )
+    .join('');
+
+  box.querySelectorAll('.promo-remove-item-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.idx);
+      STATE.promoEditorItems.splice(idx, 1);
+      renderPromoSelectedItems();
+      recalcPromoTotalsFromItems();
+      updatePromoLivePreview();
+    });
+  });
+}
+
+function recalcPromoTotalsFromItems() {
+  const items = STATE.promoEditorItems || [];
+  const sumPrice = items.reduce((s, it) => s + Number(it.price || 0), 0);
+  const sumDur = items.reduce((s, it) => s + Math.max(5, Number(it.duration || 30)), 0);
+  const origInput = document.getElementById('promoOriginalPriceInput');
+  const priceInput = document.getElementById('promoPriceInput');
+  const durInput = document.getElementById('promoDurationInput');
+  if (origInput && items.length > 0) origInput.value = sumPrice;
+  if (durInput && items.length > 0) durInput.value = sumDur;
+  if (priceInput && Number(priceInput.value || 0) === 0 && sumPrice > 0) {
+    priceInput.value = sumPrice;
+  }
+}
+
+function readPromoFormDraft() {
+  const originalPrice = Math.max(0, Number(document.getElementById('promoOriginalPriceInput')?.value || 0));
+  const promoPrice = Math.max(0, Number(document.getElementById('promoPriceInput')?.value || 0));
+  return {
+    id: Number(document.getElementById('promoEditIdInput')?.value || 0) || null,
+    title: document.getElementById('promoTitleInput')?.value.trim() || 'Promozione del Mese',
+    badge_text: document.getElementById('promoBadgeInput')?.value.trim() || 'Offerta Esclusiva',
+    month_label: document.getElementById('promoMonthLabelInput')?.value.trim() || '',
+    description: document.getElementById('promoDescInput')?.value.trim() || '',
+    services: [...(STATE.promoEditorItems || [])],
+    original_price: originalPrice,
+    promo_price: promoPrice,
+    duration_minutes: Math.max(10, Number(document.getElementById('promoDurationInput')?.value || 60)),
+    valid_from: document.getElementById('promoValidFromInput')?.value || null,
+    valid_until: document.getElementById('promoValidUntilInput')?.value || null,
+    sort_order: Number(document.getElementById('promoSortOrderInput')?.value || 0) || 0,
+    active: document.getElementById('promoActiveCheck')?.checked ? 1 : 0,
+    featured: document.getElementById('promoFeaturedCheck')?.checked ? 1 : 0,
+    show_on_hero: document.getElementById('promoHeroCheck')?.checked ? 1 : 0,
+  };
+}
+
+function updatePromoLivePreview() {
+  const wrap = document.getElementById('promoLivePreviewWrap');
+  const savingsBadge = document.getElementById('promoSavingsPreviewBadge');
+  if (!wrap) return;
+  const draft = readPromoFormDraft();
+  const hasDiscount = draft.original_price > draft.promo_price && draft.original_price > 0;
+  const pct = hasDiscount ? Math.round(((draft.original_price - draft.promo_price) / draft.original_price) * 100) : 0;
+
+  if (savingsBadge) {
+    savingsBadge.hidden = !hasDiscount;
+    savingsBadge.textContent = `Sconto: -${pct}% (${(draft.original_price - draft.promo_price).toFixed(0)} €)`;
+  }
+
+  const itemsHtml =
+    draft.services.length > 0
+      ? `<ul class="promo-preview-includes">${draft.services
+          .map(
+            (it) =>
+              `<li><span>${escapeHtml(it.name)}</span><span>${Number(it.price || 0).toFixed(0)} €</span></li>`
+          )
+          .join('')}</ul>`
+      : '';
+
+  const validityTxt =
+    draft.valid_from || draft.valid_until
+      ? `Validità: ${draft.valid_from ? formatShortItDate(draft.valid_from) : 'subito'} → ${draft.valid_until ? formatShortItDate(draft.valid_until) : 'fine mese'}`
+      : '';
+
+  wrap.innerHTML = `
+    <article class="promo-preview-card ${draft.featured ? 'is-featured' : ''}">
+      <div class="promo-preview-badges">
+        <span class="promo-preview-badge">${escapeHtml(draft.badge_text || 'Promo del Mese')}</span>
+        ${draft.month_label ? `<span class="promo-preview-month">${escapeHtml(draft.month_label)}</span>` : ''}
+        ${hasDiscount ? `<span class="promo-preview-month">-${pct}%</span>` : ''}
+        ${draft.show_on_hero ? `<span class="promo-preview-month">⭐ Hero Home</span>` : ''}
+      </div>
+      <h4 class="promo-preview-title">${escapeHtml(draft.title || 'Titolo Promozione')}</h4>
+      ${draft.description ? `<p class="promo-preview-desc">${escapeHtml(draft.description)}</p>` : ''}
+      ${itemsHtml}
+      <div class="promo-preview-footer">
+        <div>
+          <span class="kpi-label" style="display:block;">${hasDiscount ? 'Prezzo Promo Riservato' : 'Prezzo Promozionale'} • ${draft.duration_minutes} min</span>
+          ${hasDiscount ? `<span class="promo-price-old">${draft.original_price.toFixed(0)} €</span>` : ''}
+          <span class="promo-price-new">${draft.promo_price.toFixed(0)} €</span>
+          ${validityTxt ? `<div class="muted-text" style="font-size:0.72rem;margin-top:4px;">${escapeHtml(validityTxt)}</div>` : ''}
+        </div>
+        <span class="btn-primary-admin" style="pointer-events:none;">+ Seleziona Promo</span>
+      </div>
+    </article>
+  `;
+}
+
+function resetPromoEditorForm() {
+  document.getElementById('promoEditIdInput').value = '';
+  document.getElementById('promoFormHeading').textContent = '🏷️ Nuova Promozione del Mese';
+  document.getElementById('promoSaveSubmitBtn').textContent = '💾 Salva Promozione';
+  document.getElementById('promoTitleInput').value = '';
+  const now = new Date();
+  const curMonthName = `${MONTHS_IT[now.getMonth()]} ${now.getFullYear()}`;
+  document.getElementById('promoBadgeInput').value = `♡ Promo ${MONTHS_IT[now.getMonth()]}`;
+  document.getElementById('promoMonthLabelInput').value = curMonthName;
+  document.getElementById('promoDescInput').value = '';
+  document.getElementById('promoOriginalPriceInput').value = 0;
+  document.getElementById('promoPriceInput').value = 0;
+  document.getElementById('promoDurationInput').value = 60;
+  document.getElementById('promoValidFromInput').value = '';
+  document.getElementById('promoValidUntilInput').value = '';
+  document.getElementById('promoSortOrderInput').value = String((STATE.promotions || []).length + 1);
+  document.getElementById('promoActiveCheck').checked = true;
+  document.getElementById('promoFeaturedCheck').checked = false;
+  document.getElementById('promoHeroCheck').checked = false;
+  const alertEl = document.getElementById('promoFormAlert');
+  if (alertEl) alertEl.hidden = true;
+  STATE.promoEditorItems = [];
+  renderPromoSelectedItems();
+  updatePromoLivePreview();
+}
+
+function loadPromoIntoEditor(promo) {
+  if (!promo) return;
+  document.getElementById('promoEditIdInput').value = promo.id;
+  document.getElementById('promoFormHeading').textContent = `✏️ Modifica Promo • ${promo.title}`;
+  document.getElementById('promoSaveSubmitBtn').textContent = '💾 Aggiorna Promozione';
+  document.getElementById('promoTitleInput').value = promo.title || '';
+  document.getElementById('promoBadgeInput').value = promo.badge_text || '';
+  document.getElementById('promoMonthLabelInput').value = promo.month_label || '';
+  document.getElementById('promoDescInput').value = promo.description || '';
+  document.getElementById('promoOriginalPriceInput').value = Number(promo.original_price || 0);
+  document.getElementById('promoPriceInput').value = Number(promo.promo_price || 0);
+  document.getElementById('promoDurationInput').value = Number(promo.duration_minutes || 60);
+  document.getElementById('promoValidFromInput').value = promo.valid_from || '';
+  document.getElementById('promoValidUntilInput').value = promo.valid_until || '';
+  document.getElementById('promoSortOrderInput').value = Number(promo.sort_order || 0);
+  document.getElementById('promoActiveCheck').checked = Number(promo.active) === 1;
+  document.getElementById('promoFeaturedCheck').checked = Number(promo.featured) === 1;
+  document.getElementById('promoHeroCheck').checked = Number(promo.show_on_hero) === 1;
+  const alertEl = document.getElementById('promoFormAlert');
+  if (alertEl) alertEl.hidden = true;
+  STATE.promoEditorItems = Array.isArray(promo.services) ? promo.services.map((s) => ({ ...s })) : [];
+  renderPromoSelectedItems();
+  updatePromoLivePreview();
+}
+
+function initPromotionsControls() {
+  const form = document.getElementById('promoEditorForm');
+  if (!form) return;
+
+  populatePromoCatalogDropdown();
+  resetPromoEditorForm();
+
+  document.getElementById('promoResetFormBtn')?.addEventListener('click', () => {
+    resetPromoEditorForm();
+    document.getElementById('promoTitleInput')?.focus();
+  });
+
+  document.getElementById('promoCatalogAddBtn')?.addEventListener('click', () => {
+    const sel = document.getElementById('promoCatalogAddSelect');
+    const opt = sel?.selectedOptions?.[0];
+    if (!opt || !opt.value) return;
+    STATE.promoEditorItems.push({
+      id: opt.value,
+      name: opt.dataset.name || opt.textContent,
+      price: Number(opt.dataset.price || 0),
+      duration: Number(opt.dataset.duration || 30),
+    });
+    sel.value = '';
+    renderPromoSelectedItems();
+    recalcPromoTotalsFromItems();
+    updatePromoLivePreview();
+  });
+
+  document.getElementById('promoCustomAddBtn')?.addEventListener('click', () => {
+    const nameEl = document.getElementById('promoCustomNameInput');
+    const priceEl = document.getElementById('promoCustomPriceInput');
+    const durEl = document.getElementById('promoCustomDurInput');
+    const name = nameEl?.value.trim();
+    if (!name) return;
+    STATE.promoEditorItems.push({
+      id: null,
+      name,
+      price: Math.max(0, Number(priceEl?.value || 0)),
+      duration: Math.max(5, Number(durEl?.value || 20)),
+    });
+    nameEl.value = '';
+    if (priceEl) priceEl.value = '';
+    if (durEl) durEl.value = '';
+    renderPromoSelectedItems();
+    recalcPromoTotalsFromItems();
+    updatePromoLivePreview();
+  });
+
+  document.getElementById('promoSetCurrentMonthBtn')?.addEventListener('click', () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const first = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    const last = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    document.getElementById('promoValidFromInput').value = first;
+    document.getElementById('promoValidUntilInput').value = last;
+    const mlInput = document.getElementById('promoMonthLabelInput');
+    if (mlInput && !mlInput.value.trim()) {
+      mlInput.value = `${MONTHS_IT[m]} ${y}`;
+    }
+    updatePromoLivePreview();
+  });
+
+  [
+    'promoTitleInput',
+    'promoBadgeInput',
+    'promoMonthLabelInput',
+    'promoDescInput',
+    'promoOriginalPriceInput',
+    'promoPriceInput',
+    'promoDurationInput',
+    'promoValidFromInput',
+    'promoValidUntilInput',
+    'promoSortOrderInput',
+    'promoActiveCheck',
+    'promoFeaturedCheck',
+    'promoHeroCheck',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', updatePromoLivePreview);
+    el.addEventListener('change', updatePromoLivePreview);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const alertEl = document.getElementById('promoFormAlert');
+    if (alertEl) alertEl.hidden = true;
+    const draft = readPromoFormDraft();
+    try {
+      const res = await apiFetch('admin/promotions', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: draft.id ? 'update' : 'create',
+          id: draft.id || undefined,
+          title: draft.title,
+          badge_text: draft.badge_text,
+          month_label: draft.month_label,
+          description: draft.description,
+          services: draft.services,
+          original_price: draft.original_price,
+          promo_price: draft.promo_price,
+          duration_minutes: draft.duration_minutes,
+          valid_from: draft.valid_from,
+          valid_until: draft.valid_until,
+          sort_order: draft.sort_order,
+          active: draft.active === 1,
+          featured: draft.featured === 1,
+          show_on_hero: draft.show_on_hero === 1,
+        }),
+      });
+      await loadPromotions();
+      renderPromotionsView();
+      renderMessagesView();
+      await loadInsights();
+      renderInsightsView();
+      if (res?.promotion) loadPromoIntoEditor(res.promotion);
+      showAgendaToast(draft.id ? 'Promozione aggiornata e sincronizzata sul sito ✓' : 'Promozione pubblicata sul sito vetrina ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.textContent = err.message || 'Errore salvataggio promozione.';
+      }
+    }
+  });
+}
+
+function renderPromotionsView() {
+  const kpiStrip = document.getElementById('promoKpiStrip');
+  const listBox = document.getElementById('promoListContainer');
+  if (!listBox) return;
+
+  const todayIso = toIsoDate(new Date());
+  const promos = STATE.promotions || [];
+  const activePromos = promos.filter((p) => getPromotionComputedStatus(p, todayIso) === 'active');
+  const heroPromo = activePromos.find((p) => Number(p.show_on_hero) === 1);
+  const monthBookings = Number(STATE.insights?.summary?.month_promo_bookings_count || 0);
+
+  if (kpiStrip) {
+    kpiStrip.innerHTML = `
+      <div class="insight-kpi-card"><span class="kpi-label">Promo Attive Vetrina</span><strong>${activePromos.length}</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">Totale Configurate</span><strong>${promos.length}</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">Prenotazioni Promo (Mese)</span><strong>${monthBookings}</strong></div>
+      <div class="insight-kpi-card"><span class="kpi-label">In Evidenza Hero</span><strong>${heroPromo ? escapeHtml(heroPromo.title) : 'Standard'}</strong></div>
+    `;
+  }
+
+  if (promos.length === 0) {
+    listBox.innerHTML =
+      '<div style="padding:22px;text-align:center;" class="muted-text">Nessuna promozione configurata. Crea la prima promozione del mese usando il modulo a sinistra!</div>';
+    return;
+  }
+
+  const statusMeta = {
+    active: { label: 'Attiva Vetrina', cls: 'badge-confirmed' },
+    scheduled: { label: 'Programmata', cls: 'badge-pending' },
+    expired: { label: 'Scaduta', cls: 'badge-cancelled' },
+    inactive: { label: 'Disattivata', cls: 'badge-cancelled' },
+  };
+
+  listBox.innerHTML = `<div class="promo-admin-list">${promos
+    .map((p) => {
+      const st = getPromotionComputedStatus(p, todayIso);
+      const stInfo = statusMeta[st] || statusMeta.inactive;
+      const orig = Number(p.original_price || 0);
+      const val = Number(p.promo_price || 0);
+      const pct = orig > val && orig > 0 ? Math.round(((orig - val) / orig) * 100) : 0;
+      const validityTxt =
+        p.valid_from || p.valid_until
+          ? `${p.valid_from ? formatShortItDate(p.valid_from) : '...'} → ${p.valid_until ? formatShortItDate(p.valid_until) : '...'}`
+          : 'Sempre valida finché attiva';
+      return `
+        <div class="promo-admin-row ${st !== 'active' ? 'is-inactive' : ''}">
+          <div style="flex:1;min-width:210px;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
+              <span class="status-badge ${stInfo.cls}">${stInfo.label}</span>
+              ${Number(p.featured) === 1 ? '<span class="status-badge badge-pending">♡ In Evidenza</span>' : ''}
+              ${Number(p.show_on_hero) === 1 ? '<span class="status-badge badge-confirmed">⭐ Hero Home</span>' : ''}
+              ${pct > 0 ? `<span class="status-badge badge-confirmed">-${pct}%</span>` : ''}
+            </div>
+            <strong>${escapeHtml(p.title)}</strong>
+            <div class="muted-text" style="font-size:0.78rem;margin-top:2px;">
+              ${orig > val ? `<del>${orig.toFixed(0)} €</del> → ` : ''}<strong>${val.toFixed(0)} €</strong> • ${Number(p.duration_minutes || 60)} min • ${escapeHtml(validityTxt)}
+            </div>
+            ${p.services && p.services.length > 0 ? `<div class="muted-text" style="font-size:0.74rem;margin-top:2px;">Include: ${p.services.map((s) => escapeHtml(s.name)).join(' + ')}</div>` : ''}
+          </div>
+          <div class="promo-admin-row-actions">
+            <button type="button" class="btn-outline-sm btn-xs promo-toggle-btn" data-id="${p.id}">
+              ${Number(p.active) === 1 ? '⏸ Disattiva' : '▶ Attiva'}
+            </button>
+            <button type="button" class="btn-outline-sm btn-xs promo-edit-btn" data-id="${p.id}">✏️ Modifica</button>
+            <button type="button" class="btn-outline-sm btn-xs promo-wa-broadcast-btn" data-id="${p.id}" title="Prepara messaggio WhatsApp promo">📣 WA</button>
+            <button type="button" class="btn-outline-sm btn-xs promo-del-btn" data-id="${p.id}" title="Elimina">✕</button>
+          </div>
+        </div>
+      `;
+    })
+    .join('')}</div>`;
+
+  listBox.querySelectorAll('.promo-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = (STATE.promotions || []).find((item) => Number(item.id) === Number(btn.dataset.id));
+      if (p) {
+        loadPromoIntoEditor(p);
+        document.getElementById('promoTitleInput')?.focus();
+      }
+    });
+  });
+
+  listBox.querySelectorAll('.promo-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await apiFetch('admin/promotions', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'toggle_active', id: Number(btn.dataset.id) }),
+      });
+      await loadPromotions();
+      renderPromotionsView();
+      renderMessagesView();
+      showAgendaToast('Stato promozione aggiornato sul sito ✓');
+    });
+  });
+
+  listBox.querySelectorAll('.promo-wa-broadcast-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = (STATE.promotions || []).find((item) => Number(item.id) === Number(btn.dataset.id));
+      switchAdminView('messages');
+      const tplSel = document.getElementById('msgTemplateSelect');
+      if (tplSel && [...tplSel.options].some((o) => o.value === 'promo_monthly')) {
+        tplSel.value = 'promo_monthly';
+      }
+      const previewEl = document.getElementById('msgPreviewText');
+      if (previewEl && p) {
+        const cliSel = document.getElementById('msgClientSelect');
+        const client = (STATE.clients || []).find((c) => Number(c.id) === Number(cliSel?.value));
+        const orig = Number(p.original_price || 0);
+        const val = Number(p.promo_price || 0);
+        const sconto = orig > val && orig > 0 ? `(invece di ${orig.toFixed(0)} €, -${Math.round(((orig - val) / orig) * 100)}%)` : '';
+        previewEl.value = renderMessageTemplate('promo_monthly', {
+          nome: client ? client.full_name : 'Cliente',
+          promo_titolo: p.title,
+          promo_prezzo: `${val.toFixed(0)} €`,
+          promo_listino: `${orig.toFixed(0)} €`,
+          promo_sconto: sconto,
+          promo_descrizione: p.description || '',
+        });
+      }
+      showAgendaToast('Messaggio promo pronto in Centro Messaggi');
+    });
+  });
+
+  listBox.querySelectorAll('.promo-del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Conferma';
+        setTimeout(() => {
+          if (btn.isConnected) {
+            btn.dataset.armed = '0';
+            btn.textContent = '✕';
+          }
+        }, 3000);
+        return;
+      }
+      await apiFetch('admin/promotions', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete', id: Number(btn.dataset.id) }),
+      });
+      if (Number(document.getElementById('promoEditIdInput')?.value || 0) === Number(btn.dataset.id)) {
+        resetPromoEditorForm();
+      }
+      await loadPromotions();
+      renderPromotionsView();
+      renderMessagesView();
+      showAgendaToast('Promozione eliminata');
     });
   });
 }
