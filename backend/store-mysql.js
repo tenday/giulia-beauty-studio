@@ -3,8 +3,14 @@
  */
 const crypto = require('crypto');
 const { isDbConfigured, getPool, ensureSchemaMigrations, applySchema } = require('./db');
-const { formatRomeNow, getRomeNowParts, generateBookingCode } = require('./helpers');
-const { getAvailableOperatorsForSlot, buildDefaultSchedule, isLegacyDefaultSchedule } = require('./availability');
+const { formatRomeNow, getRomeNowParts, getRomeToday, timeToMinutes, generateBookingCode } = require('./helpers');
+const {
+  getAvailableOperatorsForSlot,
+  buildDefaultSchedule,
+  isLegacyDefaultSchedule,
+  getMinimumAllowedStartMinutes,
+  DEFAULT_SAME_DAY_LEAD_MINUTES,
+} = require('./availability');
 const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
 
 let defaultsSeeded = false;
@@ -255,7 +261,7 @@ async function deleteOperatorAbsence(id) {
 /* ============================================================================
    PUBLIC SLOTS & BOOKING
    ============================================================================ */
-async function getPublicAvailabilityContext(dateStr) {
+async function getPublicAvailabilityRange(startDate, endDate) {
   const pool = getPool();
   await ensureDefaults(pool);
 
@@ -266,17 +272,33 @@ async function getPublicAvailabilityContext(dateStr) {
             TIME_FORMAT(end_time, '%H:%i') AS end_time, type
      FROM operator_absences
      WHERE start_date <= ? AND end_date >= ?`,
-    [dateStr, dateStr]
+    [endDate, startDate]
   );
   const [bookedRows] = await pool.query(
-    `SELECT operator_id, TIME_FORMAT(start_time, '%H:%i') AS start_time, duration_minutes
+    `SELECT DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
+            operator_id, TIME_FORMAT(start_time, '%H:%i') AS start_time, duration_minutes
      FROM appointments
-     WHERE appointment_date = ?
+     WHERE appointment_date BETWEEN ? AND ?
        AND mode = 'booking'
        AND status IN ('pending', 'confirmed')`,
-    [dateStr]
+    [startDate, endDate]
   );
-  return { operators, absences, bookedRows };
+  const bookedRowsByDate = new Map();
+  for (const row of bookedRows) {
+    const key = String(row.appointment_date || '').slice(0, 10);
+    if (!bookedRowsByDate.has(key)) bookedRowsByDate.set(key, []);
+    bookedRowsByDate.get(key).push(row);
+  }
+  return { operators, absences, bookedRowsByDate };
+}
+
+async function getPublicAvailabilityContext(dateStr) {
+  const range = await getPublicAvailabilityRange(dateStr, dateStr);
+  return {
+    operators: range.operators,
+    absences: range.absences,
+    bookedRows: range.bookedRowsByDate.get(dateStr) || [],
+  };
 }
 
 async function createPublicBooking({
@@ -300,6 +322,20 @@ async function createPublicBooking({
   ipHash,
   userAgent,
 }) {
+  if (mode === 'booking') {
+    const minAllowedStart = getMinimumAllowedStartMinutes(appointmentDate);
+    if (timeToMinutes(startTime) < minAllowedStart) {
+      const err = new Error(
+        appointmentDate < getRomeToday()
+          ? 'Non è possibile prenotare in una data passata. Scegli un altro giorno.'
+          : `Per le prenotazioni in giornata è richiesto almeno ${DEFAULT_SAME_DAY_LEAD_MINUTES} minuti di preavviso.`
+      );
+      err.status = 422;
+      err.code = 'SLOT_TOO_SOON';
+      throw err;
+    }
+  }
+
   const pool = getPool();
   await ensureDefaults(pool);
   const conn = await pool.getConnection();
@@ -1601,6 +1637,7 @@ module.exports = {
   listOperatorAbsences,
   createOperatorAbsence,
   deleteOperatorAbsence,
+  getPublicAvailabilityRange,
   getPublicAvailabilityContext,
   createPublicBooking,
   listAppointments,

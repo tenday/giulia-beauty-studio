@@ -1,8 +1,10 @@
 /**
  * GIULIA BEAUTY STUDIO — Multi-Operator Schedule, Absences & Slot Availability Engine
  */
-const { isValidIsoDate, timeToMinutes, slotOverlapsBooked } = require('./helpers');
+const { isValidIsoDate, timeToMinutes, slotOverlapsBooked, getRomeNowParts } = require('./helpers');
 
+const SLOT_STEP_MINUTES = 15;
+const DEFAULT_SAME_DAY_LEAD_MINUTES = 60;
 const CANDIDATE_SLOTS = ['09:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '18:30', '19:30'];
 
 // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
@@ -74,38 +76,97 @@ function getIsoWeekday(dateStr) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-function isOperatorWorkingAtSlot(operator, dateStr, slotTime, durationMinutes, absences = []) {
-  if (!operator || Number(operator.active) === 0) return false;
+function minutesToTimeStr(totalMins) {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(Number(totalMins) || 0)));
+  const hh = String(Math.floor(clamped / 60)).padStart(2, '0');
+  const mm = String(clamped % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function subtractInterval(intervals, cutStart, cutEnd) {
+  if (cutEnd <= cutStart) return intervals;
+  const out = [];
+  for (const iv of intervals) {
+    if (cutEnd <= iv.startMin || cutStart >= iv.endMin) {
+      out.push(iv);
+      continue;
+    }
+    if (cutStart > iv.startMin) out.push({ startMin: iv.startMin, endMin: cutStart });
+    if (cutEnd < iv.endMin) out.push({ startMin: cutEnd, endMin: iv.endMin });
+  }
+  return out;
+}
+
+function mergeIntervals(intervals) {
+  if (!Array.isArray(intervals) || intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const merged = [];
+  for (const iv of sorted) {
+    const prev = merged[merged.length - 1];
+    if (!prev || iv.startMin > prev.endMin) {
+      merged.push({ startMin: iv.startMin, endMin: iv.endMin });
+    } else {
+      prev.endMin = Math.max(prev.endMin, iv.endMin);
+    }
+  }
+  return merged;
+}
+
+function getMinimumAllowedStartMinutes(
+  dateStr,
+  minLeadMinutes = DEFAULT_SAME_DAY_LEAD_MINUTES,
+  nowRome = null
+) {
+  if (!isValidIsoDate(dateStr)) return 0;
+  const parts = nowRome || getRomeNowParts();
+  if (dateStr < parts.date) return 24 * 60;
+  if (dateStr > parts.date) return 0;
+  const nowMin = timeToMinutes(String(parts.datetime || '').slice(11, 16));
+  const lead = Math.max(0, Number(minLeadMinutes) || 0);
+  return nowMin + lead;
+}
+
+/**
+ * Compute continuous open working windows [startMin, endMin) for an operator on dateStr,
+ * excluding scheduled daily breaks (optionally also subtracting partial-day absences).
+ */
+function getOperatorWorkingWindowsForDate(operator, dateStr, absences = [], { includeAbsences = true } = {}) {
+  if (!operator || Number(operator.active) === 0) return [];
 
   const schedule = parseOperatorSchedule(operator.weekly_schedule_json);
   const dow = getIsoWeekday(dateStr);
   const dayCfg = schedule[dow];
-  if (!dayCfg || !dayCfg.enabled) return false;
+  if (!dayCfg || !dayCfg.enabled) return [];
 
-  const slotStart = timeToMinutes(slotTime);
-  const slotEnd = slotStart + Math.max(15, Number(durationMinutes) || 60);
   const workStart = timeToMinutes(dayCfg.start);
   const workEnd = timeToMinutes(dayCfg.end);
-  if (slotStart < workStart || slotEnd > workEnd) return false;
+  if (workEnd <= workStart) return [];
 
+  let windows = [{ startMin: workStart, endMin: workEnd }];
   if (dayCfg.break_start && dayCfg.break_end) {
     const bStart = timeToMinutes(dayCfg.break_start);
     const bEnd = timeToMinutes(dayCfg.break_end);
-    if (slotStart < bEnd && bStart < slotEnd) return false;
+    windows = subtractInterval(windows, bStart, bEnd);
   }
 
   const opId = Number(operator.id);
   for (const abs of absences) {
     if (Number(abs.operator_id) !== opId) continue;
     if (dateStr < abs.start_date || dateStr > abs.end_date) continue;
-    // Whole-day absence
-    if (!abs.start_time || !abs.end_time) return false;
-    const aStart = timeToMinutes(abs.start_time);
-    const aEnd = timeToMinutes(abs.end_time);
-    if (slotStart < aEnd && aStart < slotEnd) return false;
+    if (!abs.start_time || !abs.end_time) return [];
+    if (includeAbsences) {
+      windows = subtractInterval(windows, timeToMinutes(abs.start_time), timeToMinutes(abs.end_time));
+    }
   }
 
-  return true;
+  return windows.filter((w) => w.endMin > w.startMin);
+}
+
+function isOperatorWorkingAtSlot(operator, dateStr, slotTime, durationMinutes, absences = []) {
+  const slotStart = timeToMinutes(slotTime);
+  const slotEnd = slotStart + Math.max(15, Number(durationMinutes) || 60);
+  const windows = getOperatorWorkingWindowsForDate(operator, dateStr, absences, { includeAbsences: true });
+  return windows.some((w) => slotStart >= w.startMin && slotEnd <= w.endMin);
 }
 
 function getAvailableOperatorsForSlot({
@@ -147,85 +208,155 @@ function computeDateSlotAvailability({
   absences = [],
   bookedRows = [],
   requestedOperatorId = 0,
+  stepMinutes = SLOT_STEP_MINUTES,
+  minLeadMinutes = DEFAULT_SAME_DAY_LEAD_MINUTES,
+  nowRome = null,
 }) {
-  const activeOps = operators.filter((o) => Number(o.active) !== 0);
-  const dow = getIsoWeekday(dateStr);
+  const step = Math.max(5, Number(stepMinutes) || SLOT_STEP_MINUTES);
+  const lead = Math.max(0, Number(minLeadMinutes ?? DEFAULT_SAME_DAY_LEAD_MINUTES) || 0);
+  const nowParts = nowRome || getRomeNowParts();
+  const minAllowedStartMin = getMinimumAllowedStartMinutes(dateStr, lead, nowParts);
 
-  // Check if at least one relevant operator has that weekday enabled & isn't absent all day
+  const activeOps = operators.filter((o) => Number(o.active) !== 0);
   const relevantOps =
     requestedOperatorId > 0
       ? activeOps.filter((o) => Number(o.id) === Number(requestedOperatorId))
       : activeOps;
 
-  const workingOpsOnDate = relevantOps.filter((op) => {
-    const sched = parseOperatorSchedule(op.weekly_schedule_json);
-    if (!sched[dow]?.enabled) return false;
-    const fullDayAbs = absences.some(
-      (abs) =>
-        Number(abs.operator_id) === Number(op.id) &&
-        dateStr >= abs.start_date &&
-        dateStr <= abs.end_date &&
-        (!abs.start_time || !abs.end_time)
-    );
-    return !fullDayAbs;
-  });
+  // Base schedule windows (excluding full-day absences and daily breaks; partial absences render as busy slots)
+  const workingWindows = [];
+  for (const op of relevantOps) {
+    const wins = getOperatorWorkingWindowsForDate(op, dateStr, absences, { includeAbsences: false });
+    workingWindows.push(...wins);
+  }
+  const mergedWindows = mergeIntervals(workingWindows);
 
-  if (workingOpsOnDate.length === 0) {
+  if (mergedWindows.length === 0) {
     return {
       closed: true,
+      past: dateStr < nowParts.date,
+      stepMinutes: step,
+      minLeadMinutes: lead,
       bookedSlots: [...CANDIDATE_SLOTS],
       freeSlots: [],
       daySlots: [],
     };
   }
 
-  const bookedSlots = [];
+  // Generate every step-aligned start time inside the active working windows
+  const startMinutesSet = new Set();
+  for (const win of mergedWindows) {
+    const firstTick = Math.ceil(win.startMin / step) * step;
+    for (let m = firstTick; m < win.endMin; m += step) {
+      startMinutesSet.add(m);
+    }
+  }
+  const sortedMinutes = Array.from(startMinutesSet).sort((a, b) => a - b);
+
+  const bookedSet = new Set();
   const freeSlots = [];
   const daySlots = [];
+  const evaluatedTimes = new Set();
 
-  for (const slot of CANDIDATE_SLOTS) {
-    const slotStartMin = timeToMinutes(slot);
-    const inWorkingWindow = workingOpsOnDate.some((op) => {
-      const dayCfg = parseOperatorSchedule(op.weekly_schedule_json)[dow];
-      if (!dayCfg || !dayCfg.enabled) return false;
-      return slotStartMin >= timeToMinutes(dayCfg.start) && slotStartMin < timeToMinutes(dayCfg.end);
-    });
-
-    const availOps = getAvailableOperatorsForSlot({
-      dateStr,
-      slotTime: slot,
-      durationMinutes,
-      operators: activeOps,
-      absences,
-      bookedRows,
-      requestedOperatorId,
-    });
+  for (const startMin of sortedMinutes) {
+    const slot = minutesToTimeStr(startMin);
+    evaluatedTimes.add(slot);
+    const isTooSoon = startMin < minAllowedStartMin;
+    const availOps = isTooSoon
+      ? []
+      : getAvailableOperatorsForSlot({
+          dateStr,
+          slotTime: slot,
+          durationMinutes,
+          operators: activeOps,
+          absences,
+          bookedRows,
+          requestedOperatorId,
+        });
     const isFree = availOps.length > 0;
     if (isFree) {
       freeSlots.push(slot);
     } else {
-      bookedSlots.push(slot);
+      bookedSet.add(slot);
     }
-    if (inWorkingWindow || isFree) {
-      daySlots.push({ time: slot, available: isFree });
+    daySlots.push({ time: slot, available: isFree });
+  }
+
+  // Preserve legacy CANDIDATE_SLOTS outside working windows in bookedSlots for API callers
+  for (const legacySlot of CANDIDATE_SLOTS) {
+    if (!evaluatedTimes.has(legacySlot)) {
+      bookedSet.add(legacySlot);
     }
   }
 
   return {
     closed: false,
-    bookedSlots,
+    past: dateStr < nowParts.date,
+    stepMinutes: step,
+    minLeadMinutes: lead,
+    bookedSlots: Array.from(bookedSet),
     freeSlots,
     daySlots,
   };
 }
 
+function findNextAvailableDate({
+  fromDateStr,
+  durationMinutes,
+  operators = [],
+  absences = [],
+  bookedRowsByDate = new Map(),
+  requestedOperatorId = 0,
+  maxDays = 35,
+  stepMinutes = SLOT_STEP_MINUTES,
+  minLeadMinutes = DEFAULT_SAME_DAY_LEAD_MINUTES,
+  nowRome = null,
+}) {
+  const nowParts = nowRome || getRomeNowParts();
+  const baseStr = isValidIsoDate(fromDateStr) && fromDateStr >= nowParts.date ? fromDateStr : nowParts.date;
+  const [y, m, d] = baseStr.split('-').map(Number);
+
+  for (let offset = 0; offset < maxDays; offset += 1) {
+    const dt = new Date(Date.UTC(y, m - 1, d + offset));
+    const iso = dt.toISOString().slice(0, 10);
+    const dayBooked = bookedRowsByDate.get(iso) || [];
+    const dayAbsences = absences.filter((abs) => iso >= abs.start_date && iso <= abs.end_date);
+    const avail = computeDateSlotAvailability({
+      dateStr: iso,
+      durationMinutes,
+      operators,
+      absences: dayAbsences,
+      bookedRows: dayBooked,
+      requestedOperatorId,
+      stepMinutes,
+      minLeadMinutes,
+      nowRome: nowParts,
+    });
+    if (!avail.closed && avail.freeSlots.length > 0) {
+      return {
+        found: true,
+        date: iso,
+        first_slot: avail.freeSlots[0],
+        available_count: avail.freeSlots.length,
+      };
+    }
+  }
+  return { found: false, date: null, first_slot: null, available_count: 0 };
+}
+
 module.exports = {
+  SLOT_STEP_MINUTES,
+  DEFAULT_SAME_DAY_LEAD_MINUTES,
   CANDIDATE_SLOTS,
   STUDIO_WEEKLY_HOURS,
   buildDefaultSchedule,
   isLegacyDefaultSchedule,
   parseOperatorSchedule,
+  minutesToTimeStr,
+  getMinimumAllowedStartMinutes,
+  getOperatorWorkingWindowsForDate,
   isOperatorWorkingAtSlot,
   getAvailableOperatorsForSlot,
   computeDateSlotAvailability,
+  findNextAvailableDate,
 };

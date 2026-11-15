@@ -5,8 +5,14 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { formatRomeNow, getRomeNowParts } = require('./helpers');
-const { getAvailableOperatorsForSlot, buildDefaultSchedule, isLegacyDefaultSchedule } = require('./availability');
+const { formatRomeNow, getRomeNowParts, getRomeToday, timeToMinutes } = require('./helpers');
+const {
+  getAvailableOperatorsForSlot,
+  buildDefaultSchedule,
+  isLegacyDefaultSchedule,
+  getMinimumAllowedStartMinutes,
+  DEFAULT_SAME_DAY_LEAD_MINUTES,
+} = require('./availability');
 const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
 
 const DB_FILE = path.resolve(process.cwd(), process.env.LOCAL_DB_FILE || '.local-dev-db.json');
@@ -343,29 +349,42 @@ async function deleteOperatorAbsence(id) {
 /* ============================================================================
    PUBLIC SLOTS & BOOKING (OPERATOR-AWARE)
    ============================================================================ */
-async function getPublicAvailabilityContext(dateStr) {
+async function getPublicAvailabilityRange(startDate, endDate) {
   const db = readDb();
-  const bookedRows = db.appointments
-    .filter(
-      (a) =>
-        a.appointment_date === dateStr &&
-        a.mode === 'booking' &&
-        (a.status === 'pending' || a.status === 'confirmed')
-    )
-    .map((a) => ({
-      operator_id: a.operator_id || null,
-      start_time: String(a.start_time).slice(0, 5),
-      duration_minutes: a.duration_minutes,
-    }));
+  const bookedRowsByDate = new Map();
+  for (const a of db.appointments) {
+    if (
+      a.appointment_date >= startDate &&
+      a.appointment_date <= endDate &&
+      a.mode === 'booking' &&
+      (a.status === 'pending' || a.status === 'confirmed')
+    ) {
+      if (!bookedRowsByDate.has(a.appointment_date)) bookedRowsByDate.set(a.appointment_date, []);
+      bookedRowsByDate.get(a.appointment_date).push({
+        operator_id: a.operator_id || null,
+        start_time: String(a.start_time).slice(0, 5),
+        duration_minutes: a.duration_minutes,
+      });
+    }
+  }
 
   const absences = db.operator_absences.filter(
-    (abs) => dateStr >= abs.start_date && dateStr <= abs.end_date
+    (abs) => abs.start_date <= endDate && abs.end_date >= startDate
   );
 
   return {
     operators: db.operators.filter((o) => Number(o.active) !== 0),
     absences,
-    bookedRows,
+    bookedRowsByDate,
+  };
+}
+
+async function getPublicAvailabilityContext(dateStr) {
+  const range = await getPublicAvailabilityRange(dateStr, dateStr);
+  return {
+    operators: range.operators,
+    absences: range.absences,
+    bookedRows: range.bookedRowsByDate.get(dateStr) || [],
   };
 }
 
@@ -390,6 +409,20 @@ async function createPublicBooking({
   ipHash,
   userAgent,
 }) {
+  if (mode === 'booking') {
+    const minAllowedStart = getMinimumAllowedStartMinutes(appointmentDate);
+    if (timeToMinutes(startTime) < minAllowedStart) {
+      const err = new Error(
+        appointmentDate < getRomeToday()
+          ? 'Non è possibile prenotare in una data passata. Scegli un altro giorno.'
+          : `Per le prenotazioni in giornata è richiesto almeno ${DEFAULT_SAME_DAY_LEAD_MINUTES} minuti di preavviso.`
+      );
+      err.status = 422;
+      err.code = 'SLOT_TOO_SOON';
+      throw err;
+    }
+  }
+
   const db = readDb();
   const activeOps = db.operators.filter((o) => Number(o.active) !== 0);
   let resolvedOperatorId = activeOps[0]?.id || null;
@@ -1640,6 +1673,7 @@ module.exports = {
   listOperatorAbsences,
   createOperatorAbsence,
   deleteOperatorAbsence,
+  getPublicAvailabilityRange,
   getPublicAvailabilityContext,
   createPublicBooking,
   listAppointments,

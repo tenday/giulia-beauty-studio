@@ -114,17 +114,76 @@ async function runApiSuite() {
     assert.strictEqual(sara.weekly_schedule[6].end, '18:00');
     assert.strictEqual(sara.weekly_schedule[0].enabled, false);
 
-    // Day-specific slot checks aligned to weekly working hours
+    // Day-specific 15-min slot checks aligned to weekly working hours
     const monSlots = await req('GET', `/api/public/slots?date=2026-11-30&duration=60&operator_id=${sara.id}`);
     assert.strictEqual(monSlots.json.closed, false);
+    assert.strictEqual(monSlots.json.step_minutes, 15);
+    assert(monSlots.json.free_slots.includes('09:15'), 'Lunedì deve generare slot ogni 15 min (09:15)');
+    assert(monSlots.json.free_slots.includes('14:00'), 'Lunedì 14:00 deve risultare libero per 60 min (chiude alle 15:00)');
+    assert(!monSlots.json.free_slots.includes('14:15'), 'Lunedì 14:15 non deve entrare per 60 min (chiude alle 15:00)');
     assert(!monSlots.json.booked_slots.includes('13:00'), 'Lunedì 13:00 deve risultare libero (09:00-15:00)');
     assert(monSlots.json.booked_slots.includes('16:00'), 'Lunedì 16:00 deve risultare fuori orario');
+
+    const monShort = await req('GET', `/api/public/slots?date=2026-11-30&duration=40&operator_id=${sara.id}`);
+    assert(monShort.json.free_slots.includes('14:15'), 'Lunedì 14:15 deve essere disponibile per un trattamento da 40 min');
+
     const tueSlots = await req('GET', `/api/public/slots?date=2026-12-01&duration=60&operator_id=${sara.id}`);
     assert.strictEqual(tueSlots.json.closed, true);
+    assert.deepStrictEqual(tueSlots.json.free_slots, []);
+
+    const nextAvailRes = await req('GET', `/api/public/next-available?from=2026-12-01&duration=60&operator_id=${sara.id}`);
+    assert.strictEqual(nextAvailRes.status, 200);
+    assert.strictEqual(nextAvailRes.json.found, true);
+    assert.strictEqual(nextAvailRes.json.date, '2026-12-02');
+    assert(nextAvailRes.json.available_count > 0 && /^\d{2}:\d{2}$/.test(nextAvailRes.json.first_slot));
+
     const thuSlots = await req('GET', `/api/public/slots?date=2026-12-03&duration=60&operator_id=${sara.id}`);
     assert(thuSlots.json.booked_slots.includes('11:00'), 'Giovedì 11:00 deve risultare fuori orario (13:00-21:00)');
+    assert(thuSlots.json.free_slots.includes('13:15'), 'Giovedì deve includere 13:15');
     assert(!thuSlots.json.booked_slots.includes('19:30'), 'Giovedì 19:30 deve risultare libero (13:00-21:00)');
+    assert(thuSlots.json.free_slots.includes('20:00'), 'Giovedì 20:00 deve risultare libero per 60 min (fino alle 21:00)');
+    assert(!thuSlots.json.free_slots.includes('20:15'), 'Giovedì 20:15 non deve entrare per 60 min');
     assert(Array.isArray(thuSlots.json.day_slots) && thuSlots.json.day_slots.some((s) => s.time === '13:00' && s.available));
+
+    // Verify 15-min gap recovery & same-day lead time filtering directly
+    const { computeDateSlotAvailability } = require(path.join(ROOT_DIR, 'backend', 'availability'));
+    const gapCheck = computeDateSlotAvailability({
+      dateStr: '2026-11-30',
+      durationMinutes: 60,
+      operators: [sara],
+      bookedRows: [{ operator_id: sara.id, start_time: '09:00', duration_minutes: 40 }],
+      requestedOperatorId: sara.id,
+      nowRome: { date: '2026-11-15', datetime: '2026-11-15 10:00:00' },
+    });
+    assert(!gapCheck.freeSlots.includes('09:30'));
+    assert(gapCheck.freeSlots.includes('09:45'), 'Dopo appuntamento 09:00-09:40 deve liberarsi subito lo slot delle 09:45');
+
+    const sameDayCheck = computeDateSlotAvailability({
+      dateStr: '2026-12-03',
+      durationMinutes: 60,
+      operators: [sara],
+      bookedRows: [],
+      requestedOperatorId: sara.id,
+      minLeadMinutes: 60,
+      nowRome: { date: '2026-12-03', datetime: '2026-12-03 14:10:00' },
+    });
+    assert(!sameDayCheck.freeSlots.includes('15:00'), 'Slot 15:00 alle 14:10 viola preavviso 60 min');
+    assert.strictEqual(sameDayCheck.freeSlots[0], '15:15', 'Primo slot valido alle 14:10 (+60 min) deve essere 15:15');
+
+    // Past dates must be rejected cleanly by POST /api/public/book
+    const pastBook = await req('POST', '/api/public/book', {
+      client_name: 'Passato Test',
+      client_phone: '+393401112299',
+      appointment_date: '2020-01-15',
+      start_time: '10:00',
+      duration_minutes: 60,
+      operator_id: sara.id,
+      services: [{ name: 'Manicure', price: 12 }],
+      total_price: 12,
+      privacy_accepted: true,
+    });
+    assert.strictEqual(pastBook.status, 422);
+    assert.strictEqual(pastBook.json.code, 'SLOT_TOO_SOON');
 
     // Verify editing operator weekly schedule works cleanly and persists
     const customSchedule = { ...sara.weekly_schedule, 3: { ...sara.weekly_schedule[3], break_start: '13:00', break_end: '14:00' } };
@@ -157,6 +216,11 @@ async function runApiSuite() {
 
     const slots = await req('GET', `/api/public/slots?date=${testDate}&duration=60&operator_id=${sara.id}`);
     assert(slots.json.booked_slots.includes('11:00'));
+    assert(!slots.json.free_slots.includes('12:15'), '12:15 (60 min) si sovrappone alla pausa 13:00-14:00');
+    assert(!slots.json.free_slots.includes('13:15'), 'Gli slot in pausa 13:00-14:00 non devono risultare liberi');
+    assert(!slots.json.day_slots.some((s) => s.time === '13:15'), 'Gli slot nella pausa giornaliera sono esclusi dai day_slots');
+    assert(slots.json.free_slots.includes('12:00'), '12:00 (60 min) termina alle 13:00 ed è valido prima della pausa');
+    assert(slots.json.free_slots.includes('14:00'), '14:00 riparte subito dopo la pausa');
     assert(!slots.json.booked_slots.includes('14:30'));
 
     const blocked = await req('POST', '/api/public/book', {

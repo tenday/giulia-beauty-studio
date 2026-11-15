@@ -11,6 +11,7 @@ const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
 const {
   computeDateSlotAvailability,
+  findNextAvailableDate,
   buildDefaultSchedule,
   parseOperatorSchedule,
 } = require('./backend/availability');
@@ -46,7 +47,6 @@ const {
 
 const app = express();
 const ROOT_DIR = __dirname;
-const CANDIDATE_SLOTS = ['09:30', '11:00', '14:30', '16:00', '17:30', '18:30'];
 const ALLOWED_APPT_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
 
 if (process.env.TRUST_PROXY !== 'false') {
@@ -397,16 +397,57 @@ app.get('/api/public/slots', async (req, res, next) => {
     });
 
     if (avail.closed) {
-      return res.json({ ok: true, date: dateStr, closed: true, booked_slots: avail.bookedSlots, day_slots: [] });
+      return res.json({
+        ok: true,
+        date: dateStr,
+        closed: true,
+        past: avail.past,
+        step_minutes: avail.stepMinutes,
+        min_lead_minutes: avail.minLeadMinutes,
+        booked_slots: avail.bookedSlots,
+        free_slots: [],
+        day_slots: [],
+      });
     }
 
     return res.json({
       ok: true,
       date: dateStr,
       closed: false,
+      past: avail.past,
+      step_minutes: avail.stepMinutes,
+      min_lead_minutes: avail.minLeadMinutes,
       booked_slots: avail.bookedSlots,
+      free_slots: avail.freeSlots,
       day_slots: avail.daySlots,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.get('/api/public/next-available', async (req, res, next) => {
+  try {
+    const rawFrom = String(req.query.from || '').trim();
+    const todayStr = getRomeToday();
+    const fromDate = isValidIsoDate(rawFrom) && rawFrom >= todayStr ? rawFrom : todayStr;
+    const duration = Math.max(15, Math.min(300, Number.parseInt(req.query.duration || '60', 10) || 60));
+    const operatorId = Number.parseInt(req.query.operator_id || '0', 10) || 0;
+
+    const [y, m, d] = fromDate.split('-').map(Number);
+    const maxDays = 35;
+    const endDate = new Date(Date.UTC(y, m - 1, d + maxDays - 1)).toISOString().slice(0, 10);
+    const range = await getStore().getPublicAvailabilityRange(fromDate, endDate);
+    const found = findNextAvailableDate({
+      fromDateStr: fromDate,
+      durationMinutes: duration,
+      operators: range.operators,
+      absences: range.absences,
+      bookedRowsByDate: range.bookedRowsByDate,
+      requestedOperatorId: operatorId,
+      maxDays,
+    });
+    return res.json({ ok: true, ...found });
   } catch (err) {
     return next(err);
   }

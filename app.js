@@ -239,6 +239,8 @@ function removeBagItemByUid(uid) {
   selectedBag = selectedBag.filter((item) => item.uid !== uid);
   updateBagUI();
   renderListino();
+  const d = document.getElementById('bookingDateInput')?.value;
+  if (d && purchaseMode === 'booking') refreshAvailableSlots(d);
 }
 
 /**
@@ -331,16 +333,29 @@ function isClosedDay(dateStr) {
   return day === 0 || day === 2;
 }
 
-function getNextOpenDateString() {
-  const dt = new Date();
-  dt.setDate(dt.getDate() + 1);
-  while (dt.getDay() === 0 || dt.getDay() === 2) {
-    dt.setDate(dt.getDate() + 1);
+function getLocalRomeDateString(offsetDays = 0) {
+  const dt = new Date(Date.now() + offsetDays * 86400000);
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Rome',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(dt);
+  } catch {
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
   }
-  const yyyy = dt.getFullYear();
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getNextOpenDateString() {
+  for (let offset = 1; offset <= 14; offset += 1) {
+    const iso = getLocalRomeDateString(offset);
+    if (!isClosedDay(iso)) return iso;
+  }
+  return getLocalRomeDateString(1);
 }
 
 function buildWhatsAppUrl() {
@@ -364,14 +379,60 @@ function buildWhatsAppUrl() {
   return `https://wa.me/${STUDIO_WHATSAPP}?text=${encodeURIComponent(msg)}`;
 }
 
+function renderGroupedFreeSlots(slotsGrid, freeSlots) {
+  const groups = [
+    { label: 'Mattina', items: freeSlots.filter((t) => t < '13:00') },
+    { label: 'Pomeriggio', items: freeSlots.filter((t) => t >= '13:00' && t < '18:00') },
+    { label: 'Sera', items: freeSlots.filter((t) => t >= '18:00') },
+  ].filter((g) => g.items.length > 0);
+
+  slotsGrid.classList.add('is-grouped');
+  slotsGrid.innerHTML = groups
+    .map(
+      (grp) => `
+        <div class="time-slot-group">
+          <div class="time-slot-group-label">${grp.label}</div>
+          <div class="time-slot-group-grid">
+            ${grp.items
+              .map((t) => `<button type="button" class="time-slot-btn${t === selectedTimeSlot ? ' active' : ''}" data-time="${t}">${t}</button>`)
+              .join('')}
+          </div>
+        </div>`
+    )
+    .join('');
+}
+
+async function jumpToNextAvailableDay(fromDateStr) {
+  const dateInput = document.getElementById('bookingDateInput');
+  const closedWarningEl = document.getElementById('closedDayWarning');
+  const totalMin = selectedBag.reduce((acc, item) => acc + (item.duration || 0), 0) || 60;
+  const operatorId = Number.parseInt(document.getElementById('bookingOperatorSelect')?.value || '0', 10) || 0;
+  try {
+    const res = await publicFetchWithLoader(
+      `${API_BASE}/public/next-available?from=${encodeURIComponent(fromDateStr)}&duration=${totalMin}&operator_id=${operatorId}`,
+      {},
+      { label: 'Ricerca prossimo giorno libero…', blocking: false, delayMs: 60 }
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.ok && data.found && data.date && dateInput) {
+      dateInput.value = data.date;
+      if (data.first_slot) selectedTimeSlot = data.first_slot;
+      if (closedWarningEl) closedWarningEl.hidden = true;
+      await refreshAvailableSlots(data.date);
+    }
+  } catch (_) {}
+}
+
 async function refreshAvailableSlots(dateStr) {
   const slotsGrid = document.getElementById('timeSlotsGrid');
   const statusEl = document.getElementById('slotsLiveStatus');
+  const closedWarningEl = document.getElementById('closedDayWarning');
   if (!slotsGrid || !dateStr) return;
 
   const totalMin = selectedBag.reduce((acc, item) => acc + (item.duration || 0), 0) || 60;
   const operatorId = Number.parseInt(document.getElementById('bookingOperatorSelect')?.value || '0', 10) || 0;
-  const buttons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
+  const fallbackButtons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
 
   try {
     const res = await publicFetchWithLoader(
@@ -383,49 +444,53 @@ async function refreshAvailableSlots(dateStr) {
     const data = await res.json();
     if (!data.ok) throw new Error('API error');
 
-    const booked = new Set(data.booked_slots || []);
-    let currentButtons = buttons;
+    if (closedWarningEl) {
+      closedWarningEl.hidden = !data.closed;
+    }
 
-    if (!data.closed && Array.isArray(data.day_slots) && data.day_slots.length > 0) {
-      slotsGrid.innerHTML = data.day_slots
-        .map((item) => {
-          const t = String(item.time || '');
-          const isBusy = !item.available;
-          const isActive = !isBusy && t === selectedTimeSlot;
-          return `<button type="button" class="time-slot-btn${isActive ? ' active' : ''}${isBusy ? ' is-booked' : ''}" data-time="${t}"${isBusy ? ' disabled' : ''}>${isBusy ? `${t} (Occupato)` : t}</button>`;
-        })
-        .join('');
-      currentButtons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
-    } else {
-      currentButtons.forEach((btn) => {
-        const t = btn.dataset.time;
-        const isBusy = data.closed || booked.has(t);
-        btn.disabled = isBusy;
-        btn.classList.toggle('is-booked', isBusy);
-        btn.textContent = isBusy ? (data.closed ? `${t} (Chiuso)` : `${t} (Occupato)`) : t;
-        if (isBusy && btn.classList.contains('active')) {
-          btn.classList.remove('active');
-        }
+    const freeSlots = Array.isArray(data.free_slots)
+      ? data.free_slots
+      : Array.isArray(data.day_slots)
+        ? data.day_slots.filter((s) => s.available).map((s) => String(s.time || ''))
+        : [];
+
+    if (data.closed || freeSlots.length === 0) {
+      selectedTimeSlot = '';
+      slotsGrid.classList.add('is-grouped');
+      const reasonText = data.closed
+        ? 'Studio chiuso in questa data.'
+        : dateStr === getLocalRomeDateString(0)
+          ? `Nessun orario disponibile per oggi (${totalMin} min, preavviso min ${data.min_lead_minutes || 60} min).`
+          : `Nessun orario libero per ${totalMin} min in questa data.`;
+      slotsGrid.innerHTML = `
+        <div class="slots-empty-box">
+          <p>${reasonText}</p>
+          <button type="button" class="btn-find-next-day" id="findNextAvailableDayBtn">Trova prossimo giorno disponibile →</button>
+        </div>
+      `;
+      document.getElementById('findNextAvailableDayBtn')?.addEventListener('click', () => {
+        jumpToNextAvailableDay(dateStr);
       });
+      if (statusEl) {
+        statusEl.textContent = data.closed ? 'Studio chiuso' : 'Nessuno slot libero';
+      }
+      return;
     }
 
-    const firstFreeBtn = currentButtons.find((btn) => !btn.disabled) || null;
-    if (!slotsGrid.querySelector('.time-slot-btn.active') && firstFreeBtn) {
-      firstFreeBtn.classList.add('active');
-      selectedTimeSlot = firstFreeBtn.dataset.time;
+    if (!freeSlots.includes(selectedTimeSlot)) {
+      selectedTimeSlot = freeSlots[0];
     }
+
+    renderGroupedFreeSlots(slotsGrid, freeSlots);
 
     if (statusEl) {
-      const busyInsideDay = currentButtons.filter((b) => b.disabled).length;
-      statusEl.textContent = data.closed
-        ? 'Studio chiuso'
-        : busyInsideDay > 0
-          ? 'Disponibilità in tempo reale'
-          : 'Tutti gli orari liberi';
+      const stepLabel = Number(data.step_minutes || 15);
+      statusEl.textContent = `${freeSlots.length} orari liberi • ogni ${stepLabel} min`;
     }
   } catch (_) {
-    // Graceful fallback if static preview without PHP backend
-    buttons.forEach((btn) => {
+    // Graceful fallback if static preview without Node backend
+    slotsGrid.classList.remove('is-grouped');
+    fallbackButtons.forEach((btn) => {
       btn.disabled = false;
       btn.classList.remove('is-booked');
       btn.textContent = btn.dataset.time;
@@ -475,7 +540,7 @@ function initApp() {
   const closedWarningEl = document.getElementById('closedDayWarning');
   if (dateInput) {
     dateInput.value = getNextOpenDateString();
-    dateInput.min = new Date().toISOString().split('T')[0];
+    dateInput.min = getLocalRomeDateString(0);
     refreshAvailableSlots(dateInput.value);
     dateInput.addEventListener('change', () => {
       if (closedWarningEl) {
@@ -774,6 +839,11 @@ function initApp() {
       document.getElementById('clientPhoneInput').focus();
       return;
     }
+    if (purchaseMode === 'booking' && !selectedTimeSlot) {
+      alert('Seleziona un orario disponibile (o cambia data) prima di confermare.');
+      document.getElementById('bookingDateInput')?.focus();
+      return;
+    }
     if (!validateCheckoutLegalConsent()) {
       return;
     }
@@ -815,7 +885,7 @@ function initApp() {
           alert(data.error || 'Errore durante il salvataggio della prenotazione.');
           confirmBtn.disabled = false;
           confirmBtn.textContent = originalBtnText;
-          if (data.code === 'SLOT_OCCUPIED') {
+          if (data.code === 'SLOT_OCCUPIED' || data.code === 'SLOT_TOO_SOON') {
             refreshAvailableSlots(bookingDate);
           }
           return;
@@ -893,9 +963,15 @@ function initApp() {
       return;
     }
     if (purchaseMode === 'booking') {
-      const bookingDate = document.getElementById('bookingDateInput')?.value;
-      if (isClosedDay(bookingDate)) {
-        alert('Nota: Il Martedì e la Domenica lo studio è chiuso. Seleziona un giorno di apertura (Lun, Mer, Gio, Ven, Sab) prima di procedere.');
+      const closedWarnEl = document.getElementById('closedDayWarning');
+      if (closedWarnEl && !closedWarnEl.hidden) {
+        alert('Lo studio risulta chiuso nella data selezionata. Scegli un giorno di apertura prima di procedere.');
+        document.getElementById('bookingDateInput')?.focus();
+        return;
+      }
+      if (!selectedTimeSlot) {
+        alert('Seleziona un orario disponibile (o cambia data) prima di inviare la richiesta.');
+        document.getElementById('bookingDateInput')?.focus();
         return;
       }
     }
