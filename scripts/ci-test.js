@@ -707,6 +707,90 @@ async function runApiSuite() {
     assert.strictEqual(noGdprClientRes.status, 200);
     assert.strictEqual(Number(noGdprClientRes.json.client.privacy_accepted), 0);
 
+    // Promo pricing impact on Agenda & Public Storefront bookings
+    const ciPromoCreateRes = await req('POST', '/api/admin/promotions', {
+      action: 'create',
+      title: 'Promo Test Sguardo & Mani',
+      badge_text: 'Offerta CI',
+      month_label: 'Dicembre 2026',
+      description: 'Pacchetto promozionale test CI',
+      services: [
+        { id: 'nails-12', name: 'Manicure + Semipermanente', price: 35, duration: 60 },
+        { id: 'lashes-6', name: 'Mappatura Sopracciglia + Tinta', price: 25, duration: 30 },
+      ],
+      original_price: 60,
+      promo_price: 44.9,
+      duration_minutes: 90,
+      valid_from: '2026-01-01',
+      valid_until: '2026-12-31',
+      active: 1,
+      featured: 1,
+      show_on_hero: 0,
+      sort_order: 1,
+    });
+    assert.strictEqual(ciPromoCreateRes.status, 201);
+    const ciPricingPromoId = Number(ciPromoCreateRes.json.promotion?.id);
+    assert(ciPricingPromoId > 0, 'Promo creata senza id');
+
+    const adminPromoApptRes = await req('POST', '/api/admin/appointments', {
+      action: 'create',
+      operator_id: sara.id,
+      appointment_date: '2026-12-12',
+      start_time: '10:00',
+      duration_minutes: 105,
+      services: [
+        {
+          id: `promo-${ciPricingPromoId}`,
+          is_promotion: true,
+          promo_id: ciPricingPromoId,
+          name: 'Promo: Promo Test Sguardo & Mani',
+          price: 44.9,
+          original_price: 60,
+          duration: 90,
+        },
+        { id: 'nails-3', name: 'Manicure Spa', price: 20, duration: 15 },
+      ],
+      services_summary: 'Promo: Promo Test Sguardo & Mani + Manicure Spa',
+      total_price: 64.9,
+      client_name: 'Elena PromoAdmin',
+      client_phone: '+39 340 123 4567',
+      status: 'confirmed',
+      send_whatsapp: false,
+    });
+    assert.strictEqual(adminPromoApptRes.status, 201);
+
+    const publicPromoBookRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-12',
+      start_time: '15:00',
+      duration_minutes: 90,
+      operator_id: sara.id,
+      services: [
+        {
+          id: `promo-${ciPricingPromoId}`,
+          is_promotion: true,
+          promo_id: ciPricingPromoId,
+          name: 'Promo: Promo Test Sguardo & Mani',
+          price: 999, // Verify backend enforces authoritative promo_price 44.90
+          original_price: 60,
+          duration: 90,
+        },
+      ],
+      total_price: 999,
+      client_name: 'Chiara PromoWeb',
+      client_phone: '+39 348 987 6543',
+      payment_method: 'studio',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(publicPromoBookRes.status, 201);
+
+    const promoDayAppts = await req('GET', '/api/admin/appointments?start_date=2026-12-12&end_date=2026-12-12');
+    assert.strictEqual(promoDayAppts.status, 200);
+    const savedAdminPromo = promoDayAppts.json.appointments.find((a) => a.client_name === 'Elena PromoAdmin');
+    const savedWebPromo = promoDayAppts.json.appointments.find((a) => a.booking_code === publicPromoBookRes.json.booking_code);
+    assert(savedAdminPromo && Math.abs(Number(savedAdminPromo.total_price) - 64.9) < 0.01, `Atteso 64.90 su appt admin promo, trovato ${savedAdminPromo?.total_price}`);
+    assert(savedWebPromo && Math.abs(Number(savedWebPromo.total_price) - 44.9) < 0.01, `Atteso promo_price 44.90 su appt web promo, trovato ${savedWebPromo?.total_price}`);
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_WHATSAPP_FETCH__;
@@ -742,6 +826,13 @@ function checkGdprDefaults() {
   assert(adminJs.includes('const CAL_END_HOUR = 21'), 'admin.js CAL_END_HOUR deve essere 21 (ultimo blocco 20:00-21:00)');
   assert(adminJs.includes("opForm.querySelectorAll('.op-sched-row[data-day]')"), 'admin.js deve leggere solo righe operatore con data-day');
   assert(!adminJs.includes('op-sched-row is-head'), 'admin.js non deve riusare .op-sched-row per la riga intestazione');
+  assert(agendaHtml.includes('id="apptPromoAppliedHint"'), 'agenda.html deve contenere #apptPromoAppliedHint');
+  assert(/id="apptPriceInput"[^>]*step="0\.01"/.test(agendaHtml), 'agenda.html #apptPriceInput deve accettare centesimi (step="0.01")');
+  assert(/id="promoPriceInput"[^>]*step="0\.01"/.test(agendaHtml), 'agenda.html #promoPriceInput deve accettare centesimi (step="0.01")');
+  assert(adminJs.includes('function computePromoCombinedQuote('), 'admin.js deve esporre computePromoCombinedQuote');
+  assert(adminJs.includes('function findBestMatchingPromoForCheckedIds('), 'admin.js deve rilevare automaticamente le promo sui trattamenti spuntati');
+  assert(adminJs.includes('promo-sync-agenda-btn'), 'admin.js deve includere il pulsante Applica Agenda per le promo');
+  assert(appJs.includes('function reconcileStorefrontBagPromotions('), 'app.js deve riconciliare le promo attive nel carrello vetrina');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 

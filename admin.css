@@ -3251,3 +3251,36 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.appt-promo-hint {
+  margin-top: 8px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 108, 114, 0.25);
+  background: #fdf6f8;
+  color: var(--ink);
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.appt-promo-hint.is-applied {
+  background: #effaf3;
+  border-color: rgba(34, 139, 87, 0.28);
+  color: #195f3c;
+}
+
+.appt-promo-hint.is-suggestion {
+  background: #fff7eb;
+  border-color: rgba(196, 132, 42, 0.32);
+  color: #7c4d0f;
+}
+
+.appt-promo-hint-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}

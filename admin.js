@@ -508,17 +508,249 @@ function isAppointmentPromo(appt) {
   return /^promo:/i.test(String(appt.services_summary || '').trim());
 }
 
-function populateApptPromoSelector() {
+function getRomeToday() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Rome',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return toIsoDate(new Date());
+  }
+}
+
+function formatPromoEuroAmount(val) {
+  const num = Math.round((Number(val) || 0) * 100) / 100;
+  return Math.abs(num % 1) < 0.005 ? String(Math.round(num)) : num.toFixed(2).replace(/\.00$/, '');
+}
+
+function isPromoEligibleOnDate(promo, targetDate = '') {
+  if (!promo || Number(promo.active) !== 1) return false;
+  const ref = String(targetDate || '').trim() || getRomeToday();
+  if (promo.valid_from && ref < String(promo.valid_from)) return false;
+  if (promo.valid_until && ref > String(promo.valid_until)) return false;
+  return true;
+}
+
+function getPromoIncludedCatalogIdSet(promo, boxEl = null) {
+  const catalogBox = boxEl || document.getElementById('apptCatalogPicker');
+  const rawIds = (promo?.services || [])
+    .map((s) => String(s?.id || '').trim())
+    .filter(Boolean);
+  if (!catalogBox) return new Set(rawIds);
+  const availableIds = new Set(
+    Array.from(catalogBox.querySelectorAll('input[type="checkbox"]')).map((cb) => String(cb.value))
+  );
+  return new Set(rawIds.filter((id) => availableIds.has(id)));
+}
+
+function getAppointmentEligiblePromos(targetDate = '', ensurePromoId = 0) {
+  const refDate = String(targetDate || '').trim();
+  const list = (STATE.promotions || []).filter((p) => isPromoEligibleOnDate(p, refDate));
+  const ensureId = Number(ensurePromoId || 0);
+  if (ensureId > 0 && !list.some((p) => Number(p.id) === ensureId)) {
+    const extraPromo = (STATE.promotions || []).find((p) => Number(p.id) === ensureId);
+    if (extraPromo) list.push(extraPromo);
+  }
+  return list;
+}
+
+function findBestMatchingPromoForCheckedIds(checkedIds, targetDate = '', summaryText = '', boxEl = null) {
+  const eligible = getAppointmentEligiblePromos(targetDate, 0);
+  const idsSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
+  const normSummary = String(summaryText || '').trim().toLowerCase();
+  const candidates = [];
+
+  eligible.forEach((promo) => {
+    const includedIds = getPromoIncludedCatalogIdSet(promo, boxEl);
+    let matches = false;
+    if (includedIds.size > 0 && idsSet.size > 0) {
+      matches = Array.from(includedIds).every((id) => idsSet.has(id));
+    } else if (idsSet.size === 0 && normSummary && Array.isArray(promo.services) && promo.services.length > 0) {
+      const names = promo.services.map((s) => String(s?.name || '').trim().toLowerCase()).filter(Boolean);
+      matches = names.length > 0 && names.every((n) => normSummary.includes(n));
+    }
+    if (!matches) return;
+
+    const origRef = Number(promo.original_price || 0) > 0
+      ? Number(promo.original_price)
+      : (promo.services || []).reduce((sum, s) => sum + Number(s?.price || 0), 0);
+    const savings = Math.max(0, origRef - Number(promo.promo_price || 0));
+    candidates.push({
+      promo,
+      savings,
+      count: Math.max(includedIds.size, (promo.services || []).length),
+      sortOrder: Number(promo.sort_order || 999),
+    });
+  });
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => (b.savings - a.savings) || (b.count - a.count) || (a.sortOrder - b.sortOrder));
+  return candidates[0].promo;
+}
+
+function computePromoCombinedQuote(promo, checkedCbs = [], boxEl = null) {
+  const includedIds = getPromoIncludedCatalogIdSet(promo, boxEl);
+  const extraCbs = checkedCbs.filter((c) => !includedIds.has(String(c.value)));
+  const extraPrice = Math.round(extraCbs.reduce((s, c) => s + Number(c.dataset.price || 0), 0) * 100) / 100;
+  const extraDur = extraCbs.reduce((s, c) => s + Number(c.dataset.duration || 0), 0);
+  const promoPrice = Math.round(Number(promo?.promo_price || 0) * 100) / 100;
+  const promoDur = Math.max(10, Number(promo?.duration_minutes || 60));
+  const totalPrice = Math.round((promoPrice + extraPrice) * 100) / 100;
+  const totalDuration = Math.max(10, promoDur + extraDur);
+  const summary = extraCbs.length > 0
+    ? `Promo: ${promo.title} + ${extraCbs.map((c) => c.dataset.name).join(' + ')}`
+    : `Promo: ${promo.title}`;
+  const catalogSum = Math.round(checkedCbs.reduce((s, c) => s + Number(c.dataset.price || 0), 0) * 100) / 100;
+  const origWithExtras = Math.round((Number(promo?.original_price || 0) + extraPrice) * 100) / 100;
+  const baselineOrig = Math.max(catalogSum, origWithExtras);
+  const savings = Math.round(Math.max(0, baselineOrig - totalPrice) * 100) / 100;
+  return {
+    includedIds,
+    extraCbs,
+    extraPrice,
+    extraDur,
+    promoPrice,
+    promoDur,
+    totalPrice,
+    totalDuration,
+    summary,
+    catalogSum,
+    baselineOrig,
+    savings,
+  };
+}
+
+function renderApptPromoHint() {
+  const hintEl = document.getElementById('apptPromoAppliedHint');
+  const box = document.getElementById('apptCatalogPicker');
+  const priceInput = document.getElementById('apptPriceInput');
+  const summaryInput = document.getElementById('apptServicesSummaryInput');
+  const dateInput = document.getElementById('apptDateInput');
+  if (!hintEl) return;
+
+  const targetDate = String(dateInput?.value || '').trim();
+  const checkedCbs = box ? Array.from(box.querySelectorAll('input:checked')) : [];
+  const checkedIds = new Set(checkedCbs.map((cb) => String(cb.value)));
+  const currentPrice = Math.round(Number(priceInput?.value || 0) * 100) / 100;
+  const activePromoId = Number(STATE.selectedApptPromoId || 0);
+  const activePromo = activePromoId > 0
+    ? (STATE.promotions || []).find((p) => Number(p.id) === activePromoId)
+    : null;
+
+  if (activePromo) {
+    const quote = computePromoCombinedQuote(activePromo, checkedCbs, box);
+    const priceDiffers = Math.abs(currentPrice - quote.totalPrice) >= 0.01;
+    const extrasTxt = quote.extraCbs.length > 0 ? ` + ${quote.extraCbs.length} extra (${formatPromoEuroAmount(quote.extraPrice)} €)` : '';
+    const savingsTxt = quote.savings > 0 ? ` • risparmi ${formatPromoEuroAmount(quote.savings)} €` : '';
+    hintEl.className = 'appt-promo-hint is-applied';
+    hintEl.hidden = false;
+    hintEl.innerHTML = `
+      <span>🏷️ Promo attiva: <strong>${escapeHtml(activePromo.title)}</strong> (${formatPromoEuroAmount(quote.promoPrice)} €${extrasTxt}${savingsTxt})</span>
+      <span class="appt-promo-hint-actions">
+        ${priceDiffers ? `<button type="button" class="btn-outline-sm btn-xs appt-promo-align-btn">Allinea a ${formatPromoEuroAmount(quote.totalPrice)} €</button>` : ''}
+        <button type="button" class="btn-outline-sm btn-xs appt-promo-remove-btn">Rimuovi promo</button>
+      </span>`;
+    hintEl.querySelector('.appt-promo-align-btn')?.addEventListener('click', () => {
+      applyApptPromoSelection(activePromo.id, { keepExistingExtras: true });
+    });
+    hintEl.querySelector('.appt-promo-remove-btn')?.addEventListener('click', () => {
+      applyApptPromoSelection(0);
+    });
+    return;
+  }
+
+  const matched = findBestMatchingPromoForCheckedIds(checkedIds, targetDate, summaryInput?.value || '', box);
+  if (matched) {
+    const quote = computePromoCombinedQuote(matched, checkedCbs, box);
+    const compareRef = Math.max(quote.baselineOrig, currentPrice);
+    if (compareRef > quote.totalPrice || checkedIds.size > 0) {
+      const compareTxt = compareRef > quote.totalPrice ? ` invece di ${formatPromoEuroAmount(compareRef)} €` : '';
+      hintEl.className = 'appt-promo-hint is-suggestion';
+      hintEl.hidden = false;
+      hintEl.innerHTML = `
+        <span>💡 Rientra nella promo <strong>${escapeHtml(matched.title)}</strong>: <strong>${formatPromoEuroAmount(quote.totalPrice)} €</strong>${compareTxt}</span>
+        <span class="appt-promo-hint-actions">
+          <button type="button" class="btn-outline-sm btn-xs appt-promo-apply-btn">Applica Promo</button>
+        </span>`;
+      hintEl.querySelector('.appt-promo-apply-btn')?.addEventListener('click', () => {
+        applyApptPromoSelection(matched.id, { keepExistingExtras: true });
+      });
+      return;
+    }
+  }
+
+  hintEl.hidden = true;
+  hintEl.innerHTML = '';
+}
+
+function applyApptPromoSelection(promoId, { keepExistingExtras = false } = {}) {
+  const box = document.getElementById('apptCatalogPicker');
+  const promoSel = document.getElementById('apptPromoSelect');
+  const summaryInput = document.getElementById('apptServicesSummaryInput');
+  const priceInput = document.getElementById('apptPriceInput');
+  const durInput = document.getElementById('apptDurationInput');
+  const checkedBefore = box ? Array.from(box.querySelectorAll('input:checked')) : [];
+  const checkedSig = checkedBefore.map((cb) => String(cb.value)).sort().join(',');
+
+  if (!promoId || Number(promoId) <= 0) {
+    STATE.selectedApptPromoId = 0;
+    STATE.apptPromoOptOutSig = checkedSig;
+    if (promoSel) promoSel.value = '';
+    if (checkedBefore.length > 0) {
+      if (summaryInput) summaryInput.value = checkedBefore.map((c) => c.dataset.name).join(' + ');
+      if (priceInput) priceInput.value = Math.round(checkedBefore.reduce((s, c) => s + Number(c.dataset.price || 0), 0) * 100) / 100;
+      if (durInput) durInput.value = Math.max(10, checkedBefore.reduce((s, c) => s + Number(c.dataset.duration || 0), 0));
+    } else {
+      if (summaryInput && /^promo:/i.test(summaryInput.value.trim())) summaryInput.value = '';
+      if (priceInput) priceInput.value = 0;
+    }
+    renderApptPromoHint();
+    return;
+  }
+
+  const promo = (STATE.promotions || []).find((p) => Number(p.id) === Number(promoId));
+  if (!promo) return;
+
+  STATE.apptPromoOptOutSig = '';
+  STATE.selectedApptPromoId = Number(promo.id);
+  if (promoSel) promoSel.value = String(promo.id);
+
+  const includedIds = getPromoIncludedCatalogIdSet(promo, box);
+  if (box) {
+    box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      if (keepExistingExtras) {
+        if (includedIds.has(String(cb.value))) cb.checked = true;
+      } else {
+        cb.checked = includedIds.has(String(cb.value));
+      }
+    });
+  }
+
+  const checkedAfter = box ? Array.from(box.querySelectorAll('input:checked')) : [];
+  const quote = computePromoCombinedQuote(promo, checkedAfter, box);
+  if (summaryInput) summaryInput.value = quote.summary;
+  if (priceInput) priceInput.value = quote.totalPrice;
+  if (durInput) durInput.value = quote.totalDuration;
+  renderApptPromoHint();
+}
+
+function populateApptPromoSelector(targetDate = '', ensurePromoId = 0) {
   const groupEl = document.getElementById('apptPromoGroup');
   const sel = document.getElementById('apptPromoSelect');
   if (!sel || !groupEl) return;
-  const activePromos = getActivePromotionsList();
+  const refDate = String(targetDate || document.getElementById('apptDateInput')?.value || '').trim();
+  const activePromos = getAppointmentEligiblePromos(refDate, Number(ensurePromoId || STATE.selectedApptPromoId || 0));
   groupEl.hidden = activePromos.length === 0;
   const prev = sel.value;
   sel.innerHTML = `<option value="">— Nessuna promozione applicata —</option>${activePromos
     .map((p) => {
-      const oldTxt = Number(p.original_price) > Number(p.promo_price) ? ` (listino ${Number(p.original_price).toFixed(0)}€)` : '';
-      return `<option value="${p.id}">${escapeHtml(p.title)} — ${Number(p.promo_price).toFixed(0)}€${oldTxt} • ${p.duration_minutes}m</option>`;
+      const oldTxt = Number(p.original_price) > Number(p.promo_price)
+        ? ` (listino ${formatPromoEuroAmount(p.original_price)}€)`
+        : '';
+      return `<option value="${p.id}">${escapeHtml(p.title)} — ${formatPromoEuroAmount(p.promo_price)}€${oldTxt} • ${p.duration_minutes}m</option>`;
     })
     .join('')}`;
   if (prev && activePromos.some((p) => String(p.id) === String(prev))) {
@@ -2891,7 +3123,7 @@ function renderCalendar() {
              data-appt-id="${appt.id}"
              title="${escapeHtml(rangeTooltip)}"
              style="top:${topPx}px; height:${heightPx}px; ${laneStyle} border-left: 4px solid ${escapeHtml(opColor)};">
-          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${Number(appt.total_price).toFixed(0)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
+          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${formatPromoEuroAmount(appt.total_price)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${isAppointmentPromo(appt) ? '<span class="promo-appt-badge">Promo</span>' : ''}${escapeHtml(appt.services_summary)}</div>
           ${noteChipHtml}
@@ -3069,7 +3301,7 @@ function renderListCalendar(container) {
           ${nInfo.allergyNote ? `<br /><span style="font-size:0.74rem;color:#7c2d08;background:#fff1e6;padding:1px 6px;border-radius:6px;display:inline-block;margin-top:3px;">⚠ ${escapeHtml(nInfo.allergyNote)}</span>` : ''}
           ${!nInfo.apptNote && nInfo.clientNote ? `<br /><span style="font-size:0.72rem;color:var(--ink-muted);">👩 ${escapeHtml(nInfo.clientNote)}</span>` : ''}
         </td>
-        <td><strong>${Number(a.total_price).toFixed(0)} €</strong></td>
+        <td><strong>${formatPromoEuroAmount(a.total_price)} €</strong></td>
         <td>
           <span class="status-badge badge-${escapeHtml(a.status)}">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span>
           ${a.reminder_sent_at ? '<br /><span style="font-size:0.68rem;color:#2e6b4a;">📲 Promemoria inviato</span>' : ''}
@@ -3160,43 +3392,103 @@ function buildCatalogPicker() {
   box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
     cb.addEventListener('change', () => {
       const checked = Array.from(box.querySelectorAll('input:checked'));
-      if (checked.length > 0) {
-        STATE.selectedApptPromoId = 0;
-        const promoSel = document.getElementById('apptPromoSelect');
-        if (promoSel) promoSel.value = '';
-        const names = checked.map((c) => c.dataset.name);
-        const totalP = checked.reduce((s, c) => s + Number(c.dataset.price), 0);
-        const totalD = checked.reduce((s, c) => s + Number(c.dataset.duration), 0);
-        document.getElementById('apptServicesSummaryInput').value = names.join(' + ');
-        document.getElementById('apptPriceInput').value = totalP;
-        document.getElementById('apptDurationInput').value = totalD;
+      const checkedIds = new Set(checked.map((c) => String(c.value)));
+      const checkedSig = Array.from(checkedIds).sort().join(',');
+      const targetDate = String(document.getElementById('apptDateInput')?.value || '').trim();
+      const promoSel = document.getElementById('apptPromoSelect');
+      const summaryInput = document.getElementById('apptServicesSummaryInput');
+      const priceInput = document.getElementById('apptPriceInput');
+      const durInput = document.getElementById('apptDurationInput');
+
+      if (STATE.apptPromoOptOutSig && STATE.apptPromoOptOutSig !== checkedSig) {
+        STATE.apptPromoOptOutSig = '';
       }
+
+      let activePromo = Number(STATE.selectedApptPromoId || 0) > 0
+        ? (STATE.promotions || []).find((p) => Number(p.id) === Number(STATE.selectedApptPromoId))
+        : null;
+
+      if (activePromo) {
+        const includedIds = getPromoIncludedCatalogIdSet(activePromo, box);
+        const allIncludedStillChecked = includedIds.size > 0
+          ? Array.from(includedIds).every((id) => checkedIds.has(id))
+          : true;
+        if (!allIncludedStillChecked) {
+          STATE.selectedApptPromoId = 0;
+          activePromo = null;
+          if (promoSel) promoSel.value = '';
+        }
+      }
+
+      if (!activePromo && checkedIds.size > 0 && STATE.apptPromoOptOutSig !== checkedSig) {
+        const matched = findBestMatchingPromoForCheckedIds(checkedIds, targetDate, '', box);
+        if (matched) {
+          activePromo = matched;
+          STATE.selectedApptPromoId = Number(matched.id);
+          if (promoSel) promoSel.value = String(matched.id);
+        }
+      }
+
+      if (activePromo) {
+        const quote = computePromoCombinedQuote(activePromo, checked, box);
+        if (summaryInput) summaryInput.value = quote.summary;
+        if (priceInput) priceInput.value = quote.totalPrice;
+        if (durInput) durInput.value = quote.totalDuration;
+      } else if (checked.length > 0) {
+        const names = checked.map((c) => c.dataset.name);
+        const totalP = Math.round(checked.reduce((s, c) => s + Number(c.dataset.price || 0), 0) * 100) / 100;
+        const totalD = Math.max(10, checked.reduce((s, c) => s + Number(c.dataset.duration || 0), 0));
+        if (summaryInput) summaryInput.value = names.join(' + ');
+        if (priceInput) priceInput.value = totalP;
+        if (durInput) durInput.value = totalD;
+      } else {
+        if (summaryInput) summaryInput.value = '';
+        if (priceInput) priceInput.value = 0;
+        if (durInput) durInput.value = 60;
+      }
+      renderApptPromoHint();
     });
   });
 
   const promoSel = document.getElementById('apptPromoSelect');
-  if (promoSel) {
+  if (promoSel && promoSel.dataset.promoBound !== '1') {
+    promoSel.dataset.promoBound = '1';
     promoSel.addEventListener('change', () => {
-      const promoId = Number(promoSel.value || 0);
-      if (!promoId) {
-        STATE.selectedApptPromoId = 0;
-        return;
-      }
-      const promo = (STATE.promotions || []).find((p) => Number(p.id) === promoId);
-      if (!promo) return;
-      STATE.selectedApptPromoId = Number(promo.id);
-
-      const includedIds = new Set(
-        (promo.services || []).map((s) => String(s.id || '').trim()).filter(Boolean)
-      );
-      box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-        cb.checked = includedIds.has(String(cb.value));
-      });
-
-      document.getElementById('apptServicesSummaryInput').value = `Promo: ${promo.title}`;
-      document.getElementById('apptPriceInput').value = Number(promo.promo_price || 0);
-      document.getElementById('apptDurationInput').value = Number(promo.duration_minutes || 60);
+      applyApptPromoSelection(Number(promoSel.value || 0), { keepExistingExtras: false });
     });
+  }
+
+  const apptDateEl = document.getElementById('apptDateInput');
+  if (apptDateEl && apptDateEl.dataset.promoBound !== '1') {
+    apptDateEl.dataset.promoBound = '1';
+    apptDateEl.addEventListener('change', () => {
+      populateApptPromoSelector(apptDateEl.value, STATE.selectedApptPromoId);
+      renderApptPromoHint();
+    });
+  }
+
+  ['apptPriceInput', 'apptServicesSummaryInput'].forEach((fid) => {
+    const el = document.getElementById(fid);
+    if (el && el.dataset.promoBound !== '1') {
+      el.dataset.promoBound = '1';
+      el.addEventListener('input', () => renderApptPromoHint());
+    }
+  });
+
+  const apptModalEl = document.getElementById('apptModal');
+  if (apptModalEl && apptModalEl.dataset.promoObserved !== '1') {
+    apptModalEl.dataset.promoObserved = '1';
+    const obs = new MutationObserver(() => {
+      if (apptModalEl.classList.contains('open')) {
+        STATE.apptPromoOptOutSig = '';
+        const dVal = document.getElementById('apptDateInput')?.value || '';
+        populateApptPromoSelector(dVal, STATE.selectedApptPromoId);
+        const selEl = document.getElementById('apptPromoSelect');
+        if (selEl) selEl.value = STATE.selectedApptPromoId > 0 ? String(STATE.selectedApptPromoId) : '';
+        renderApptPromoHint();
+      }
+    });
+    obs.observe(apptModalEl, { attributes: true, attributeFilter: ['class'] });
   }
 }
 
@@ -3641,7 +3933,7 @@ async function openClientModal(clientId = null) {
       ? data.appointments
           .map(
             (a) => `<div class="history-row">
-              <strong>${escapeHtml(a.appointment_date)} (${escapeHtml(a.start_time)})</strong> • ${escapeHtml(a.operator_name || 'Giulia')} — ${Number(a.total_price).toFixed(0)} €
+              <strong>${escapeHtml(a.appointment_date)} (${escapeHtml(a.start_time)})</strong> • ${escapeHtml(a.operator_name || 'Giulia')} — ${formatPromoEuroAmount(a.total_price)} €
               <span class="status-badge badge-${escapeHtml(a.status)}" style="float:right;">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span><br />
               <span>${escapeHtml(a.services_summary)}</span>
             </div>`
@@ -6849,7 +7141,7 @@ function renderPromotionsView() {
             </div>
             <strong>${escapeHtml(p.title)}</strong>
             <div class="muted-text" style="font-size:0.78rem;margin-top:2px;">
-              ${orig > val ? `<del>${orig.toFixed(0)} €</del> → ` : ''}<strong>${val.toFixed(0)} €</strong> • ${Number(p.duration_minutes || 60)} min • ${escapeHtml(validityTxt)}
+              ${orig > val ? `<del>${formatPromoEuroAmount(orig)} €</del> → ` : ''}<strong>${formatPromoEuroAmount(val)} €</strong> • ${Number(p.duration_minutes || 60)} min • ${escapeHtml(validityTxt)}
             </div>
             ${p.services && p.services.length > 0 ? `<div class="muted-text" style="font-size:0.74rem;margin-top:2px;">Include: ${p.services.map((s) => escapeHtml(s.name)).join(' + ')}</div>` : ''}
           </div>
@@ -6857,6 +7149,7 @@ function renderPromotionsView() {
             <button type="button" class="btn-outline-sm btn-xs promo-toggle-btn" data-id="${p.id}">
               ${Number(p.active) === 1 ? '⏸ Disattiva' : '▶ Attiva'}
             </button>
+            <button type="button" class="btn-outline-sm btn-xs promo-sync-agenda-btn" data-id="${p.id}" title="Applica il prezzo promo agli appuntamenti futuri corrispondenti in Agenda">🔄 Applica Agenda</button>
             <button type="button" class="btn-outline-sm btn-xs promo-edit-btn" data-id="${p.id}">✏️ Modifica</button>
             <button type="button" class="btn-outline-sm btn-xs promo-wa-broadcast-btn" data-id="${p.id}" title="Prepara messaggio WhatsApp promo">📣 WA</button>
             <button type="button" class="btn-outline-sm btn-xs promo-del-btn" data-id="${p.id}" title="Elimina">✕</button>
@@ -6865,6 +7158,111 @@ function renderPromotionsView() {
       `;
     })
     .join('')}</div>`;
+
+  listBox.querySelectorAll('.promo-sync-agenda-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const p = (STATE.promotions || []).find((item) => Number(item.id) === Number(btn.dataset.id));
+      if (!p) return;
+      if (Number(p.active) !== 1) {
+        showAgendaToast('Attiva prima la promozione per applicarla agli appuntamenti futuri', 'error');
+        return;
+      }
+      const todayIso = getRomeToday();
+      const endDt = new Date();
+      endDt.setDate(endDt.getDate() + 180);
+      const endIso = `${endDt.getFullYear()}-${String(endDt.getMonth() + 1).padStart(2, '0')}-${String(endDt.getDate()).padStart(2, '0')}`;
+      btn.disabled = true;
+      try {
+        const res = await apiFetch(`admin/appointments?start_date=${todayIso}&end_date=${endIso}`, { method: 'GET' });
+        const upcoming = (res.appointments || []).filter(
+          (a) => a.status !== 'cancelled' && a.status !== 'completed' && String(a.appointment_date || '') >= todayIso
+        );
+        const promoCatalogIds = (p.services || [])
+          .map((s) => String(s?.id || '').trim())
+          .filter((id) => id && !id.startsWith('custom-'));
+        const promoServiceNames = (p.services || [])
+          .map((s) => String(s?.name || '').trim().toLowerCase())
+          .filter(Boolean);
+
+        let updatedCount = 0;
+        for (const appt of upcoming) {
+          const d = String(appt.appointment_date || '');
+          if (p.valid_from && d < String(p.valid_from)) continue;
+          if (p.valid_until && d > String(p.valid_until)) continue;
+
+          const parsed = parseAppointmentServices(appt);
+          const alreadyPromoLinked = parsed.some((s) => s && Number(s.promo_id) === Number(p.id));
+          const apptCatalogIds = new Set(parsed.map((s) => String(s?.id || '').trim()).filter(Boolean));
+          const allCatalogIdsPresent = promoCatalogIds.length > 0 && promoCatalogIds.every((id) => apptCatalogIds.has(id));
+          const normSummary = String(appt.services_summary || '').trim().toLowerCase();
+          const allNamesInSummary = promoServiceNames.length > 0 && promoServiceNames.every((n) => normSummary.includes(n));
+
+          if (!alreadyPromoLinked && !allCatalogIdsPresent && !allNamesInSummary) continue;
+
+          const includedSet = new Set(promoCatalogIds);
+          const extraItems = parsed.filter(
+            (s) => s && !s.is_promotion && Number(s.promo_id || 0) !== Number(p.id) && !includedSet.has(String(s.id || '').trim())
+          );
+          const extraPrice = Math.round(extraItems.reduce((sum, s) => sum + Number(s.price || 0), 0) * 100) / 100;
+          const extraDur = extraItems.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+          const targetTotal = Math.round((Number(p.promo_price || 0) + extraPrice) * 100) / 100;
+          const targetDur = Math.max(10, Number(p.duration_minutes || 60) + extraDur);
+          const targetSummary = extraItems.length > 0
+            ? `Promo: ${p.title} + ${extraItems.map((s) => s.name).filter(Boolean).join(' + ')}`
+            : `Promo: ${p.title}`;
+
+          if (alreadyPromoLinked && Math.abs(Number(appt.total_price || 0) - targetTotal) < 0.01 && Number(appt.duration_minutes || 0) === targetDur) {
+            continue;
+          }
+
+          const nextServices = [
+            {
+              id: `promo-${p.id}`,
+              is_promotion: true,
+              promo_id: Number(p.id),
+              name: `Promo: ${p.title}`,
+              price: Number(p.promo_price || 0),
+              original_price: Number(p.original_price || 0),
+              duration: Number(p.duration_minutes || 60),
+              included_services: p.services || [],
+            },
+            ...extraItems,
+          ];
+
+          await apiFetch('admin/appointments', {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'update',
+              id: appt.id,
+              appointment_date: appt.appointment_date,
+              start_time: String(appt.start_time || '').slice(0, 5),
+              duration_minutes: targetDur,
+              operator_id: appt.operator_id || undefined,
+              services: nextServices,
+              services_summary: targetSummary,
+              total_price: targetTotal,
+              status: appt.status,
+              notes: appt.notes || '',
+            }),
+          });
+          updatedCount += 1;
+        }
+
+        if (updatedCount > 0) {
+          await Promise.all([loadAppointments(), loadInsights()]);
+          updateKpis();
+          renderCalendar();
+          showAgendaToast(`Aggiornati ${updatedCount} appuntamenti futuri in Agenda con la promo ✓`);
+        } else {
+          showAgendaToast('Nessun appuntamento futuro corrispondente da aggiornare');
+        }
+      } catch (err) {
+        showAgendaToast(err.message || 'Errore sincronizzazione agenda', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
 
   listBox.querySelectorAll('.promo-edit-btn').forEach((btn) => {
     btn.addEventListener('click', () => {

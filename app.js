@@ -1247,8 +1247,187 @@ function initApp() {
   });
 
   // Initial Render
+  installStorefrontPromoCartSync();
   renderListino();
   updateBagUI();
+}
+
+let storefrontActivePromosCache = [];
+let __reconcilingStorefrontBag = false;
+
+function isStorefrontPromoActiveForDate(promo, targetDate = '') {
+  if (!promo || Number(promo.active ?? 1) !== 1) return false;
+  const ref = String(targetDate || '').trim() || getLocalRomeDateString(0);
+  if (promo.valid_from && ref < String(promo.valid_from)) return false;
+  if (promo.valid_until && ref > String(promo.valid_until)) return false;
+  return true;
+}
+
+function getPromoCatalogIdsForStorefront(promo) {
+  return (promo?.services || [])
+    .map((s) => String(s?.id || '').trim())
+    .filter((id) => id && SERVICE_MAP.has(id));
+}
+
+function reconcileStorefrontBagPromotions() {
+  if (__reconcilingStorefrontBag || !Array.isArray(selectedBag) || storefrontActivePromosCache.length === 0) {
+    return;
+  }
+  __reconcilingStorefrontBag = true;
+  try {
+    const bookingDate = document.getElementById('bookingDateInput')?.value || getLocalRomeDateString(0);
+    const eligiblePromos = storefrontActivePromosCache.filter((p) =>
+      purchaseMode === 'booking' ? isStorefrontPromoActiveForDate(p, bookingDate) : isStorefrontPromoActiveForDate(p, '')
+    );
+
+    // Unbundle any previously auto-applied promo that is no longer eligible on the chosen date
+    const nextBag = [];
+    selectedBag.forEach((item) => {
+      if (item && item.autoAppliedPromo) {
+        const stillEligible = eligiblePromos.some((p) => Number(p.id) === Number(item.promo_id));
+        if (!stillEligible && Array.isArray(item.includedServiceIds)) {
+          item.includedServiceIds.forEach((sid) => {
+            const srv = SERVICE_MAP.get(sid);
+            if (srv) {
+              nextBag.push({
+                uid: `${srv.id}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+                ...srv,
+              });
+            }
+          });
+          return;
+        }
+      }
+      nextBag.push(item);
+    });
+
+    const workingBag = nextBag.slice();
+    const rankedPromos = eligiblePromos
+      .map((promo) => {
+        const promoIds = getPromoCatalogIdsForStorefront(promo);
+        const origSum = Number(promo.original_price || 0) > 0
+          ? Number(promo.original_price)
+          : promoIds.reduce((sum, id) => sum + Number(SERVICE_MAP.get(id)?.price || 0), 0);
+        const savings = Math.max(0, origSum - Number(promo.promo_price || 0));
+        return { promo, promoIds, origSum, savings };
+      })
+      .filter((entry) => entry.promoIds.length > 0 && entry.savings >= 0)
+      .sort((a, b) => (b.savings - a.savings) || (b.promoIds.length - a.promoIds.length));
+
+    let matchedAny = true;
+    while (matchedAny) {
+      matchedAny = false;
+      for (const candidate of rankedPromos) {
+        const idIndices = [];
+        const usedIdx = new Set();
+        let allPresent = true;
+
+        for (const reqId of candidate.promoIds) {
+          const foundIdx = workingBag.findIndex(
+            (it, idx) => !usedIdx.has(idx) && it && !it.is_promotion && !it.isGiftCard && String(it.id) === String(reqId)
+          );
+          if (foundIdx === -1) {
+            allPresent = false;
+            break;
+          }
+          usedIdx.add(foundIdx);
+          idIndices.push(foundIdx);
+        }
+
+        if (allPresent && idIndices.length > 0) {
+          const matchedItems = idIndices.map((idx) => workingBag[idx]);
+          const matchedOrig = Math.round(matchedItems.reduce((s, it) => s + Number(it.price || 0), 0) * 100) / 100;
+          const matchedDur = matchedItems.reduce((s, it) => s + Number(it.duration || 30), 0);
+          const idxSet = new Set(idIndices);
+          const insertAt = Math.min(...idIndices);
+          const remaining = workingBag.filter((_, idx) => !idxSet.has(idx));
+          const promoObj = {
+            uid: `promo-auto-${candidate.promo.id}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+            id: `promo-${candidate.promo.id}`,
+            name: `Promo: ${candidate.promo.title}`,
+            price: Number(candidate.promo.promo_price || 0),
+            originalPrice: Math.max(Number(candidate.promo.original_price || 0), matchedOrig),
+            duration: Number(candidate.promo.duration_minutes || matchedDur || 60),
+            categoryTitle: candidate.promo.badge_text || 'Promozione del Mese',
+            is_promotion: true,
+            promo_id: Number(candidate.promo.id),
+            includedServices: candidate.promo.services || [],
+            includedServiceIds: candidate.promoIds.slice(),
+            autoAppliedPromo: true,
+          };
+          remaining.splice(Math.min(insertAt, remaining.length), 0, promoObj);
+          workingBag.length = 0;
+          workingBag.push(...remaining);
+          matchedAny = true;
+          break;
+        }
+      }
+    }
+
+    selectedBag.length = 0;
+    selectedBag.push(...workingBag);
+  } finally {
+    __reconcilingStorefrontBag = false;
+  }
+}
+
+function installStorefrontPromoCartSync() {
+  if (typeof updateBagUI === 'function' && !updateBagUI.__gbsPromoWrapped) {
+    const origUpdateBagUI = updateBagUI;
+    const wrappedUpdate = function () {
+      reconcileStorefrontBagPromotions();
+      return origUpdateBagUI.apply(this, arguments);
+    };
+    wrappedUpdate.__gbsPromoWrapped = true;
+    updateBagUI = wrappedUpdate;
+  }
+
+  if (typeof toggleServiceInBag === 'function' && !toggleServiceInBag.__gbsPromoWrapped) {
+    const origToggleService = toggleServiceInBag;
+    const wrappedToggle = function (serviceId) {
+      const bundleIdx = selectedBag.findIndex(
+        (it) => it && it.autoAppliedPromo && Array.isArray(it.includedServiceIds) && it.includedServiceIds.includes(serviceId)
+      );
+      if (bundleIdx !== -1) {
+        const bundled = selectedBag[bundleIdx];
+        const restIds = bundled.includedServiceIds.filter((id) => id !== serviceId);
+        selectedBag.splice(bundleIdx, 1);
+        restIds.forEach((id) => {
+          const srv = SERVICE_MAP.get(id);
+          if (srv) {
+            selectedBag.push({
+              uid: `${srv.id}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+              ...srv,
+            });
+          }
+        });
+        renderListino();
+        updateBagUI();
+        return;
+      }
+      return origToggleService.apply(this, arguments);
+    };
+    wrappedToggle.__gbsPromoWrapped = true;
+    toggleServiceInBag = wrappedToggle;
+  }
+
+  const bookingDateEl = document.getElementById('bookingDateInput');
+  if (bookingDateEl && bookingDateEl.dataset.promoSyncBound !== '1') {
+    bookingDateEl.dataset.promoSyncBound = '1';
+    bookingDateEl.addEventListener('change', () => {
+      updateBagUI();
+    });
+  }
+
+  fetch(`${API_BASE}/public/promotions`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data && Array.isArray(data.promotions)) {
+        storefrontActivePromosCache = data.promotions;
+        updateBagUI();
+      }
+    })
+    .catch(() => {});
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
