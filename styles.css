@@ -663,24 +663,6 @@ body::before {
   transform: scale(1.03);
 }
 
-.hero-floating-badge-top {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  background: rgba(61, 18, 24, 0.9);
-  backdrop-filter: blur(8px);
-  color: #fffbfa;
-  border-radius: var(--radius-pill);
-  padding: 9px 16px;
-  font-size: 0.64rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  box-shadow: var(--shadow-soft);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* Floating Quick-Book Card on Hero Image (Desktop floats bottom-left; Mobile docks cleanly below photo) */
 .hero-floating-card {
   position: absolute;
@@ -2802,14 +2784,6 @@ a.bcard-line:hover {
   .hero-arch-inner {
     border-radius: 150px 150px 14px 14px;
     aspect-ratio: 4 / 4.6;
-  }
-
-  .hero-floating-badge-top {
-    top: 14px;
-    right: 14px;
-    padding: 7px 12px;
-    font-size: 0.58rem;
-    letter-spacing: 0.14em;
   }
 
   .hero-floating-card {
