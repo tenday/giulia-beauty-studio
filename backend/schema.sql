@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS `appointments` (
   `total_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   `mode` ENUM('booking', 'voucher') NOT NULL DEFAULT 'booking',
   `payment_method` VARCHAR(40) NOT NULL DEFAULT 'studio',
+  `payment_status` VARCHAR(30) NOT NULL DEFAULT 'unpaid',
+  `paid_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `payment_notes` VARCHAR(300) NULL DEFAULT NULL,
+  `paid_at` DATETIME NULL DEFAULT NULL,
+  `stripe_session_id` VARCHAR(160) NULL DEFAULT NULL,
+  `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL,
   `status` ENUM('pending', 'confirmed', 'completed', 'cancelled') NOT NULL DEFAULT 'confirmed',
   `notes` TEXT NULL,
   `reminder_sent_at` DATETIME NULL DEFAULT NULL,
@@ -327,4 +333,27 @@ CREATE TABLE IF NOT EXISTS `monthly_promotions` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_promo_active_sort` (`active`, `sort_order`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `payment_transactions` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `appointment_id` INT UNSIGNED NULL DEFAULT NULL,
+  `client_id` INT UNSIGNED NULL DEFAULT NULL,
+  `booking_code` VARCHAR(32) NULL DEFAULT NULL,
+  `direction` VARCHAR(20) NOT NULL DEFAULT 'payment',
+  `payment_method` VARCHAR(40) NOT NULL DEFAULT 'contanti',
+  `amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `currency` VARCHAR(10) NOT NULL DEFAULT 'EUR',
+  `status` VARCHAR(30) NOT NULL DEFAULT 'succeeded',
+  `stripe_session_id` VARCHAR(160) NULL DEFAULT NULL,
+  `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL,
+  `notes` VARCHAR(300) NULL DEFAULT NULL,
+  `created_by_admin_id` INT UNSIGNED NULL DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_pt_appt` (`appointment_id`),
+  KEY `idx_pt_client` (`client_id`),
+  KEY `idx_pt_created` (`created_at`),
+  KEY `idx_pt_stripe_session` (`stripe_session_id`),
+  CONSTRAINT `fk_pt_appt` FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=18" />
+  <link rel="stylesheet" href="admin.css?v=19" />
 </head>
 <body>
 
@@ -93,6 +93,10 @@
       <div class="kpi-card">
         <span class="kpi-label">Clienti in Database</span>
         <strong class="kpi-value" id="kpiClientsCount">0</strong>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Incassato Settimana</span>
+        <strong class="kpi-value" id="kpiWeekPaidAmount">0 €</strong>
       </div>
     </section>
 
@@ -983,6 +987,144 @@
           </div>
           <div id="automationRunsContainer"></div>
         </div>
+
+        <!-- ==============================================================
+             PAYMENTS, STRIPE CHECKOUT & CASSA LEDGER
+             ============================================================== -->
+        <div class="settings-grid" id="paymentsAdminSection" style="margin-top:18px;">
+          <div class="settings-card">
+            <div class="insights-section-head" style="margin-bottom:10px;">
+              <div>
+                <h3>💳 Pagamenti Online (Stripe Checkout)</h3>
+                <p class="muted-text" style="margin:0;">Abilita Carte, Apple Pay e Google Pay sul sito vetrina (saldo 100% o acconto %).</p>
+              </div>
+              <span class="status-badge badge-pending" id="stripeSettingsStatusBadge">Solo In Studio</span>
+            </div>
+
+            <form id="stripeSettingsForm" class="admin-form-stack">
+              <label class="inline-check-label">
+                <input type="checkbox" id="stripeEnabledCheck" />
+                <span>Abilita pagamenti online Stripe Checkout sulla Vetrina</span>
+              </label>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="stripeModeSelect">Ambiente Stripe</label>
+                  <select id="stripeModeSelect" class="form-control">
+                    <option value="test">Test / Sandbox (sk_test_ / pk_test_)</option>
+                    <option value="live">Live / Produzione (sk_live_ / pk_live_)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="stripeDepositPercentInput">Acconto Online (%)</label>
+                  <input type="number" id="stripeDepositPercentInput" class="form-control" min="10" max="90" value="30" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="stripePublishableKeyInput">Publishable Key (pk_...)</label>
+                <input type="text" id="stripePublishableKeyInput" class="form-control" placeholder="pk_test_... o pk_live_..." />
+              </div>
+
+              <div class="form-group">
+                <label for="stripeSecretKeyInput">Secret Key Stripe (sk_...)</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="password" id="stripeSecretKeyInput" class="form-control" placeholder="Inserisci nuova sk_test_ / sk_live_ (lascia vuoto per mantenere)" autocomplete="new-password" />
+                  <button type="button" class="btn-outline-sm" id="stripeClearSecretBtn" title="Rimuovi chiave segreta salvata">Rimuovi</button>
+                </div>
+                <small class="muted-text" id="stripeSecretKeyHint">Nessuna chiave segreta salvata</small>
+              </div>
+
+              <div class="form-group">
+                <label for="stripeWebhookSecretInput">Webhook Signing Secret (whsec_...)</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="password" id="stripeWebhookSecretInput" class="form-control" placeholder="whsec_... (per eventi automatici Stripe)" autocomplete="new-password" />
+                  <button type="button" class="btn-outline-sm" id="stripeClearWebhookBtn" title="Rimuovi webhook secret">Rimuovi</button>
+                </div>
+                <small class="muted-text" id="stripeWebhookSecretHint">Webhook secret non configurato</small>
+              </div>
+
+              <div class="automation-flags-box">
+                <label class="inline-check-label">
+                  <input type="checkbox" id="stripeAllowStudioCheck" checked />
+                  <span>Mostra sempre l'opzione "Salda in Studio" in vetrina</span>
+                </label>
+                <label class="inline-check-label">
+                  <input type="checkbox" id="stripeAllowFullCheck" checked />
+                  <span>Consenti saldo completo (100%) online</span>
+                </label>
+                <label class="inline-check-label">
+                  <input type="checkbox" id="stripeAllowDepositCheck" checked />
+                  <span>Consenti acconto percentuale online</span>
+                </label>
+                <label class="inline-check-label">
+                  <input type="checkbox" id="stripeAutoConfirmCheck" checked />
+                  <span>Conferma automaticamente lo stato appuntamento a pagamento riuscito</span>
+                </label>
+              </div>
+
+              <div class="form-group">
+                <label for="stripeWebhookUrlInput">Endpoint Webhook da copiare su Stripe Dashboard</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="text" id="stripeWebhookUrlInput" class="form-control" readonly />
+                  <button type="button" class="btn-outline-sm" id="copyStripeWebhookUrlBtn">Copia URL</button>
+                </div>
+                <small class="muted-text">Eventi consigliati su Stripe: <code>checkout.session.completed</code>, <code>checkout.session.expired</code>, <code>charge.refunded</code></small>
+              </div>
+
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                <button type="submit" class="btn-primary-admin" id="saveStripeSettingsBtn">💾 Salva Impostazioni Pagamenti</button>
+                <button type="button" class="btn-outline-sm" id="testStripeConnBtn">🧪 Verifica Connessione Stripe</button>
+              </div>
+              <div id="stripeSettingsAlert" class="admin-alert" hidden></div>
+              <div id="stripeTestFeedback" class="admin-alert" hidden></div>
+            </form>
+          </div>
+
+          <div class="settings-card">
+            <div class="insights-section-head" style="margin-bottom:10px;">
+              <div>
+                <h3>🧾 Riepilogo Incassi &amp; Cassa</h3>
+                <p class="muted-text" style="margin:0;">Monitoraggio netto tra Studio (Contanti, POS, Satispay) e pagamenti online Stripe.</p>
+              </div>
+              <button type="button" class="btn-outline-sm" id="refreshPaymentsLedgerBtn">↻ Aggiorna</button>
+            </div>
+
+            <div class="payments-kpi-row">
+              <div class="pay-kpi-box">
+                <span>Incassato Oggi</span>
+                <strong id="paySumToday">0 €</strong>
+              </div>
+              <div class="pay-kpi-box">
+                <span>Settimana</span>
+                <strong id="paySumWeek">0 €</strong>
+              </div>
+              <div class="pay-kpi-box">
+                <span>Mese Corrente</span>
+                <strong id="paySumMonth">0 €</strong>
+              </div>
+              <div class="pay-kpi-box is-pending">
+                <span>Da Saldare in Sospeso</span>
+                <strong id="paySumOutstanding">0 €</strong>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px;">
+              <strong style="font-size:0.84rem;color:var(--ink);">Movimenti Recenti</strong>
+              <select id="paymentsMethodFilterSelect" class="form-control form-control-sm" style="max-width:190px;">
+                <option value="">Tutti i metodi</option>
+                <option value="contanti">Contanti</option>
+                <option value="pos">POS / Carta Studio</option>
+                <option value="satispay">Satispay</option>
+                <option value="stripe_online">Stripe Online</option>
+                <option value="bonifico">Bonifico</option>
+                <option value="gift_card">Gift Card</option>
+              </select>
+            </div>
+
+            <div id="paymentsLedgerContainer"></div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -1114,6 +1256,51 @@
             <label for="apptNotesInput">Note Appuntamento 📝</label>
             <textarea id="apptNotesInput" class="form-control" rows="2" placeholder="Colore scelto, note tecniche seduta, richieste particolari..."></textarea>
           </div>
+        </div>
+
+        <div class="appt-cassa-box" id="apptCassaBox">
+          <div class="appt-cassa-head">
+            <span>💳 Cassa &amp; Stato Pagamento</span>
+            <div class="appt-pay-quick-row">
+              <button type="button" class="btn-outline-sm" data-pay-quick="full">✓ Salda 100%</button>
+              <button type="button" class="btn-outline-sm" data-pay-quick="deposit">◐ Acconto</button>
+              <button type="button" class="btn-outline-sm" data-pay-quick="unpaid">↺ Azzera</button>
+              <button type="button" class="btn-danger-outline" id="apptRefundBtn" hidden>↩ Rimborsa</button>
+            </div>
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label for="apptPaymentStatusSelect">Stato Pagamento</label>
+              <select id="apptPaymentStatusSelect" class="form-control">
+                <option value="unpaid">Da saldare</option>
+                <option value="partial">Acconto versato</option>
+                <option value="paid">Pagato / Saldato</option>
+                <option value="refunded">Rimborsato</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="apptPaymentMethodSelect">Metodo di Pagamento</label>
+              <select id="apptPaymentMethodSelect" class="form-control">
+                <option value="studio">Salda in Studio</option>
+                <option value="contanti">Contanti</option>
+                <option value="pos">POS / Carta in Studio</option>
+                <option value="satispay">Satispay</option>
+                <option value="bonifico">Bonifico</option>
+                <option value="gift_card">Gift Card / Buono</option>
+                <option value="stripe_online">Stripe Online</option>
+                <option value="carta">Carta / Digitale</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="apptPaidAmountInput">Importo Incassato (€)</label>
+              <input type="number" id="apptPaidAmountInput" class="form-control" min="0" step="0.01" value="0" />
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label for="apptPaymentNotesInput">Note Cassa / Ricevuta</label>
+            <input type="text" id="apptPaymentNotesInput" class="form-control" placeholder="Es. Saldo POS, acconto versato, resto in contanti..." />
+          </div>
+          <div id="apptPaymentHistoryBox" class="appt-pay-history" hidden></div>
         </div>
 
         <label class="inline-check-label" id="apptSendWaConfirmWrap" style="margin-top:6px;">
@@ -1603,6 +1790,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=19"></script>
+  <script src="admin.js?v=20"></script>
 </body>
 </html>

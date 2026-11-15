@@ -351,6 +351,8 @@ async function createPublicBooking({
   servicesSummary,
   totalPrice,
   paymentMethod,
+  paymentStatus = 'unpaid',
+  paidAmount = 0,
   notes,
   clientName,
   clientPhoneRaw,
@@ -456,8 +458,8 @@ async function createPublicBooking({
     const [insAppt] = await conn.query(
       `INSERT INTO appointments
        (booking_code, client_id, operator_id, appointment_date, start_time, duration_minutes, services_json, services_summary,
-        total_price, mode, payment_method, status, notes, privacy_accepted, privacy_accepted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
+        total_price, mode, payment_method, payment_status, paid_amount, status, notes, privacy_accepted, privacy_accepted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?)`,
       [
         bookingCode,
         clientId,
@@ -470,6 +472,8 @@ async function createPublicBooking({
         totalPrice,
         mode,
         paymentMethod,
+        paymentStatus || 'unpaid',
+        Number(paidAmount || 0).toFixed(2),
         notes || null,
         nowStr,
       ]
@@ -544,7 +548,8 @@ async function listAppointments({ startDate, endDate, status, clientId, operator
         a.appointment_date,
         TIME_FORMAT(a.start_time, '%H:%i') AS start_time,
         a.duration_minutes, a.services_json, a.services_summary, a.total_price,
-        a.mode, a.payment_method, a.status, a.notes, a.reminder_sent_at,
+        a.mode, a.payment_method, a.payment_status, a.paid_amount, a.payment_notes, a.paid_at,
+        a.stripe_session_id, a.stripe_payment_intent, a.status, a.notes, a.reminder_sent_at,
         a.privacy_accepted, a.privacy_accepted_at, a.created_at,
         c.full_name AS client_name, c.phone AS client_phone, c.email AS client_email,
         c.birth_date AS client_birth_date, c.allergies_notes, c.preferences_notes, c.privacy_version
@@ -570,31 +575,66 @@ async function markAppointmentReminder(id, sentAt) {
 
 async function updateAppointment(
   id,
-  { date, time, duration, operatorId, servicesJson, servicesSummary, totalPrice, status, notes }
+  {
+    date,
+    time,
+    duration,
+    operatorId,
+    servicesJson,
+    servicesSummary,
+    totalPrice,
+    status,
+    notes,
+    paymentMethod,
+    paymentStatus,
+    paidAmount,
+    paymentNotes,
+    paidAt,
+  }
 ) {
   const pool = getPool();
-  const hasOp = operatorId !== undefined;
-  if (servicesJson !== null) {
-    await pool.query(
-      `UPDATE appointments
-       SET appointment_date = ?, start_time = ?, duration_minutes = ?, ${hasOp ? 'operator_id = ?,' : ''}
-           services_json = ?, services_summary = ?, total_price = ?, status = ?, notes = ?
-       WHERE id = ?`,
-      hasOp
-        ? [date, `${time}:00`, duration, operatorId || null, servicesJson, servicesSummary, totalPrice, status, notes || null, id]
-        : [date, `${time}:00`, duration, servicesJson, servicesSummary, totalPrice, status, notes || null, id]
-    );
-  } else {
-    await pool.query(
-      `UPDATE appointments
-       SET appointment_date = ?, start_time = ?, duration_minutes = ?, ${hasOp ? 'operator_id = ?,' : ''}
-           services_summary = ?, total_price = ?, status = ?, notes = ?
-       WHERE id = ?`,
-      hasOp
-        ? [date, `${time}:00`, duration, operatorId || null, servicesSummary, totalPrice, status, notes || null, id]
-        : [date, `${time}:00`, duration, servicesSummary, totalPrice, status, notes || null, id]
-    );
+  const sets = [
+    'appointment_date = ?',
+    'start_time = ?',
+    'duration_minutes = ?',
+    'services_summary = ?',
+    'total_price = ?',
+    'status = ?',
+    'notes = ?',
+  ];
+  const params = [date, `${time}:00`, duration, servicesSummary, totalPrice, status, notes || null];
+
+  if (operatorId !== undefined) {
+    sets.push('operator_id = ?');
+    params.push(operatorId || null);
   }
+  if (servicesJson !== null && servicesJson !== undefined) {
+    sets.push('services_json = ?');
+    params.push(servicesJson);
+  }
+  if (paymentMethod !== undefined) {
+    sets.push('payment_method = ?');
+    params.push(paymentMethod);
+  }
+  if (paymentStatus !== undefined) {
+    sets.push('payment_status = ?');
+    params.push(paymentStatus);
+  }
+  if (paidAmount !== undefined) {
+    sets.push('paid_amount = ?');
+    params.push(Number(paidAmount || 0).toFixed(2));
+  }
+  if (paymentNotes !== undefined) {
+    sets.push('payment_notes = ?');
+    params.push(paymentNotes || null);
+  }
+  if (paidAt !== undefined) {
+    sets.push('paid_at = ?');
+    params.push(paidAt || null);
+  }
+
+  params.push(id);
+  await pool.query(`UPDATE appointments SET ${sets.join(', ')} WHERE id = ?`, params);
 }
 
 async function rescheduleAppointment(id, { date, time, duration, operatorId, status }) {
@@ -634,6 +674,11 @@ async function createAdminAppointment({
   totalPrice,
   mode,
   paymentMethod,
+  paymentStatus = 'unpaid',
+  paidAmount = 0,
+  paymentNotes = null,
+  paidAt = null,
+  adminId = null,
   status,
   notes,
   ipHash,
@@ -677,11 +722,13 @@ async function createAdminAppointment({
     }
 
     const bookingCode = await generateBookingCode(conn);
+    const paidNum = Math.max(0, Number(paidAmount || 0));
+    const effectivePaidAt = paidNum > 0 ? paidAt || nowStr : null;
     const [insA] = await conn.query(
       `INSERT INTO appointments
        (booking_code, client_id, operator_id, appointment_date, start_time, duration_minutes, services_json, services_summary,
-        total_price, mode, payment_method, status, notes, privacy_accepted, privacy_accepted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        total_price, mode, payment_method, payment_status, paid_amount, payment_notes, paid_at, status, notes, privacy_accepted, privacy_accepted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         bookingCode,
         resolvedClientId,
@@ -694,6 +741,10 @@ async function createAdminAppointment({
         totalPrice,
         mode,
         paymentMethod,
+        paymentStatus || 'unpaid',
+        paidNum.toFixed(2),
+        paymentNotes || null,
+        effectivePaidAt,
         status,
         notes || null,
         privacyAccepted,
@@ -701,6 +752,24 @@ async function createAdminAppointment({
       ]
     );
     const newApptId = Number(insA.insertId);
+
+    if (paidNum > 0) {
+      await conn.query(
+        `INSERT INTO payment_transactions
+         (appointment_id, client_id, booking_code, direction, payment_method, amount, currency, status, notes, created_by_admin_id, created_at)
+         VALUES (?, ?, ?, 'payment', ?, ?, 'EUR', 'succeeded', ?, ?, ?)`,
+        [
+          newApptId,
+          resolvedClientId,
+          bookingCode,
+          paymentMethod || 'contanti',
+          paidNum.toFixed(2),
+          paymentNotes || 'Incasso registrato alla creazione appuntamento',
+          adminId || null,
+          effectivePaidAt,
+        ]
+      );
+    }
 
     if (privacyAccepted) {
       await conn.query(
@@ -1811,6 +1880,266 @@ async function deletePromotion(id) {
   await pool.query('DELETE FROM monthly_promotions WHERE id = ?', [id]);
 }
 
+/* ============================================================================
+   PAYMENTS, CASSA & STRIPE CHECKOUT LEDGER
+   ============================================================================ */
+async function getAppointmentByField(fieldSql, value) {
+  const pool = getPool();
+  const [firstOpRows] = await pool.query('SELECT id, name, color FROM operators ORDER BY id ASC LIMIT 1');
+  const primaryOp = firstOpRows[0] || { id: null, name: 'Giulia', color: '#d47491' };
+  const [rows] = await pool.query(
+    `SELECT
+        a.id, a.booking_code, a.client_id,
+        COALESCE(a.operator_id, ?) AS operator_id,
+        COALESCE(o.name, ?) AS operator_name,
+        COALESCE(o.color, ?) AS operator_color,
+        a.appointment_date,
+        TIME_FORMAT(a.start_time, '%H:%i') AS start_time,
+        a.duration_minutes, a.services_json, a.services_summary, a.total_price,
+        a.mode, a.payment_method, a.payment_status, a.paid_amount, a.payment_notes, a.paid_at,
+        a.stripe_session_id, a.stripe_payment_intent, a.status, a.notes, a.reminder_sent_at,
+        a.privacy_accepted, a.privacy_accepted_at, a.created_at,
+        c.full_name AS client_name, c.phone AS client_phone, c.email AS client_email
+     FROM appointments a
+     INNER JOIN clients c ON c.id = a.client_id
+     LEFT JOIN operators o ON o.id = a.operator_id
+     WHERE ${fieldSql}
+     LIMIT 1`,
+    [primaryOp.id, primaryOp.name, primaryOp.color, value]
+  );
+  return rows[0] || null;
+}
+
+async function getAppointmentById(id) {
+  return getAppointmentByField('a.id = ?', Number(id));
+}
+
+async function getAppointmentByCode(bookingCode) {
+  return getAppointmentByField('a.booking_code = ?', String(bookingCode || '').trim());
+}
+
+async function getAppointmentByStripeSession(sessionId) {
+  return getAppointmentByField('a.stripe_session_id = ?', String(sessionId || '').trim());
+}
+
+async function updateAppointmentStripeSession(id, sessionId) {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE appointments
+     SET stripe_session_id = ?, payment_method = 'stripe_online'
+     WHERE id = ?`,
+    [String(sessionId || '').trim() || null, id]
+  );
+}
+
+async function fallbackAppointmentToStudioPayment(id) {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE appointments
+     SET payment_method = 'studio', stripe_session_id = NULL
+     WHERE id = ? AND payment_status = 'unpaid'`,
+    [id]
+  );
+  return getAppointmentById(id);
+}
+
+async function cancelUnpaidPendingAppointment(id, reasonNote = 'Pagamento online non completato dalla cliente') {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE appointments
+     SET status = 'cancelled', payment_notes = COALESCE(payment_notes, ?)
+     WHERE id = ? AND status = 'pending' AND payment_status = 'unpaid'`,
+    [reasonNote, id]
+  );
+  return getAppointmentById(id);
+}
+
+async function listPaymentTransactions({ startDate = null, endDate = null, method = null, appointmentId = 0, limit = 120 } = {}) {
+  const pool = getPool();
+  const where = ['1=1'];
+  const params = [];
+  if (appointmentId > 0) {
+    where.push('pt.appointment_id = ?');
+    params.push(Number(appointmentId));
+  }
+  if (method) {
+    where.push('pt.payment_method = ?');
+    params.push(String(method).trim());
+  }
+  if (startDate) {
+    where.push('DATE(pt.created_at) >= ?');
+    params.push(startDate);
+  }
+  if (endDate) {
+    where.push('DATE(pt.created_at) <= ?');
+    params.push(endDate);
+  }
+  const safeLimit = Math.min(500, Math.max(1, Number(limit || 120)));
+  params.push(safeLimit);
+
+  const [rows] = await pool.query(
+    `SELECT pt.*,
+            a.appointment_date,
+            TIME_FORMAT(a.start_time, '%H:%i') AS start_time,
+            a.services_summary,
+            a.total_price AS appointment_total_price,
+            a.payment_status AS appointment_payment_status,
+            c.full_name AS client_name,
+            c.phone AS client_phone
+     FROM payment_transactions pt
+     LEFT JOIN appointments a ON a.id = pt.appointment_id
+     LEFT JOIN clients c ON c.id = pt.client_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY pt.created_at DESC, pt.id DESC
+     LIMIT ?`,
+    params
+  );
+  return rows;
+}
+
+async function recordAppointmentPayment({
+  appointmentId,
+  paymentStatus = null,
+  paymentMethod = null,
+  paidAmount = null,
+  transactionAmount = null,
+  direction = 'payment',
+  stripeSessionId = null,
+  stripePaymentIntent = null,
+  paymentNotes = null,
+  transactionNotes = null,
+  statusOverride = null,
+  adminId = null,
+  nowStr = formatRomeNow(),
+}) {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    if (stripeSessionId && direction === 'payment') {
+      const [dup] = await conn.query(
+        `SELECT * FROM payment_transactions
+         WHERE stripe_session_id = ? AND direction = 'payment' AND status = 'succeeded'
+         LIMIT 1`,
+        [stripeSessionId]
+      );
+      if (dup.length > 0) {
+        await conn.rollback();
+        const existingAppt = await getAppointmentById(appointmentId);
+        return { appointment: existingAppt, transaction: dup[0], duplicate: true };
+      }
+    }
+
+    const [apptRows] = await conn.query('SELECT * FROM appointments WHERE id = ? FOR UPDATE', [appointmentId]);
+    if (apptRows.length === 0) {
+      await conn.rollback();
+      const err = new Error('Appuntamento non trovato.');
+      err.status = 404;
+      throw err;
+    }
+    const appt = apptRows[0];
+    const currentPaid = Math.max(0, Number(appt.paid_amount || 0));
+    const total = Math.max(0, Number(appt.total_price || 0));
+
+    let nextPaid = currentPaid;
+    let txAmt = 0;
+
+    if (direction === 'refund') {
+      const refAmt = transactionAmount !== null ? Math.max(0, Number(transactionAmount || 0)) : currentPaid;
+      txAmt = Math.min(currentPaid > 0 ? currentPaid : total, refAmt);
+      nextPaid = Math.max(0, Math.round((currentPaid - txAmt) * 100) / 100);
+    } else if (paidAmount !== null && paidAmount !== undefined) {
+      nextPaid = Math.max(0, Math.round(Number(paidAmount || 0) * 100) / 100);
+      if (transactionAmount !== null && transactionAmount !== undefined) {
+        txAmt = Math.max(0, Math.round(Number(transactionAmount || 0) * 100) / 100);
+      } else {
+        txAmt = Math.max(0, Math.round((nextPaid - currentPaid) * 100) / 100);
+      }
+    } else if (transactionAmount !== null && transactionAmount !== undefined) {
+      txAmt = Math.max(0, Math.round(Number(transactionAmount || 0) * 100) / 100);
+      nextPaid = Math.round((currentPaid + txAmt) * 100) / 100;
+    }
+
+    let nextPayStatus = paymentStatus || appt.payment_status || 'unpaid';
+    if (direction === 'refund') {
+      nextPayStatus = nextPaid <= 0.009 ? 'refunded' : 'partial';
+    } else if (!paymentStatus) {
+      if (total > 0 && nextPaid >= total - 0.01) nextPayStatus = 'paid';
+      else if (nextPaid > 0.009) nextPayStatus = 'partial';
+      else nextPayStatus = 'unpaid';
+    }
+
+    const nextMethod = paymentMethod || appt.payment_method || 'studio';
+    const nextPaidAt =
+      nextPayStatus === 'unpaid'
+        ? null
+        : nextPaid > 0 || nextPayStatus === 'paid'
+        ? appt.paid_at || nowStr
+        : appt.paid_at || null;
+    const nextNotes = paymentNotes !== null && paymentNotes !== undefined ? paymentNotes : appt.payment_notes;
+    const nextApptStatus = statusOverride || appt.status;
+    const nextSession = stripeSessionId || appt.stripe_session_id || null;
+    const nextIntent = stripePaymentIntent || appt.stripe_payment_intent || null;
+
+    await conn.query(
+      `UPDATE appointments
+       SET payment_method = ?, payment_status = ?, paid_amount = ?, payment_notes = ?, paid_at = ?,
+           stripe_session_id = ?, stripe_payment_intent = ?, status = ?
+       WHERE id = ?`,
+      [
+        nextMethod,
+        nextPayStatus,
+        nextPaid.toFixed(2),
+        nextNotes || null,
+        nextPaidAt,
+        nextSession,
+        nextIntent,
+        nextApptStatus,
+        appointmentId,
+      ]
+    );
+
+    let insertedTx = null;
+    if (txAmt > 0.009) {
+      const [insTx] = await conn.query(
+        `INSERT INTO payment_transactions
+         (appointment_id, client_id, booking_code, direction, payment_method, amount, currency, status,
+          stripe_session_id, stripe_payment_intent, notes, created_by_admin_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'succeeded', ?, ?, ?, ?, ?)`,
+        [
+          appointmentId,
+          appt.client_id,
+          appt.booking_code,
+          direction,
+          nextMethod,
+          txAmt.toFixed(2),
+          stripeSessionId || null,
+          stripePaymentIntent || null,
+          transactionNotes || nextNotes || null,
+          adminId || null,
+          nowStr,
+        ]
+      );
+      const [txRows] = await conn.query('SELECT * FROM payment_transactions WHERE id = ?', [Number(insTx.insertId)]);
+      insertedTx = txRows[0] || null;
+    }
+
+    await conn.commit();
+    const updatedAppt = await getAppointmentById(appointmentId);
+    return { appointment: updatedAppt, transaction: insertedTx, duplicate: false };
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {
+      // ignore rollback
+    }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1880,4 +2209,12 @@ module.exports = {
   createPromotion,
   updatePromotion,
   deletePromotion,
+  getAppointmentById,
+  getAppointmentByCode,
+  getAppointmentByStripeSession,
+  updateAppointmentStripeSession,
+  fallbackAppointmentToStudioPayment,
+  cancelUnpaidPendingAppointment,
+  listPaymentTransactions,
+  recordAppointmentPayment,
 };

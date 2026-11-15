@@ -1269,6 +1269,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .badge-pending { background: #fff4df; color: #8c590a; }
@@ -1304,6 +1305,7 @@ body {
   border-radius: 18px;
   padding: 26px;
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .settings-card h3 {
@@ -3283,4 +3285,144 @@ body {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   PAYMENTS, CASSA BADGES & STRIPE LEDGER STYLES
+   ========================================================================== */
+.cal-pay-pill {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  margin-left: 3px;
+}
+
+.cal-pay-pill.is-paid {
+  background: #e1f6e9;
+  color: #166534;
+  border: 1px solid rgba(22, 101, 52, 0.25);
+}
+
+.cal-pay-pill.is-partial {
+  background: #fff2da;
+  color: #9a5b13;
+  border: 1px solid rgba(154, 91, 19, 0.28);
+}
+
+.cal-pay-pill.is-unpaid {
+  background: #f5eff1;
+  color: #6f4b53;
+  border: 1px solid rgba(111, 75, 83, 0.22);
+}
+
+.cal-pay-pill.is-refunded {
+  background: #fbe8ec;
+  color: #91384a;
+  border: 1px solid rgba(145, 56, 74, 0.25);
+}
+
+.cal-event-card.is-compact .cal-pay-pill.is-unpaid {
+  display: none;
+}
+
+.appt-cassa-box {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fbf7f8;
+  border: 1px solid rgba(168, 108, 114, 0.25);
+}
+
+.appt-cassa-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: var(--ink);
+}
+
+.appt-pay-quick-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.appt-pay-history {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(168, 108, 114, 0.28);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+}
+
+.appt-pay-history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.payments-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.pay-kpi-box {
+  background: #fdf9fa;
+  border: 1px solid rgba(168, 108, 114, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.pay-kpi-box span {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+.pay-kpi-box strong {
+  font-size: 1.08rem;
+  color: #166534;
+}
+
+.pay-kpi-box.is-pending strong {
+  color: #9a5b13;
+}
+
+.automation-flags-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdf9fa;
+  border: 1px solid rgba(168, 108, 114, 0.18);
+}
+
+.cal-ctx-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding: 6px 12px 2px;
+}
+
+.pay-ledger-table th,
+.pay-ledger-table td {
+  padding: 10px 10px;
+  font-size: 0.78rem;
 }

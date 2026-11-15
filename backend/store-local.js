@@ -41,6 +41,7 @@ function defaultState() {
       gift_card: 0,
       automation_run: 0,
       promotion: 0,
+      payment_tx: 0,
     },
     admin_users: [],
     admin_sessions: [],
@@ -61,6 +62,7 @@ function defaultState() {
     studio_settings: [],
     automation_runs: [],
     monthly_promotions: [],
+    payment_transactions: [],
   };
 }
 
@@ -437,6 +439,8 @@ async function createPublicBooking({
   servicesSummary,
   totalPrice,
   paymentMethod,
+  paymentStatus = 'unpaid',
+  paidAmount = 0,
   notes,
   clientName,
   clientPhoneRaw,
@@ -550,6 +554,12 @@ async function createPublicBooking({
     total_price: Number(totalPrice).toFixed(2),
     mode,
     payment_method: paymentMethod,
+    payment_status: paymentStatus || 'unpaid',
+    paid_amount: Number(paidAmount || 0).toFixed(2),
+    payment_notes: null,
+    paid_at: null,
+    stripe_session_id: null,
+    stripe_payment_intent: null,
     status: 'pending',
     notes: notes || null,
     reminder_sent_at: null,
@@ -607,6 +617,13 @@ async function listAppointments({ startDate, endDate, status, clientId, operator
         operator_name: op.name || 'Giulia',
         operator_color: op.color || '#d47491',
         start_time: String(a.start_time).slice(0, 5),
+        payment_status: a.payment_status || 'unpaid',
+        paid_amount:
+          a.paid_amount !== undefined && a.paid_amount !== null ? Number(a.paid_amount).toFixed(2) : '0.00',
+        payment_notes: a.payment_notes || null,
+        paid_at: a.paid_at || null,
+        stripe_session_id: a.stripe_session_id || null,
+        stripe_payment_intent: a.stripe_payment_intent || null,
         client_name: c.full_name || '',
         client_phone: c.phone || '',
         client_email: c.email || null,
@@ -636,7 +653,22 @@ async function markAppointmentReminder(id, sentAt) {
 
 async function updateAppointment(
   id,
-  { date, time, duration, operatorId, servicesJson, servicesSummary, totalPrice, status, notes }
+  {
+    date,
+    time,
+    duration,
+    operatorId,
+    servicesJson,
+    servicesSummary,
+    totalPrice,
+    status,
+    notes,
+    paymentMethod,
+    paymentStatus,
+    paidAmount,
+    paymentNotes,
+    paidAt,
+  }
 ) {
   const db = readDb();
   const appt = db.appointments.find((a) => Number(a.id) === Number(id));
@@ -645,11 +677,16 @@ async function updateAppointment(
   appt.start_time = `${time}:00`;
   appt.duration_minutes = duration;
   if (operatorId !== undefined) appt.operator_id = operatorId || null;
-  if (servicesJson !== null) appt.services_json = servicesJson;
+  if (servicesJson !== null && servicesJson !== undefined) appt.services_json = servicesJson;
   appt.services_summary = servicesSummary;
   appt.total_price = Number(totalPrice).toFixed(2);
   appt.status = status;
   appt.notes = notes || null;
+  if (paymentMethod !== undefined) appt.payment_method = paymentMethod;
+  if (paymentStatus !== undefined) appt.payment_status = paymentStatus;
+  if (paidAmount !== undefined) appt.paid_amount = Number(paidAmount || 0).toFixed(2);
+  if (paymentNotes !== undefined) appt.payment_notes = paymentNotes || null;
+  if (paidAt !== undefined) appt.paid_at = paidAt || null;
   appt.updated_at = formatRomeNow();
   writeDb(db);
 }
@@ -688,6 +725,11 @@ async function createAdminAppointment({
   totalPrice,
   mode,
   paymentMethod,
+  paymentStatus = 'unpaid',
+  paidAmount = 0,
+  paymentNotes = null,
+  paidAt = null,
+  adminId = null,
   status,
   notes,
   ipHash,
@@ -723,6 +765,8 @@ async function createAdminAppointment({
   const resolvedOpId = operatorId || db.operators[0]?.id || null;
   const newApptId = nextId(db, 'appointment');
   const bookingCode = nextBookingCode(db);
+  const paidNum = Math.max(0, Number(paidAmount || 0));
+  const effectivePaidAt = paidNum > 0 ? paidAt || nowStr : null;
   db.appointments.push({
     id: newApptId,
     booking_code: bookingCode,
@@ -736,6 +780,12 @@ async function createAdminAppointment({
     total_price: Number(totalPrice).toFixed(2),
     mode,
     payment_method: paymentMethod,
+    payment_status: paymentStatus || 'unpaid',
+    paid_amount: paidNum.toFixed(2),
+    payment_notes: paymentNotes || null,
+    paid_at: effectivePaidAt,
+    stripe_session_id: null,
+    stripe_payment_intent: null,
     status,
     notes: notes || null,
     reminder_sent_at: null,
@@ -744,6 +794,25 @@ async function createAdminAppointment({
     created_at: nowStr,
     updated_at: nowStr,
   });
+
+  if (paidNum > 0) {
+    db.payment_transactions.push({
+      id: nextId(db, 'payment_tx'),
+      appointment_id: newApptId,
+      client_id: resolvedClientId,
+      booking_code: bookingCode,
+      direction: 'payment',
+      payment_method: paymentMethod || 'contanti',
+      amount: paidNum.toFixed(2),
+      currency: 'EUR',
+      status: 'succeeded',
+      stripe_session_id: null,
+      stripe_payment_intent: null,
+      notes: paymentNotes || 'Incasso registrato alla creazione appuntamento',
+      created_by_admin_id: adminId || null,
+      created_at: effectivePaidAt,
+    });
+  }
 
   if (privacyAccepted) {
     db.privacy_logs.push({
@@ -1840,6 +1909,237 @@ async function deletePromotion(id) {
   writeDb(db);
 }
 
+/* ============================================================================
+   PAYMENTS, CASSA & STRIPE CHECKOUT LEDGER
+   ============================================================================ */
+function hydrateLocalAppointment(db, appt) {
+  if (!appt) return null;
+  const c = db.clients.find((cl) => Number(cl.id) === Number(appt.client_id)) || {};
+  const primaryOp = db.operators[0] || { id: null, name: 'Giulia', color: '#d47491' };
+  const op = db.operators.find((o) => Number(o.id) === Number(appt.operator_id)) || primaryOp;
+  return {
+    ...appt,
+    operator_id: appt.operator_id || op.id || null,
+    operator_name: op.name || 'Giulia',
+    operator_color: op.color || '#d47491',
+    start_time: String(appt.start_time).slice(0, 5),
+    payment_status: appt.payment_status || 'unpaid',
+    paid_amount:
+      appt.paid_amount !== undefined && appt.paid_amount !== null ? Number(appt.paid_amount).toFixed(2) : '0.00',
+    payment_notes: appt.payment_notes || null,
+    paid_at: appt.paid_at || null,
+    stripe_session_id: appt.stripe_session_id || null,
+    stripe_payment_intent: appt.stripe_payment_intent || null,
+    client_name: c.full_name || '',
+    client_phone: c.phone || '',
+    client_email: c.email || null,
+    client_birth_date: c.birth_date || null,
+    allergies_notes: c.allergies_notes || null,
+    preferences_notes: c.preferences_notes || null,
+    privacy_version: c.privacy_version || 'v2.0-2026-11',
+  };
+}
+
+async function getAppointmentById(id) {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  return hydrateLocalAppointment(db, appt);
+}
+
+async function getAppointmentByCode(bookingCode) {
+  const db = readDb();
+  const code = String(bookingCode || '').trim();
+  const appt = db.appointments.find((a) => String(a.booking_code) === code);
+  return hydrateLocalAppointment(db, appt);
+}
+
+async function getAppointmentByStripeSession(sessionId) {
+  const db = readDb();
+  const sid = String(sessionId || '').trim();
+  const appt = db.appointments.find((a) => String(a.stripe_session_id || '') === sid);
+  return hydrateLocalAppointment(db, appt);
+}
+
+async function updateAppointmentStripeSession(id, sessionId) {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  if (appt) {
+    appt.stripe_session_id = String(sessionId || '').trim() || null;
+    appt.payment_method = 'stripe_online';
+    appt.updated_at = formatRomeNow();
+    writeDb(db);
+  }
+}
+
+async function fallbackAppointmentToStudioPayment(id) {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  if (appt && (appt.payment_status || 'unpaid') === 'unpaid') {
+    appt.payment_method = 'studio';
+    appt.stripe_session_id = null;
+    appt.updated_at = formatRomeNow();
+    writeDb(db);
+  }
+  return getAppointmentById(id);
+}
+
+async function cancelUnpaidPendingAppointment(id, reasonNote = 'Pagamento online non completato dalla cliente') {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  if (appt && appt.status === 'pending' && (appt.payment_status || 'unpaid') === 'unpaid') {
+    appt.status = 'cancelled';
+    if (!appt.payment_notes) appt.payment_notes = reasonNote;
+    appt.updated_at = formatRomeNow();
+    writeDb(db);
+  }
+  return getAppointmentById(id);
+}
+
+async function listPaymentTransactions({ startDate = null, endDate = null, method = null, appointmentId = 0, limit = 120 } = {}) {
+  const db = readDb();
+  const apptMap = new Map(db.appointments.map((a) => [Number(a.id), a]));
+  const clientMap = new Map(db.clients.map((c) => [Number(c.id), c]));
+  const safeLimit = Math.min(500, Math.max(1, Number(limit || 120)));
+
+  return (db.payment_transactions || [])
+    .filter((pt) => {
+      if (appointmentId > 0 && Number(pt.appointment_id) !== Number(appointmentId)) return false;
+      if (method && String(pt.payment_method) !== String(method).trim()) return false;
+      const d = String(pt.created_at || '').slice(0, 10);
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    })
+    .sort((a, b) => Number(b.id) - Number(a.id))
+    .slice(0, safeLimit)
+    .map((pt) => {
+      const a = apptMap.get(Number(pt.appointment_id)) || {};
+      const c = clientMap.get(Number(pt.client_id)) || {};
+      return {
+        ...pt,
+        appointment_date: a.appointment_date || null,
+        start_time: a.start_time ? String(a.start_time).slice(0, 5) : null,
+        services_summary: a.services_summary || null,
+        appointment_total_price: a.total_price || null,
+        appointment_payment_status: a.payment_status || null,
+        client_name: c.full_name || null,
+        client_phone: c.phone || null,
+      };
+    });
+}
+
+async function recordAppointmentPayment({
+  appointmentId,
+  paymentStatus = null,
+  paymentMethod = null,
+  paidAmount = null,
+  transactionAmount = null,
+  direction = 'payment',
+  stripeSessionId = null,
+  stripePaymentIntent = null,
+  paymentNotes = null,
+  transactionNotes = null,
+  statusOverride = null,
+  adminId = null,
+  nowStr = formatRomeNow(),
+}) {
+  const db = readDb();
+
+  if (stripeSessionId && direction === 'payment') {
+    const dup = (db.payment_transactions || []).find(
+      (pt) => pt.stripe_session_id === stripeSessionId && pt.direction === 'payment' && pt.status === 'succeeded'
+    );
+    if (dup) {
+      const apptExisting = await getAppointmentById(appointmentId);
+      return { appointment: apptExisting, transaction: dup, duplicate: true };
+    }
+  }
+
+  const appt = db.appointments.find((a) => Number(a.id) === Number(appointmentId));
+  if (!appt) {
+    const err = new Error('Appuntamento non trovato.');
+    err.status = 404;
+    throw err;
+  }
+
+  const currentPaid = Math.max(0, Number(appt.paid_amount || 0));
+  const total = Math.max(0, Number(appt.total_price || 0));
+
+  let nextPaid = currentPaid;
+  let txAmt = 0;
+
+  if (direction === 'refund') {
+    const refAmt = transactionAmount !== null ? Math.max(0, Number(transactionAmount || 0)) : currentPaid;
+    txAmt = Math.min(currentPaid > 0 ? currentPaid : total, refAmt);
+    nextPaid = Math.max(0, Math.round((currentPaid - txAmt) * 100) / 100);
+  } else if (paidAmount !== null && paidAmount !== undefined) {
+    nextPaid = Math.max(0, Math.round(Number(paidAmount || 0) * 100) / 100);
+    if (transactionAmount !== null && transactionAmount !== undefined) {
+      txAmt = Math.max(0, Math.round(Number(transactionAmount || 0) * 100) / 100);
+    } else {
+      txAmt = Math.max(0, Math.round((nextPaid - currentPaid) * 100) / 100);
+    }
+  } else if (transactionAmount !== null && transactionAmount !== undefined) {
+    txAmt = Math.max(0, Math.round(Number(transactionAmount || 0) * 100) / 100);
+    nextPaid = Math.round((currentPaid + txAmt) * 100) / 100;
+  }
+
+  let nextPayStatus = paymentStatus || appt.payment_status || 'unpaid';
+  if (direction === 'refund') {
+    nextPayStatus = nextPaid <= 0.009 ? 'refunded' : 'partial';
+  } else if (!paymentStatus) {
+    if (total > 0 && nextPaid >= total - 0.01) nextPayStatus = 'paid';
+    else if (nextPaid > 0.009) nextPayStatus = 'partial';
+    else nextPayStatus = 'unpaid';
+  }
+
+  const nextMethod = paymentMethod || appt.payment_method || 'studio';
+  const nextPaidAt =
+    nextPayStatus === 'unpaid'
+      ? null
+      : nextPaid > 0 || nextPayStatus === 'paid'
+      ? appt.paid_at || nowStr
+      : appt.paid_at || null;
+  const nextNotes = paymentNotes !== null && paymentNotes !== undefined ? paymentNotes : appt.payment_notes || null;
+  const nextApptStatus = statusOverride || appt.status;
+  const nextSession = stripeSessionId || appt.stripe_session_id || null;
+  const nextIntent = stripePaymentIntent || appt.stripe_payment_intent || null;
+
+  appt.payment_method = nextMethod;
+  appt.payment_status = nextPayStatus;
+  appt.paid_amount = nextPaid.toFixed(2);
+  appt.payment_notes = nextNotes;
+  appt.paid_at = nextPaidAt;
+  appt.stripe_session_id = nextSession;
+  appt.stripe_payment_intent = nextIntent;
+  appt.status = nextApptStatus;
+  appt.updated_at = nowStr;
+
+  let insertedTx = null;
+  if (txAmt > 0.009) {
+    insertedTx = {
+      id: nextId(db, 'payment_tx'),
+      appointment_id: appt.id,
+      client_id: appt.client_id,
+      booking_code: appt.booking_code,
+      direction,
+      payment_method: nextMethod,
+      amount: txAmt.toFixed(2),
+      currency: 'EUR',
+      status: 'succeeded',
+      stripe_session_id: stripeSessionId || null,
+      stripe_payment_intent: stripePaymentIntent || null,
+      notes: transactionNotes || nextNotes || null,
+      created_by_admin_id: adminId || null,
+      created_at: nowStr,
+    };
+    db.payment_transactions.push(insertedTx);
+  }
+
+  writeDb(db);
+  return { appointment: hydrateLocalAppointment(db, appt), transaction: insertedTx, duplicate: false };
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -1909,4 +2209,12 @@ module.exports = {
   createPromotion,
   updatePromotion,
   deletePromotion,
+  getAppointmentById,
+  getAppointmentByCode,
+  getAppointmentByStripeSession,
+  updateAppointmentStripeSession,
+  fallbackAppointmentToStudioPayment,
+  cancelUnpaidPendingAppointment,
+  listPaymentTransactions,
+  recordAppointmentPayment,
 };

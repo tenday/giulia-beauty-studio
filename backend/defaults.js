@@ -149,9 +149,24 @@ const DEFAULT_WHATSAPP_SETTINGS = {
   winback_max_per_run: 25,
 };
 
+const DEFAULT_PAYMENT_SETTINGS = {
+  stripe_enabled: false,
+  stripe_mode: 'test',
+  stripe_publishable_key: '',
+  stripe_secret_key: '',
+  stripe_webhook_secret: '',
+  allow_pay_in_studio: true,
+  allow_online_full: true,
+  allow_online_deposit: true,
+  deposit_percent: 30,
+  auto_confirm_on_paid: true,
+  currency: 'eur',
+};
+
 module.exports = {
   getDefaultOperatorPayload,
   DEFAULT_MESSAGE_TEMPLATES,
   DEFAULT_MONTHLY_PROMOTIONS,
   DEFAULT_WHATSAPP_SETTINGS,
+  DEFAULT_PAYMENT_SETTINGS,
 };

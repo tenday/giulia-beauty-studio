@@ -2100,9 +2100,9 @@ a.bcard-line:hover {
 
 .payment-methods-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .payment-option-card {
@@ -2113,6 +2113,7 @@ a.bcard-line:hover {
   cursor: pointer;
   text-align: left;
   font-family: var(--font-sans);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .payment-option-card.active {
@@ -2133,6 +2134,55 @@ a.bcard-line:hover {
   color: var(--ink-secondary);
   line-height: 1.35;
   display: block;
+}
+
+.payment-badge-pill {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(145, 78, 86, 0.12);
+  color: var(--rose-deep);
+}
+
+.payment-online-hint {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed rgba(145, 78, 86, 0.35);
+  background: rgba(250, 239, 241, 0.75);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--ink-primary);
+}
+
+.stripe-receipt-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.stripe-receipt-badge.paid {
+  background: #e6f6ec;
+  color: #166534;
+}
+
+.stripe-receipt-badge.partial {
+  background: #fff4df;
+  color: #9a5b13;
+}
+
+.stripe-receipt-badge.cancelled {
+  background: #fbe8ec;
+  color: #91384a;
 }
 
 .drawer-footer {

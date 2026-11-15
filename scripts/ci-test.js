@@ -5,6 +5,7 @@
  * 3. Isolated local-store end-to-end API regression suite
  */
 const assert = require('assert');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -791,9 +792,212 @@ async function runApiSuite() {
     assert(savedAdminPromo && Math.abs(Number(savedAdminPromo.total_price) - 64.9) < 0.01, `Atteso 64.90 su appt admin promo, trovato ${savedAdminPromo?.total_price}`);
     assert(savedWebPromo && Math.abs(Number(savedWebPromo.total_price) - 44.9) < 0.01, `Atteso promo_price 44.90 su appt web promo, trovato ${savedWebPromo?.total_price}`);
 
+    // 13. Payments, Cassa & Stripe Checkout Regression Suite
+    const initPubPayRes = await req('GET', '/api/public/payment-config');
+    assert.strictEqual(initPubPayRes.status, 200);
+    assert.strictEqual(initPubPayRes.json.config.stripe_ready, false);
+
+    const stripeWebhookSecret = 'whsec_ci_secret_test_987654';
+    const savePayCfgRes = await req('POST', '/api/admin/payments/settings', {
+      stripe_enabled: true,
+      stripe_mode: 'test',
+      stripe_publishable_key: 'pk_test_ci_123',
+      stripe_secret_key: 'sk_test_ci_secret_abcdef',
+      stripe_webhook_secret: stripeWebhookSecret,
+      allow_pay_in_studio: true,
+      allow_online_full: true,
+      allow_online_deposit: true,
+      deposit_percent: 30,
+      auto_confirm_on_paid: true,
+    });
+    assert.strictEqual(savePayCfgRes.status, 200);
+    assert.strictEqual(savePayCfgRes.json.settings.has_secret_key, true);
+    assert.strictEqual(savePayCfgRes.json.settings.stripe_secret_key, undefined);
+    assert.strictEqual(savePayCfgRes.json.settings.stripe_webhook_secret, undefined);
+
+    const pubPayReadyRes = await req('GET', '/api/public/payment-config');
+    assert.strictEqual(pubPayReadyRes.status, 200);
+    assert.strictEqual(pubPayReadyRes.json.config.stripe_ready, true);
+    assert.strictEqual(pubPayReadyRes.json.config.deposit_percent, 30);
+
+    const stripeSessions = new Map();
+    globalThis.__GBS_STRIPE_FETCH__ = async (url, opts) => {
+      const target = String(url);
+      if (target.endsWith('/v1/account')) {
+        return new Response(
+          JSON.stringify({ id: 'acct_ci_test', charges_enabled: true, business_profile: { name: 'Giulia Beauty Test' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (target.endsWith('/v1/checkout/sessions') && String(opts?.method).toUpperCase() === 'POST') {
+        const params = new URLSearchParams(String(opts.body || ''));
+        const sid = `cs_test_${stripeSessions.size + 1}`;
+        const amountTotal = Number(params.get('line_items[0][price_data][unit_amount]') || 0);
+        const sessObj = {
+          id: sid,
+          url: `https://checkout.stripe.com/c/pay/${sid}`,
+          client_reference_id: params.get('client_reference_id'),
+          amount_total: amountTotal,
+          payment_status: 'paid',
+          status: 'complete',
+          payment_intent: `pi_test_${stripeSessions.size + 1}`,
+          metadata: {
+            booking_code: params.get('metadata[booking_code]'),
+            pay_scope: params.get('metadata[pay_scope]'),
+            charge_amount: params.get('metadata[charge_amount]'),
+          },
+        };
+        stripeSessions.set(sid, sessObj);
+        return new Response(JSON.stringify(sessObj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target.includes('/v1/checkout/sessions/cs_test_')) {
+        const sid = target.split('/').pop().split('?')[0];
+        const sessObj = stripeSessions.get(sid);
+        return new Response(JSON.stringify(sessObj || { error: { message: 'Not found' } }), {
+          status: sessObj ? 200 : 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target.endsWith('/v1/refunds')) {
+        return new Response(JSON.stringify({ id: 're_test_1', status: 'succeeded' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: { message: 'Unexpected Stripe route' } }), { status: 400 });
+    };
+
+    const stripeConnRes = await req('POST', '/api/admin/payments/test-stripe', {});
+    assert.strictEqual(stripeConnRes.status, 200);
+    assert.strictEqual(stripeConnRes.json.ok, true);
+
+    // Online 30% deposit checkout (€100 total -> €30 online)
+    const depositBookRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-18',
+      start_time: '11:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-srv-1', name: 'Ricostruzione Gel Luxury', price: 100, duration: 60 }],
+      total_price: 100,
+      client_name: 'Sara Stripe Acconto',
+      client_phone: '+39 333 9001122',
+      payment_method: 'stripe_deposit',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(depositBookRes.status, 201);
+    assert.strictEqual(depositBookRes.json.requires_stripe_redirect, true);
+    assert.strictEqual(depositBookRes.json.charge_amount, 30);
+
+    const verifyDepRes1 = await req('POST', '/api/public/stripe/verify-session', {
+      session_id: depositBookRes.json.stripe_session_id,
+      booking_code: depositBookRes.json.booking_code,
+    });
+    assert.strictEqual(verifyDepRes1.status, 200);
+    assert.strictEqual(verifyDepRes1.json.paid, true);
+    assert.strictEqual(verifyDepRes1.json.receipt.payment_status, 'partial');
+    assert.strictEqual(verifyDepRes1.json.receipt.paid_amount, 30);
+    assert.strictEqual(verifyDepRes1.json.receipt.remaining_amount, 70);
+    assert.strictEqual(verifyDepRes1.json.receipt.status, 'confirmed');
+
+    // Idempotent 2nd verify-session must not double-record
+    const verifyDepRes2 = await req('POST', '/api/public/stripe/verify-session', {
+      session_id: depositBookRes.json.stripe_session_id,
+      booking_code: depositBookRes.json.booking_code,
+    });
+    assert.strictEqual(verifyDepRes2.status, 200);
+    assert.strictEqual(verifyDepRes2.json.duplicate, true);
+
+    // Admin records remaining €70 in Contanti -> full €100 paid, 2 ledger rows
+    const payBalanceRes = await req('POST', '/api/admin/appointments', {
+      action: 'record_payment',
+      id: depositBookRes.json.appointment_id,
+      payment_method: 'contanti',
+      payment_status: 'paid',
+      paid_amount: 100,
+    });
+    assert.strictEqual(payBalanceRes.status, 200);
+    assert.strictEqual(payBalanceRes.json.appointment.payment_status, 'paid');
+    assert.strictEqual(Number(payBalanceRes.json.appointment.paid_amount), 100);
+    assert.strictEqual(Number(payBalanceRes.json.transaction.amount), 70);
+
+    // Full online checkout + HMAC-SHA256 webhook verification
+    const fullBookRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-18',
+      start_time: '15:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-srv-2', name: 'Make up Cerimonia', price: 80, duration: 60 }],
+      total_price: 80,
+      client_name: 'Giulia Webhook',
+      client_phone: '+39 333 9003344',
+      payment_method: 'stripe_full',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(fullBookRes.status, 201);
+    assert.strictEqual(fullBookRes.json.charge_amount, 80);
+
+    const whPayload = JSON.stringify({
+      id: 'evt_ci_1',
+      type: 'checkout.session.completed',
+      data: { object: stripeSessions.get(fullBookRes.json.stripe_session_id) },
+    });
+    const badWhRes = await fetch(`${baseUrl}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': 't=100,v1=invalid' },
+      body: whPayload,
+    });
+    assert.strictEqual(badWhRes.status, 400);
+
+    const whTs = Math.floor(Date.now() / 1000);
+    const whSig = crypto.createHmac('sha256', stripeWebhookSecret).update(`${whTs}.${whPayload}`).digest('hex');
+    const goodWhRes = await fetch(`${baseUrl}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${whTs},v1=${whSig}` },
+      body: whPayload,
+    });
+    assert.strictEqual(goodWhRes.status, 200);
+
+    const ledgerRes = await req('GET', '/api/admin/payments');
+    assert.strictEqual(ledgerRes.status, 200);
+    assert.strictEqual(ledgerRes.json.transactions.length, 3);
+    assert.strictEqual(Number(ledgerRes.json.summary.all_time_net), 180);
+
+    // Refund full Stripe booking via Admin API
+    const refundRes = await req('POST', '/api/admin/payments/refund', {
+      appointment_id: fullBookRes.json.appointment_id,
+      amount: 80,
+      call_stripe: true,
+    });
+    assert.strictEqual(refundRes.status, 200);
+    assert.strictEqual(refundRes.json.stripe_refund_id, 're_test_1');
+    assert.strictEqual(refundRes.json.appointment.payment_status, 'refunded');
+    assert.strictEqual(Number(refundRes.json.appointment.paid_amount), 0);
+
+    // Cancel unpaid pending Stripe booking frees slot
+    const cancelTestBook = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-18',
+      start_time: '17:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-srv-3', name: 'Manicure Spa', price: 30, duration: 60 }],
+      total_price: 30,
+      client_name: 'Clara Annulla',
+      client_phone: '+39 333 9005566',
+      payment_method: 'stripe_full',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(cancelTestBook.status, 201);
+    const cancelRes = await req('POST', '/api/public/payment-cancel-pending', {
+      booking_code: cancelTestBook.json.booking_code,
+      session_id: cancelTestBook.json.stripe_session_id,
+    });
+    assert.strictEqual(cancelRes.status, 200);
+    assert.strictEqual(cancelRes.json.receipt.status, 'cancelled');
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_WHATSAPP_FETCH__;
+    delete globalThis.__GBS_STRIPE_FETCH__;
     await new Promise((r) => server.close(r));
     if (fs.existsSync(TMP_DB_PATH)) fs.unlinkSync(TMP_DB_PATH);
   }
@@ -833,6 +1037,9 @@ function checkGdprDefaults() {
   assert(adminJs.includes('function findBestMatchingPromoForCheckedIds('), 'admin.js deve rilevare automaticamente le promo sui trattamenti spuntati');
   assert(adminJs.includes('promo-sync-agenda-btn'), 'admin.js deve includere il pulsante Applica Agenda per le promo');
   assert(appJs.includes('function reconcileStorefrontBagPromotions('), 'app.js deve riconciliare le promo attive nel carrello vetrina');
+  assert(agendaHtml.includes('id="stripeSettingsForm"') && agendaHtml.includes('id="apptCassaBox"'), 'agenda.html deve contenere pannello Stripe e box Cassa');
+  assert(adminJs.includes('function initPaymentSettingsControls(') && adminJs.includes('pay-contanti'), 'admin.js deve gestire impostazioni Stripe e cassa rapida');
+  assert(appJs.includes('function handleStripeReturnFromQuery('), 'app.js deve gestire il rientro da Stripe Checkout');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 

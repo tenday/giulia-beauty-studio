@@ -43,9 +43,18 @@ let activeConciergePreset = 'mani-sguardo';
 let selectedGiftAmount = 50;
 let purchaseMode = 'booking'; // 'booking' | 'voucher'
 let selectedTimeSlot = '11:00';
-let selectedPaymentMethod = 'carta';
+let selectedPaymentMethod = 'studio';
 let publicPromotions = [];
 let heroOverridePromo = null;
+let publicPaymentConfig = {
+  stripe_ready: false,
+  stripe_enabled: false,
+  stripe_mode: 'test',
+  allow_pay_in_studio: true,
+  allow_online_full: false,
+  allow_online_deposit: false,
+  deposit_percent: 30,
+};
 
 function escapePublicHtml(str) {
   return String(str ?? '')
@@ -369,6 +378,7 @@ function updateBagUI() {
   // Drawer totals
   drawerTotalAmountEl.textContent = `${totalEuro} €`;
   drawerTotalDurationEl.textContent = totalMin > 0 ? `${totalMin} min stimati` : 'Voucher Digitale';
+  renderPaymentMethodsGrid();
 
   // Drawer items list
   if (count === 0) {
@@ -952,15 +962,20 @@ function initApp() {
     selectedTimeSlot = btn.dataset.time;
   });
 
-  // Payment Method Selection
+  // Payment Method Selection (delegated, dynamic Stripe + Studio options)
   const paymentMethodsGrid = document.getElementById('paymentMethodsGrid');
-  paymentMethodsGrid.querySelectorAll('.payment-option-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      paymentMethodsGrid.querySelectorAll('.payment-option-card').forEach((c) => c.classList.remove('active'));
-      card.classList.add('active');
-      selectedPaymentMethod = card.dataset.pay;
+  if (paymentMethodsGrid) {
+    paymentMethodsGrid.addEventListener('click', (e) => {
+      const card = e.target.closest('.payment-option-card');
+      if (!card) return;
+      selectedPaymentMethod = card.dataset.pay || 'studio';
+      paymentMethodsGrid.querySelectorAll('.payment-option-card').forEach((c) => {
+        c.classList.toggle('active', c === card);
+      });
+      updatePaymentChoiceUi();
     });
-  });
+  }
+  loadPublicPaymentConfig();
 
   // Original Flyer Modal
   const flyerModal = document.getElementById('flyerModal');
@@ -1158,6 +1173,12 @@ function initApp() {
         orderCode = data.booking_code || orderCode;
         savedToDb = true;
         refreshAvailableSlots(bookingDate);
+
+        if (data.requires_stripe_redirect && data.checkout_url) {
+          confirmBtn.textContent = 'Reindirizzamento a Stripe…';
+          window.location.assign(data.checkout_url);
+          return;
+        }
       }
     } catch (_) {
       // Static environment fallback (no PHP server running)
@@ -1248,8 +1269,316 @@ function initApp() {
 
   // Initial Render
   installStorefrontPromoCartSync();
+  renderPaymentMethodsGrid();
   renderListino();
   updateBagUI();
+  handleStripeReturnFromQuery();
+}
+
+function getSelectedBagTotalEuro() {
+  return selectedBag.reduce((acc, item) => acc + Number(item?.price || 0), 0);
+}
+
+function computeClientOnlineCharge(totalEuro, scope = 'full') {
+  const total = Math.round((Number(totalEuro || 0) + Number.EPSILON) * 100) / 100;
+  if (total <= 0) return 0;
+  if (scope === 'deposit') {
+    const pct = Math.min(90, Math.max(10, Number(publicPaymentConfig.deposit_percent || 30)));
+    return Math.min(total, Math.max(1, Math.round(((total * pct) / 100 + Number.EPSILON) * 100) / 100));
+  }
+  return total;
+}
+
+function formatEurPublic(amount) {
+  const num = Number(amount || 0);
+  if (Math.abs(num - Math.round(num)) < 0.005) return `${Math.round(num)} €`;
+  return `${num.toFixed(2).replace('.', ',')} €`;
+}
+
+async function loadPublicPaymentConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/public/payment-config`);
+    const data = await res.json();
+    if (res.ok && data && data.config) {
+      publicPaymentConfig = data.config;
+      renderPaymentMethodsGrid();
+    }
+  } catch {
+    // fallback static options
+  }
+}
+
+function renderPaymentMethodsGrid() {
+  const grid = document.getElementById('paymentMethodsGrid');
+  if (!grid) return;
+
+  const total = getSelectedBagTotalEuro();
+  const cfg = publicPaymentConfig || {};
+  const cards = [];
+
+  if (cfg.stripe_ready) {
+    if (cfg.allow_pay_in_studio !== false) {
+      cards.push({
+        pay: 'studio',
+        title: 'Salda in Studio',
+        desc: 'Conferma ora e paga in atelier a Verdellino',
+        pill: 'Nessun addebito ora',
+      });
+    }
+    if (cfg.allow_online_full) {
+      cards.push({
+        pay: 'stripe_full',
+        title: 'Paga Online (100%)',
+        desc: total > 0 ? `Saldo immediato ${formatEurPublic(total)}` : 'Carta, Apple Pay, Google Pay',
+        pill: 'Carta / Apple Pay',
+      });
+    }
+    if (cfg.allow_online_deposit) {
+      const pct = Number(cfg.deposit_percent || 30);
+      const dep = computeClientOnlineCharge(total, 'deposit');
+      cards.push({
+        pay: 'stripe_deposit',
+        title: `Acconto ${pct}% Online`,
+        desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% online`,
+        pill: 'Stripe Sicuro',
+      });
+    }
+  }
+
+  if (cards.length === 0) {
+    cards.push(
+      {
+        pay: 'studio',
+        title: 'Salda in Studio',
+        desc: 'Conferma ora, paga in atelier a Verdellino',
+        pill: '',
+      },
+      {
+        pay: 'carta',
+        title: 'Acquisto / Regalo',
+        desc: 'Richiedi pagamento digitale o Gift Card',
+        pill: '',
+      }
+    );
+  }
+
+  if (!cards.some((c) => c.pay === selectedPaymentMethod)) {
+    selectedPaymentMethod = cards[0].pay;
+  }
+
+  grid.innerHTML = cards
+    .map(
+      (c) => `
+      <button type="button" class="payment-option-card${c.pay === selectedPaymentMethod ? ' active' : ''}" data-pay="${escapePublicHtml(c.pay)}">
+        <strong>${escapePublicHtml(c.title)}</strong>
+        <span>${escapePublicHtml(c.desc)}</span>
+        ${c.pill ? `<em class="payment-badge-pill">${escapePublicHtml(c.pill)}</em>` : ''}
+      </button>
+    `
+    )
+    .join('');
+
+  updatePaymentChoiceUi();
+}
+
+function updatePaymentChoiceUi() {
+  const hintEl = document.getElementById('paymentOnlineHint');
+  const confirmBtn = document.getElementById('confirmOrderBtn');
+  const total = getSelectedBagTotalEuro();
+  const pct = Number(publicPaymentConfig.deposit_percent || 30);
+
+  if (selectedPaymentMethod === 'stripe_full') {
+    if (hintEl) {
+      hintEl.hidden = false;
+      hintEl.innerHTML =
+        total > 0
+          ? `🔒 Checkout sicuro Stripe: pagherai <strong>${formatEurPublic(total)}</strong> ora con Carta, Apple Pay o Google Pay.`
+          : '🔒 Checkout sicuro Stripe con Carta, Apple Pay o Google Pay.';
+    }
+    if (confirmBtn) {
+      confirmBtn.textContent =
+        total > 0 ? `Paga Ora Online (${formatEurPublic(total)})` : 'Procedi al Pagamento Online';
+    }
+  } else if (selectedPaymentMethod === 'stripe_deposit') {
+    const dep = computeClientOnlineCharge(total, 'deposit');
+    const rem = Math.max(0, Math.round((total - dep) * 100) / 100);
+    if (hintEl) {
+      hintEl.hidden = false;
+      hintEl.innerHTML =
+        total > 0
+          ? `🔒 Versi un acconto del ${pct}% (<strong>${formatEurPublic(dep)}</strong>) online su Stripe. Resteranno <strong>${formatEurPublic(rem)}</strong> da saldare in studio.`
+          : `🔒 Versi un acconto del ${pct}% online tramite Stripe Checkout.`;
+    }
+    if (confirmBtn) {
+      confirmBtn.textContent =
+        total > 0 ? `Paga Acconto ${formatEurPublic(dep)} e Prenota` : `Paga Acconto ${pct}% e Prenota`;
+    }
+  } else {
+    if (hintEl) {
+      hintEl.hidden = true;
+      hintEl.textContent = '';
+    }
+    if (confirmBtn) {
+      confirmBtn.textContent = 'Conferma e Prenota in Agenda';
+    }
+  }
+}
+
+async function handleStripeReturnFromQuery() {
+  const params = new URLSearchParams(window.location.search || '');
+  const payState = params.get('payment');
+  const sessionId = params.get('session_id') || '';
+  const code = params.get('code') || '';
+  if (!payState) return;
+
+  const confirmModal = document.getElementById('confirmationModal');
+  const receiptContent = document.getElementById('confirmationReceiptContent');
+  if (!confirmModal || !receiptContent) return;
+
+  if (window.history && window.history.replaceState) {
+    window.history.replaceState({}, '', window.location.pathname || '/');
+  }
+
+  if (payState === 'success' && sessionId) {
+    try {
+      const res = await publicFetchWithLoader(
+        `${API_BASE}/public/stripe/verify-session`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, booking_code: code }),
+        },
+        { label: 'Verifica pagamento Stripe in corso…', blocking: true, delayMs: 0 }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.receipt) {
+        receiptContent.innerHTML = `
+          <h3 class="modal-title">Verifica Pagamento</h3>
+          <p style="margin:10px 0 18px;font-size:0.9rem;color:var(--ink-secondary);">${escapePublicHtml(
+            data?.error || 'Non è stato possibile verificare la ricevuta Stripe.'
+          )}</p>
+          <button type="button" class="btn-primary-luxury" id="closeStripeReceiptBtn">Chiudi</button>
+        `;
+      } else {
+        const r = data.receipt;
+        const isPartial = r.payment_status === 'partial';
+        const badgeClass = data.paid ? (isPartial ? 'partial' : 'paid') : 'cancelled';
+        const badgeText = data.paid
+          ? isPartial
+            ? `Acconto Versato (${formatEurPublic(r.paid_amount)})`
+            : 'Pagamento Completato'
+          : 'Pagamento In Elaborazione';
+        receiptContent.innerHTML = `
+          <div style="font-size: 2rem; color: var(--rose-deep); margin-bottom: 6px;">♡</div>
+          <span class="stripe-receipt-badge ${badgeClass}">${escapePublicHtml(badgeText)}</span>
+          <h3 id="confirmModalTitle" style="font-family: var(--font-serif); font-size: 2rem; color: var(--ink-primary); margin: 6px 0;">
+            Grazie, ${escapePublicHtml(r.client_name || 'Cliente')}!
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 10px;">
+            Codice: <strong>${escapePublicHtml(r.booking_code)}</strong> • ${
+              r.mode === 'booking'
+                ? `Appuntamento per il <strong>${escapePublicHtml(r.appointment_date)}</strong> alle <strong>${escapePublicHtml(r.start_time)}</strong>`
+                : 'Voucher / Gift Card Digitale'
+            }
+          </p>
+          <ul style="list-style:none; text-align:left; background:#fff; padding:16px 20px; border-radius:12px; border:1px solid var(--rose-gold-hairline); margin-bottom:18px; font-size:0.88rem;">
+            <li style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed rgba(145,78,86,0.2);">
+              <span>Trattamenti</span>
+              <strong>${escapePublicHtml(r.services_summary)}</strong>
+            </li>
+            <li style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed rgba(145,78,86,0.2);">
+              <span>Totale Appuntamento</span>
+              <strong>${formatEurPublic(r.total_price)}</strong>
+            </li>
+            <li style="display:flex;justify-content:space-between;padding:5px 0;color:#166534;">
+              <span>Pagato Online (Stripe)</span>
+              <strong>${formatEurPublic(r.paid_amount)}</strong>
+            </li>
+            ${
+              Number(r.remaining_amount || 0) > 0
+                ? `<li style="display:flex;justify-content:space-between;padding-top:8px;font-weight:700;color:var(--rose-deep);">
+                    <span>Saldo Residuo in Studio</span>
+                    <span>${formatEurPublic(r.remaining_amount)}</span>
+                  </li>`
+                : ''
+            }
+          </ul>
+          <button type="button" class="btn-primary-luxury" id="closeStripeReceiptBtn" style="padding:12px 24px;">
+            Torna alla Boutique
+          </button>
+        `;
+      }
+      confirmModal.classList.add('open');
+      document.getElementById('closeStripeReceiptBtn')?.addEventListener('click', () => {
+        confirmModal.classList.remove('open');
+      });
+    } catch {
+      // ignore network interruption
+    }
+    return;
+  }
+
+  if (payState === 'cancelled' && code) {
+    receiptContent.innerHTML = `
+      <span class="stripe-receipt-badge cancelled">Pagamento Online Interrotto</span>
+      <h3 id="confirmModalTitle" style="font-family: var(--font-serif); font-size: 1.9rem; color: var(--ink-primary); margin: 8px 0;">
+        Checkout Stripe annullato
+      </h3>
+      <p style="font-size: 0.88rem; color: var(--ink-secondary); margin-bottom: 16px;">
+        La prenotazione <strong>${escapePublicHtml(code)}</strong> non è ancora stata pagata.
+        Vuoi confermare lo stesso l'appuntamento pagando direttamente in studio, oppure annullare la richiesta?
+      </p>
+      <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+        <button type="button" class="btn-primary-luxury" id="fallbackStudioPayBtn" style="padding:12px 20px;">
+          Conferma e Salda in Studio
+        </button>
+        <button type="button" class="btn-secondary-luxury" id="cancelPendingStripeBtn" style="padding:12px 20px;">
+          Annulla Prenotazione
+        </button>
+      </div>
+    `;
+    confirmModal.classList.add('open');
+
+    document.getElementById('fallbackStudioPayBtn')?.addEventListener('click', async () => {
+      const r = await fetch(`${API_BASE}/public/payment-fallback-studio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking_code: code, session_id: sessionId }),
+      });
+      const resJson = await r.json();
+      if (r.ok && resJson.receipt) {
+        receiptContent.innerHTML = `
+          <span class="stripe-receipt-badge paid">Prenotazione Confermata</span>
+          <h3 style="font-family: var(--font-serif); font-size: 1.9rem; color: var(--ink-primary); margin: 8px 0;">
+            Perfetto, ti aspettiamo in studio!
+          </h3>
+          <p style="font-size: 0.88rem; color: var(--ink-secondary); margin-bottom: 16px;">
+            Codice: <strong>${escapePublicHtml(resJson.receipt.booking_code)}</strong> • ${escapePublicHtml(
+          resJson.receipt.appointment_date
+        )} ore <strong>${escapePublicHtml(resJson.receipt.start_time)}</strong><br/>
+            Modalità: <strong>Salda in Studio (${formatEurPublic(resJson.receipt.total_price)})</strong>
+          </p>
+          <button type="button" class="btn-primary-luxury" id="closeFallbackConfirmBtn" style="padding:12px 24px;">
+            Torna alla Boutique
+          </button>
+        `;
+        document.getElementById('closeFallbackConfirmBtn')?.addEventListener('click', () => {
+          confirmModal.classList.remove('open');
+        });
+      }
+    });
+
+    document.getElementById('cancelPendingStripeBtn')?.addEventListener('click', async () => {
+      await fetch(`${API_BASE}/public/payment-cancel-pending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking_code: code, session_id: sessionId }),
+      });
+      confirmModal.classList.remove('open');
+      const d = document.getElementById('bookingDateInput')?.value;
+      if (d) refreshAvailableSlots(d);
+    });
+  }
 }
 
 let storefrontActivePromosCache = [];

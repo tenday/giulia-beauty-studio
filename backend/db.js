@@ -141,6 +141,42 @@ async function ensureSchemaMigrations(targetPool = getPool()) {
     'show_on_hero',
     'ALTER TABLE `monthly_promotions` ADD COLUMN `show_on_hero` TINYINT(1) NOT NULL DEFAULT 0 AFTER `featured`'
   );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'payment_status',
+    "ALTER TABLE `appointments` ADD COLUMN `payment_status` VARCHAR(30) NOT NULL DEFAULT 'unpaid' AFTER `payment_method`"
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'paid_amount',
+    'ALTER TABLE `appointments` ADD COLUMN `paid_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER `payment_status`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'payment_notes',
+    'ALTER TABLE `appointments` ADD COLUMN `payment_notes` VARCHAR(300) NULL DEFAULT NULL AFTER `paid_amount`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'paid_at',
+    'ALTER TABLE `appointments` ADD COLUMN `paid_at` DATETIME NULL DEFAULT NULL AFTER `payment_notes`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'stripe_session_id',
+    'ALTER TABLE `appointments` ADD COLUMN `stripe_session_id` VARCHAR(160) NULL DEFAULT NULL AFTER `paid_at`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'stripe_payment_intent',
+    'ALTER TABLE `appointments` ADD COLUMN `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL AFTER `stripe_session_id`'
+  );
   migrationsChecked = true;
 }
 

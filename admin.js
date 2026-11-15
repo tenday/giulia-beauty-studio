@@ -40,6 +40,12 @@ const STATE = {
   promotions: [],
   promoEditorItems: [],
   selectedApptPromoId: 0,
+  paymentSettings: null,
+  paymentWebhookUrl: '',
+  paymentSummary: null,
+  paymentTransactions: [],
+  paymentMethodFilter: '',
+  currentEditingAppt: null,
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
   insights: null,
@@ -63,6 +69,41 @@ const STATUS_LABELS = {
   completed: 'Completato',
   cancelled: 'Annullato',
 };
+
+const PAYMENT_STATUS_LABELS = {
+  unpaid: 'Da saldare',
+  partial: 'Acconto',
+  paid: 'Pagato',
+  refunded: 'Rimborsato',
+};
+
+const PAYMENT_METHOD_LABELS = {
+  studio: 'In Studio',
+  contanti: 'Contanti',
+  pos: 'POS / Carta Studio',
+  satispay: 'Satispay',
+  bonifico: 'Bonifico',
+  gift_card: 'Gift Card',
+  stripe_online: 'Stripe Online',
+  carta: 'Carta',
+};
+
+function renderCalendarPayPillHtml(appt, { compact = false } = {}) {
+  if (!appt || appt.status === 'cancelled') return '';
+  const ps = appt.payment_status || 'unpaid';
+  const paid = Number(appt.paid_amount || 0);
+  if (ps === 'paid') {
+    return `<span class="cal-pay-pill is-paid">✓ Pagato</span>`;
+  }
+  if (ps === 'partial') {
+    return `<span class="cal-pay-pill is-partial">◐ ${formatPromoEuroAmount(paid)}€</span>`;
+  }
+  if (ps === 'refunded') {
+    return `<span class="cal-pay-pill is-refunded">↩ Rimb.</span>`;
+  }
+  if (compact) return '';
+  return `<span class="cal-pay-pill is-unpaid">Da saldare</span>`;
+}
 
 function escapeHtml(str) {
   return String(str ?? '')
@@ -414,6 +455,7 @@ async function refreshAllData() {
     loadAutomationData(),
     loadGiftCards(),
     loadPromotions(),
+    loadPaymentsData(),
     loadAdminUsers(),
     loadInsights(),
   ]);
@@ -853,6 +895,11 @@ function updateKpis() {
   document.getElementById('kpiWeekCount').textContent = weekActive;
   document.getElementById('kpiPendingCount').textContent = pendingCount;
   document.getElementById('kpiClientsCount').textContent = STATE.clients.length;
+  const weekPaidEl = document.getElementById('kpiWeekPaidAmount');
+  if (weekPaidEl) {
+    const val = Number(STATE.paymentSummary?.week_collected || 0);
+    weekPaidEl.textContent = `${formatPromoEuroAmount(val)} €`;
+  }
 
   const unsentCount = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at).length;
   const badgeEl = document.getElementById('tomorrowRemindersBadge');
@@ -2314,6 +2361,17 @@ function openCalendarContextMenu(appt, clientX, clientY) {
   const dateObj = parseIsoDate(appt.appointment_date);
   const dateLabel = `${DAYS_IT[dateObj.getDay()]} ${dateObj.getDate()} ${MONTHS_IT[dateObj.getMonth()].slice(0, 3)}`;
   const timeRange = formatTimeRangeLabel(appt.start_time, dur);
+  const paySt = appt.payment_status || 'unpaid';
+  const payLbl = PAYMENT_STATUS_LABELS[paySt] || 'Da saldare';
+  const payMethodLbl = PAYMENT_METHOD_LABELS[appt.payment_method] || appt.payment_method || 'Studio';
+  const paidNum = Number(appt.paid_amount || 0);
+  const totalNum = Number(appt.total_price || 0);
+  const payMetaText =
+    paySt === 'paid'
+      ? `✓ ${payLbl} (${formatPromoEuroAmount(paidNum || totalNum)} € • ${payMethodLbl})`
+      : paySt === 'partial'
+      ? `◐ Acconto ${formatPromoEuroAmount(paidNum)} € / ${formatPromoEuroAmount(totalNum)} €`
+      : `${payLbl} (${formatPromoEuroAmount(totalNum)} €)`;
   const noteInfo = getAppointmentNoteInfo(appt);
   const ctxNotesHtml = noteInfo.hasAnyNote
     ? `<div class="cal-ctx-notes">
@@ -2328,6 +2386,7 @@ function openCalendarContextMenu(appt, clientX, clientY) {
       <div class="cal-ctx-client">${escapeHtml(appt.client_name)}</div>
       <div class="cal-ctx-meta">${escapeHtml(dateLabel)} • ${escapeHtml(timeRange)} (${dur} min)</div>
       <div class="cal-ctx-meta">${escapeHtml(appt.services_summary)}</div>
+      <div class="cal-ctx-meta" style="margin-top:3px;font-weight:600;">${escapeHtml(payMetaText)}</div>
       ${ctxNotesHtml}
     </div>
     <button type="button" class="cal-ctx-btn" data-ctx-action="edit">✏️ Apri / Modifica dettaglio</button>
@@ -2335,6 +2394,15 @@ function openCalendarContextMenu(appt, clientX, clientY) {
     <button type="button" class="cal-ctx-btn" data-ctx-action="open-client">👩 Vai alla Scheda Cliente</button>
     ${appt.status !== 'confirmed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-confirmed">✓ Segna Confermato</button>' : ''}
     ${appt.status !== 'completed' ? '<button type="button" class="cal-ctx-btn" data-ctx-action="status-completed">★ Segna Completato</button>' : ''}
+    ${
+      paySt !== 'paid' && appt.status !== 'cancelled'
+        ? `<div class="cal-ctx-divider"></div>
+           <div class="cal-ctx-section-title">Cassa Rapida</div>
+           <button type="button" class="cal-ctx-btn" data-ctx-action="pay-contanti">💶 Incassato Contanti</button>
+           <button type="button" class="cal-ctx-btn" data-ctx-action="pay-pos">💳 Incassato POS / Carta</button>
+           <button type="button" class="cal-ctx-btn" data-ctx-action="pay-satispay">📱 Incassato Satispay</button>`
+        : ''
+    }
     <div class="cal-ctx-divider"></div>
     <button type="button" class="cal-ctx-btn is-danger" data-ctx-action="ask-delete">🗑️ Elimina appuntamento</button>
     <div class="cal-ctx-confirm" data-ctx-confirm hidden>
@@ -2385,6 +2453,10 @@ function openCalendarContextMenu(appt, clientX, clientY) {
           { status: nextStatus },
           `Stato aggiornato: ${STATUS_LABELS[nextStatus] || nextStatus}`
         );
+      } else if (action === 'pay-contanti' || action === 'pay-pos' || action === 'pay-satispay') {
+        const payMethod = action.replace('pay-', '');
+        closeCalendarContextMenu();
+        await recordQuickAppointmentPayment(appt, payMethod);
       } else if (action === 'ask-delete') {
         if (askDeleteBtn) askDeleteBtn.hidden = true;
         if (confirmBox) confirmBox.hidden = false;
@@ -3096,6 +3168,8 @@ function renderCalendar() {
       const heightFlags = getEventCardHeightClasses(heightPx, noteInfo.hasCardNote);
       const isNarrow = laneInfo.laneCount > 1 && colSpan === 1;
       const tooltipParts = [`${formatTimeRangeLabel(appt.start_time, dur)} (${dur} min)`, appt.client_name, appt.services_summary, opName];
+      const payStTooltip = PAYMENT_STATUS_LABELS[appt.payment_status || 'unpaid'] || 'Da saldare';
+      tooltipParts.push(`Pagamento: ${payStTooltip} (${formatPromoEuroAmount(appt.paid_amount || 0)} / ${formatPromoEuroAmount(appt.total_price)} €)`);
       if (noteInfo.apptNote) tooltipParts.push(`Note: ${noteInfo.apptNote}`);
       if (noteInfo.allergyNote) tooltipParts.push(`Allergie: ${noteInfo.allergyNote}`);
       if (noteInfo.clientNote) tooltipParts.push(`Scheda cliente: ${noteInfo.clientNote}`);
@@ -3123,7 +3197,7 @@ function renderCalendar() {
              data-appt-id="${appt.id}"
              title="${escapeHtml(rangeTooltip)}"
              style="top:${topPx}px; height:${heightPx}px; ${laneStyle} border-left: 4px solid ${escapeHtml(opColor)};">
-          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${formatPromoEuroAmount(appt.total_price)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${appt.reminder_sent_at ? '📲' : ''}</div>
+          <div class="cal-event-time">${escapeHtml(appt.start_time)} • ${formatPromoEuroAmount(appt.total_price)}€ <span class="cal-op-inline" style="opacity:0.85;">• ${escapeHtml(opName)}</span> ${renderCalendarPayPillHtml(appt, { compact: heightFlags.isCompact })} ${appt.reminder_sent_at ? '📲' : ''}</div>
           <div class="cal-event-client">${escapeHtml(appt.client_name)}</div>
           <div class="cal-event-service">${isAppointmentPromo(appt) ? '<span class="promo-appt-badge">Promo</span>' : ''}${escapeHtml(appt.services_summary)}</div>
           ${noteChipHtml}
@@ -3301,7 +3375,12 @@ function renderListCalendar(container) {
           ${nInfo.allergyNote ? `<br /><span style="font-size:0.74rem;color:#7c2d08;background:#fff1e6;padding:1px 6px;border-radius:6px;display:inline-block;margin-top:3px;">⚠ ${escapeHtml(nInfo.allergyNote)}</span>` : ''}
           ${!nInfo.apptNote && nInfo.clientNote ? `<br /><span style="font-size:0.72rem;color:var(--ink-muted);">👩 ${escapeHtml(nInfo.clientNote)}</span>` : ''}
         </td>
-        <td><strong>${formatPromoEuroAmount(a.total_price)} €</strong></td>
+        <td>
+          <strong>${formatPromoEuroAmount(a.total_price)} €</strong>
+          <br />
+          ${renderCalendarPayPillHtml(a, { compact: false })}
+          <span style="font-size:0.7rem;color:var(--ink-muted);display:inline-block;margin-left:3px;">${escapeHtml(PAYMENT_METHOD_LABELS[a.payment_method] || a.payment_method || 'In Studio')}</span>
+        </td>
         <td>
           <span class="status-badge badge-${escapeHtml(a.status)}">${escapeHtml(STATUS_LABELS[a.status] || a.status)}</span>
           ${a.reminder_sent_at ? '<br /><span style="font-size:0.68rem;color:#2e6b4a;">📲 Promemoria inviato</span>' : ''}
@@ -3565,6 +3644,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   const openClientFromApptBtn = document.getElementById('openClientFromApptBtn');
 
   if (appt) {
+    STATE.currentEditingAppt = appt;
     const parsedApptServices = parseAppointmentServices(appt);
     const matchedIds = new Set();
     parsedApptServices.forEach((s) => {
@@ -3614,6 +3694,17 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptPriceInput').value = appt.total_price;
     document.getElementById('apptStatusSelect').value = appt.status;
     document.getElementById('apptNotesInput').value = appt.notes || '';
+    const payStatusEl = document.getElementById('apptPaymentStatusSelect');
+    const payMethodEl = document.getElementById('apptPaymentMethodSelect');
+    const payPaidEl = document.getElementById('apptPaidAmountInput');
+    const payNotesEl = document.getElementById('apptPaymentNotesInput');
+    const refundBtn = document.getElementById('apptRefundBtn');
+    if (payStatusEl) payStatusEl.value = appt.payment_status || 'unpaid';
+    if (payMethodEl) payMethodEl.value = appt.payment_method || 'studio';
+    if (payPaidEl) payPaidEl.value = Number(appt.paid_amount || 0);
+    if (payNotesEl) payNotesEl.value = appt.payment_notes || '';
+    if (refundBtn) refundBtn.hidden = !(Number(appt.paid_amount || 0) > 0);
+    renderAppointmentPaymentHistory(appt.id);
 
     deleteBtn.hidden = false;
     if (duplicateBtn) {
@@ -3644,6 +3735,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
       }
     };
   } else {
+    STATE.currentEditingAppt = null;
     if (sendWaWrap) sendWaWrap.hidden = false;
     if (sendWaCheck) sendWaCheck.checked = isWhatsAppApiActive();
     document.getElementById('apptModalTitle').textContent = 'Nuovo Appuntamento';
@@ -3670,6 +3762,21 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptPriceInput').value = 0;
     document.getElementById('apptStatusSelect').value = 'confirmed';
     document.getElementById('apptNotesInput').value = '';
+    const payStatusEl = document.getElementById('apptPaymentStatusSelect');
+    const payMethodEl = document.getElementById('apptPaymentMethodSelect');
+    const payPaidEl = document.getElementById('apptPaidAmountInput');
+    const payNotesEl = document.getElementById('apptPaymentNotesInput');
+    const refundBtn = document.getElementById('apptRefundBtn');
+    const histBox = document.getElementById('apptPaymentHistoryBox');
+    if (payStatusEl) payStatusEl.value = 'unpaid';
+    if (payMethodEl) payMethodEl.value = 'studio';
+    if (payPaidEl) payPaidEl.value = 0;
+    if (payNotesEl) payNotesEl.value = '';
+    if (refundBtn) refundBtn.hidden = true;
+    if (histBox) {
+      histBox.hidden = true;
+      histBox.innerHTML = '';
+    }
     deleteBtn.hidden = true;
     if (duplicateBtn) {
       duplicateBtn.hidden = true;
@@ -4255,6 +4362,10 @@ document.addEventListener('DOMContentLoaded', () => {
       total_price: priceVal,
       status: document.getElementById('apptStatusSelect').value,
       notes: document.getElementById('apptNotesInput').value.trim(),
+      payment_status: document.getElementById('apptPaymentStatusSelect')?.value || 'unpaid',
+      payment_method: document.getElementById('apptPaymentMethodSelect')?.value || 'studio',
+      paid_amount: Number(document.getElementById('apptPaidAmountInput')?.value || 0) || 0,
+      payment_notes: document.getElementById('apptPaymentNotesInput')?.value.trim() || '',
     };
 
     if (!id) {
@@ -4838,6 +4949,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   initWhatsAppAutomationControls();
+  initPaymentSettingsControls();
   initGiftCardGeneratorControls();
   initPromotionsControls();
 });
@@ -5707,6 +5819,7 @@ function renderSettingsView() {
   }
 
   renderWhatsAppSettingsPanel();
+  renderPaymentSettingsPanel();
 }
 
 function initWhatsAppAutomationControls() {
@@ -7340,5 +7453,381 @@ function renderPromotionsView() {
       renderMessagesView();
       showAgendaToast('Promozione eliminata');
     });
+  });
+}
+
+/* ==========================================================================
+   PAYMENTS, CASSA & STRIPE SETTINGS CONTROLLER
+   ========================================================================== */
+async function loadPaymentsData(methodFilter = STATE.paymentMethodFilter) {
+  try {
+    const q = new URLSearchParams();
+    if (methodFilter) q.set('method', methodFilter);
+    const data = await apiFetch(`admin/payments${q.toString() ? `?${q.toString()}` : ''}`, {
+      method: 'GET',
+      silentLoader: true,
+    });
+    STATE.paymentSettings = data.settings || null;
+    STATE.paymentWebhookUrl = data.webhook_url || '';
+    STATE.paymentSummary = data.summary || null;
+    STATE.paymentTransactions = data.transactions || [];
+  } catch (err) {
+    console.warn('[Admin Payments] load skipped:', err?.message || err);
+  }
+}
+
+async function recordQuickAppointmentPayment(appt, method) {
+  if (!appt) return;
+  try {
+    const total = Number(appt.total_price || 0);
+    await apiFetch('admin/appointments', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'record_payment',
+        id: Number(appt.id),
+        payment_method: method,
+        payment_status: 'paid',
+        paid_amount: total,
+        confirm_appointment: true,
+        transaction_notes: `Incassato in agenda (${PAYMENT_METHOD_LABELS[method] || method})`,
+      }),
+    });
+    await refreshAllData();
+    showAgendaToast(`Incasso ${formatPromoEuroAmount(total)} € registrato (${PAYMENT_METHOD_LABELS[method] || method}) ✓`);
+  } catch (err) {
+    showAgendaToast(err.message || 'Errore registrazione incasso', 'error');
+  }
+}
+
+function renderAppointmentPaymentHistory(appointmentId) {
+  const box = document.getElementById('apptPaymentHistoryBox');
+  if (!box) return;
+  const rows = (STATE.paymentTransactions || []).filter((t) => Number(t.appointment_id) === Number(appointmentId));
+  if (rows.length === 0) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px;color:var(--ink);">Movimenti registrati (${rows.length})</div>
+    ${rows
+      .map((t) => {
+        const isRefund = t.direction === 'refund';
+        const sign = isRefund ? '-' : '+';
+        const clr = isRefund ? '#91384a' : '#166534';
+        const mLbl = PAYMENT_METHOD_LABELS[t.payment_method] || t.payment_method;
+        return `
+          <div class="appt-pay-history-row">
+            <span>${escapeHtml(String(t.created_at || '').slice(0, 16))} • ${escapeHtml(mLbl)}${t.notes ? ` — ${escapeHtml(t.notes)}` : ''}</span>
+            <strong style="color:${clr};">${sign}${formatPromoEuroAmount(t.amount)} €</strong>
+          </div>
+        `;
+      })
+      .join('')}
+  `;
+}
+
+function renderPaymentSettingsPanel() {
+  const s = STATE.paymentSettings;
+  const sum = STATE.paymentSummary || {};
+  const badgeEl = document.getElementById('stripeSettingsStatusBadge');
+  if (badgeEl && s) {
+    if (s.stripe_ready) {
+      badgeEl.className = 'status-badge badge-confirmed';
+      badgeEl.textContent = s.stripe_mode === 'live' ? 'Stripe LIVE ✓' : 'Stripe TEST ✓';
+    } else if (s.stripe_enabled) {
+      badgeEl.className = 'status-badge badge-pending';
+      badgeEl.textContent = 'Mancano Chiavi Stripe';
+    } else {
+      badgeEl.className = 'status-badge badge-pending';
+      badgeEl.textContent = 'Solo In Studio';
+    }
+  }
+
+  if (s) {
+    const enabledCheck = document.getElementById('stripeEnabledCheck');
+    const modeSel = document.getElementById('stripeModeSelect');
+    const depInput = document.getElementById('stripeDepositPercentInput');
+    const pkInput = document.getElementById('stripePublishableKeyInput');
+    const skHint = document.getElementById('stripeSecretKeyHint');
+    const whHint = document.getElementById('stripeWebhookSecretHint');
+    const allowStudio = document.getElementById('stripeAllowStudioCheck');
+    const allowFull = document.getElementById('stripeAllowFullCheck');
+    const allowDep = document.getElementById('stripeAllowDepositCheck');
+    const autoConfirm = document.getElementById('stripeAutoConfirmCheck');
+    const whUrlInput = document.getElementById('stripeWebhookUrlInput');
+
+    if (enabledCheck) enabledCheck.checked = Boolean(s.stripe_enabled);
+    if (modeSel) modeSel.value = s.stripe_mode === 'live' ? 'live' : 'test';
+    if (depInput) depInput.value = Number(s.deposit_percent || 30);
+    if (pkInput) pkInput.value = s.stripe_publishable_key || '';
+    if (skHint) {
+      skHint.textContent = s.has_secret_key
+        ? `Chiave salvata in sicurezza (${s.stripe_secret_key_masked})`
+        : 'Nessuna Stripe Secret Key salvata';
+    }
+    if (whHint) {
+      whHint.textContent = s.has_webhook_secret
+        ? `Webhook Secret salvato (${s.stripe_webhook_secret_masked})`
+        : 'Webhook Secret non configurato';
+    }
+    if (allowStudio) allowStudio.checked = s.allow_pay_in_studio !== false;
+    if (allowFull) allowFull.checked = s.allow_online_full !== false;
+    if (allowDep) allowDep.checked = s.allow_online_deposit !== false;
+    if (autoConfirm) autoConfirm.checked = s.auto_confirm_on_paid !== false;
+    if (whUrlInput) whUrlInput.value = STATE.paymentWebhookUrl || `${window.location.origin}/api/webhooks/stripe`;
+  }
+
+  const elToday = document.getElementById('paySumToday');
+  const elWeek = document.getElementById('paySumWeek');
+  const elMonth = document.getElementById('paySumMonth');
+  const elOut = document.getElementById('paySumOutstanding');
+  if (elToday) elToday.textContent = `${formatPromoEuroAmount(sum.today_collected || 0)} €`;
+  if (elWeek) elWeek.textContent = `${formatPromoEuroAmount(sum.week_collected || 0)} €`;
+  if (elMonth) elMonth.textContent = `${formatPromoEuroAmount(sum.month_collected || 0)} €`;
+  if (elOut) elOut.textContent = `${formatPromoEuroAmount(sum.outstanding_total || 0)} €`;
+
+  renderPaymentsLedger();
+}
+
+function renderPaymentsLedger() {
+  const container = document.getElementById('paymentsLedgerContainer');
+  if (!container) return;
+  const txs = STATE.paymentTransactions || [];
+  if (txs.length === 0) {
+    container.innerHTML = `<div class="muted-text" style="padding:18px;text-align:center;">Nessun movimento cassa o pagamento online ancora registrato.</div>`;
+    return;
+  }
+
+  const rowsHtml = txs
+    .map((tx) => {
+      const isRefund = tx.direction === 'refund';
+      const amtColor = isRefund ? '#91384a' : '#166534';
+      const sign = isRefund ? '-' : '+';
+      const mLabel = PAYMENT_METHOD_LABELS[tx.payment_method] || tx.payment_method;
+      return `
+        <tr>
+          <td>${escapeHtml(String(tx.created_at || '').slice(0, 16))}</td>
+          <td>
+            <strong>${escapeHtml(tx.client_name || 'Cliente')}</strong>
+            ${tx.booking_code ? `<br /><span style="font-size:0.72rem;color:var(--ink-muted);">${escapeHtml(tx.booking_code)}</span>` : ''}
+          </td>
+          <td>${escapeHtml(tx.services_summary || tx.notes || 'Appuntamento')}</td>
+          <td><span class="status-badge badge-confirmed">${escapeHtml(mLabel)}</span></td>
+          <td>${isRefund ? 'Rimborso' : 'Incasso'}</td>
+          <td style="text-align:right;font-weight:700;color:${amtColor};">${sign}${formatPromoEuroAmount(tx.amount)} €</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  container.innerHTML = `
+    <div class="list-appts-wrap">
+      <table class="admin-table pay-ledger-table">
+        <thead>
+          <tr>
+            <th>Data &amp; Ora</th>
+            <th>Cliente</th>
+            <th>Dettaglio</th>
+            <th>Metodo</th>
+            <th>Tipo</th>
+            <th style="text-align:right;">Importo</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function initPaymentSettingsControls() {
+  // Modal Cassa Quick Presets & Refund
+  document.querySelectorAll('[data-pay-quick]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const quick = btn.dataset.payQuick;
+      const total = Number(document.getElementById('apptPriceInput')?.value || 0) || 0;
+      const payStEl = document.getElementById('apptPaymentStatusSelect');
+      const payMethodEl = document.getElementById('apptPaymentMethodSelect');
+      const payPaidEl = document.getElementById('apptPaidAmountInput');
+      if (quick === 'full') {
+        if (payStEl) payStEl.value = 'paid';
+        if (payPaidEl) payPaidEl.value = total.toFixed(2);
+        if (payMethodEl && payMethodEl.value === 'studio') payMethodEl.value = 'contanti';
+      } else if (quick === 'deposit') {
+        const pct = Number(STATE.paymentSettings?.deposit_percent || 30);
+        const dep = Math.round(((total * pct) / 100 + Number.EPSILON) * 100) / 100;
+        if (payStEl) payStEl.value = 'partial';
+        if (payPaidEl) payPaidEl.value = dep.toFixed(2);
+        if (payMethodEl && payMethodEl.value === 'studio') payMethodEl.value = 'contanti';
+      } else if (quick === 'unpaid') {
+        if (payStEl) payStEl.value = 'unpaid';
+        if (payPaidEl) payPaidEl.value = '0';
+      }
+    });
+  });
+
+  document.getElementById('apptPaymentStatusSelect')?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    const total = Number(document.getElementById('apptPriceInput')?.value || 0) || 0;
+    const paidEl = document.getElementById('apptPaidAmountInput');
+    const methodEl = document.getElementById('apptPaymentMethodSelect');
+    if (val === 'paid' && paidEl && Number(paidEl.value || 0) <= 0 && total > 0) {
+      paidEl.value = total.toFixed(2);
+      if (methodEl && methodEl.value === 'studio') methodEl.value = 'contanti';
+    } else if (val === 'unpaid' && paidEl) {
+      paidEl.value = '0';
+    }
+  });
+
+  document.getElementById('apptRefundBtn')?.addEventListener('click', async () => {
+    const id = Number(document.getElementById('apptIdInput')?.value || 0);
+    const paid = Number(document.getElementById('apptPaidAmountInput')?.value || 0);
+    if (!id || paid <= 0) return;
+    if (!confirm(`Registrare il rimborso di € ${formatPromoEuroAmount(paid)} per questo appuntamento?`)) return;
+    try {
+      await apiFetch('admin/payments/refund', {
+        method: 'POST',
+        body: JSON.stringify({
+          appointment_id: id,
+          amount: paid,
+          call_stripe: Boolean(STATE.currentEditingAppt?.stripe_payment_intent),
+        }),
+      });
+      document.getElementById('apptModal')?.classList.remove('open');
+      await refreshAllData();
+      showAgendaToast('Rimborso registrato correttamente ✓');
+    } catch (err) {
+      showAgendaToast(err.message || 'Errore registrazione rimborso', 'error');
+    }
+  });
+
+  // Stripe Settings Form
+  const form = document.getElementById('stripeSettingsForm');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const alertEl = document.getElementById('stripeSettingsAlert');
+      const saveBtn = document.getElementById('saveStripeSettingsBtn');
+      if (alertEl) alertEl.hidden = true;
+      if (saveBtn) saveBtn.disabled = true;
+
+      const payload = {
+        stripe_enabled: Boolean(document.getElementById('stripeEnabledCheck')?.checked),
+        stripe_mode: document.getElementById('stripeModeSelect')?.value || 'test',
+        deposit_percent: Number(document.getElementById('stripeDepositPercentInput')?.value || 30),
+        stripe_publishable_key: (document.getElementById('stripePublishableKeyInput')?.value || '').trim(),
+        allow_pay_in_studio: Boolean(document.getElementById('stripeAllowStudioCheck')?.checked),
+        allow_online_full: Boolean(document.getElementById('stripeAllowFullCheck')?.checked),
+        allow_online_deposit: Boolean(document.getElementById('stripeAllowDepositCheck')?.checked),
+        auto_confirm_on_paid: Boolean(document.getElementById('stripeAutoConfirmCheck')?.checked),
+      };
+      const rawSk = (document.getElementById('stripeSecretKeyInput')?.value || '').trim();
+      const rawWh = (document.getElementById('stripeWebhookSecretInput')?.value || '').trim();
+      if (rawSk) payload.stripe_secret_key = rawSk;
+      if (rawWh) payload.stripe_webhook_secret = rawWh;
+
+      try {
+        const res = await apiFetch('admin/payments/settings', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        STATE.paymentSettings = res.settings;
+        STATE.paymentWebhookUrl = res.webhook_url || STATE.paymentWebhookUrl;
+        const skIn = document.getElementById('stripeSecretKeyInput');
+        const whIn = document.getElementById('stripeWebhookSecretInput');
+        if (skIn) skIn.value = '';
+        if (whIn) whIn.value = '';
+        renderPaymentSettingsPanel();
+        if (alertEl) {
+          alertEl.hidden = false;
+          alertEl.className = 'admin-alert admin-alert-ok';
+          alertEl.textContent = 'Impostazioni Stripe & Pagamenti salvate ✓';
+        }
+        showAgendaToast('Impostazioni pagamenti salvate ✓');
+      } catch (err) {
+        if (alertEl) {
+          alertEl.hidden = false;
+          alertEl.className = 'admin-alert admin-alert-error';
+          alertEl.textContent = err.message;
+        }
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    });
+  }
+
+  document.getElementById('stripeClearSecretBtn')?.addEventListener('click', async () => {
+    if (!confirm('Rimuovere la Secret Key Stripe salvata?')) return;
+    const res = await apiFetch('admin/payments/settings', {
+      method: 'POST',
+      body: JSON.stringify({ clear_secret_key: true, stripe_enabled: false }),
+    });
+    STATE.paymentSettings = res.settings;
+    renderPaymentSettingsPanel();
+    showAgendaToast('Secret Key Stripe rimossa');
+  });
+
+  document.getElementById('stripeClearWebhookBtn')?.addEventListener('click', async () => {
+    if (!confirm('Rimuovere il Webhook Signing Secret salvato?')) return;
+    const res = await apiFetch('admin/payments/settings', {
+      method: 'POST',
+      body: JSON.stringify({ clear_webhook_secret: true }),
+    });
+    STATE.paymentSettings = res.settings;
+    renderPaymentSettingsPanel();
+    showAgendaToast('Webhook Secret rimosso');
+  });
+
+  document.getElementById('copyStripeWebhookUrlBtn')?.addEventListener('click', async () => {
+    const val = document.getElementById('stripeWebhookUrlInput')?.value || '';
+    if (!val) return;
+    try {
+      await navigator.clipboard.writeText(val);
+      showAgendaToast('URL Webhook Stripe copiato ✓');
+    } catch {
+      document.getElementById('stripeWebhookUrlInput')?.select();
+      showAgendaToast('Seleziona e copia l\'URL manualmente');
+    }
+  });
+
+  document.getElementById('testStripeConnBtn')?.addEventListener('click', async () => {
+    const fb = document.getElementById('stripeTestFeedback');
+    const btn = document.getElementById('testStripeConnBtn');
+    if (fb) fb.hidden = true;
+    if (btn) btn.disabled = true;
+    try {
+      const rawSk = (document.getElementById('stripeSecretKeyInput')?.value || '').trim();
+      const bodyPayload = rawSk ? { stripe_secret_key: rawSk } : {};
+      const res = await apiFetch('admin/payments/test-stripe', {
+        method: 'POST',
+        body: JSON.stringify(bodyPayload),
+      });
+      if (fb) {
+        fb.hidden = false;
+        fb.className = 'admin-alert admin-alert-ok';
+        fb.textContent = `✓ Connessione Stripe verificata (${res.mode || 'test'}): ${res.business_name || res.account_id || 'Account attivo'}`;
+      }
+    } catch (err) {
+      if (fb) {
+        fb.hidden = false;
+        fb.className = 'admin-alert admin-alert-error';
+        fb.textContent = err.message || 'Verifica Stripe fallita';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  document.getElementById('paymentsMethodFilterSelect')?.addEventListener('change', async (e) => {
+    STATE.paymentMethodFilter = e.target.value || '';
+    await loadPaymentsData(STATE.paymentMethodFilter);
+    renderPaymentSettingsPanel();
+  });
+
+  document.getElementById('refreshPaymentsLedgerBtn')?.addEventListener('click', async () => {
+    await loadPaymentsData(STATE.paymentMethodFilter);
+    renderPaymentSettingsPanel();
+    showAgendaToast('Registro incassi aggiornato ✓');
   });
 }

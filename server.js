@@ -21,6 +21,24 @@ const {
   sendWhatsAppCloudMessage,
 } = require('./backend/whatsapp');
 const {
+  PAYMENT_STATUS_LABELS,
+  PAYMENT_METHOD_LABELS,
+  roundMoney,
+  normalizePaymentStatus,
+  normalizePaymentMethod,
+  resolveStripeConfig,
+  sanitizePaymentSettingsForClient,
+  mergePaymentSettingsUpdate,
+  getPublicPaymentConfig,
+  computeOnlineChargeAmount,
+  derivePaymentStatus,
+  verifyStripeConnection,
+  createStripeCheckoutSession,
+  retrieveStripeCheckoutSession,
+  createStripeRefund,
+  verifyStripeWebhookSignature,
+} = require('./backend/payments');
+const {
   dispatchWhatsAppMessage,
   loadWhatsAppRuntimeConfig,
   runAutomationSuite,
@@ -54,7 +72,16 @@ if (process.env.TRUST_PROXY !== 'false') {
 }
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '5mb' }));
+app.use(
+  express.json({
+    limit: '5mb',
+    verify: (req, _res, buf) => {
+      if (req.originalUrl && req.originalUrl.includes('/webhooks/stripe')) {
+        req.rawBody = buf;
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: false }));
 
 // Block HTTP access to backend/source/config files before static middleware
@@ -631,6 +658,43 @@ app.post('/api/public/book', async (req, res, next) => {
     const privacyVersion = getPrivacyVersion();
     const nowStr = formatRomeNow();
 
+    const isStripeFull = paymentMethod === 'stripe_full';
+    const isStripeDeposit = paymentMethod === 'stripe_deposit';
+    const wantsStripeCheckout = isStripeFull || isStripeDeposit;
+
+    let stripeCfg = null;
+    let chargeAmount = 0;
+    const payScope = isStripeDeposit ? 'deposit' : 'full';
+    if (wantsStripeCheckout) {
+      const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
+      stripeCfg = resolveStripeConfig(rawPaySettings);
+      if (
+        !stripeCfg.ready ||
+        (isStripeFull && !stripeCfg.allow_online_full) ||
+        (isStripeDeposit && !stripeCfg.allow_online_deposit)
+      ) {
+        return sendError(
+          res,
+          'Il pagamento online con Stripe non è attualmente disponibile. Seleziona Salda in Studio.',
+          422,
+          'STRIPE_UNAVAILABLE'
+        );
+      }
+      chargeAmount = computeOnlineChargeAmount(totalPrice, payScope, stripeCfg.deposit_percent);
+      if (chargeAmount < 0.5) {
+        return sendError(
+          res,
+          "L'importo minimo per pagare online con Stripe è € 0,50.",
+          422,
+          'STRIPE_MIN_AMOUNT'
+        );
+      }
+    }
+
+    const storedPaymentMethod = wantsStripeCheckout
+      ? 'stripe_online'
+      : normalizePaymentMethod(paymentMethod, 'studio');
+
     const created = await store.createPublicBooking({
       mode,
       appointmentDate,
@@ -640,7 +704,9 @@ app.post('/api/public/book', async (req, res, next) => {
       servicesJson: JSON.stringify(normalizedServices),
       servicesSummary,
       totalPrice,
-      paymentMethod,
+      paymentMethod: storedPaymentMethod,
+      paymentStatus: 'unpaid',
+      paidAmount: 0,
       notes,
       clientName,
       clientPhoneRaw,
@@ -652,6 +718,61 @@ app.post('/api/public/book', async (req, res, next) => {
       ipHash: hashIp(req),
       userAgent: String(req.headers['user-agent'] || '').slice(0, 250),
     });
+
+    if (wantsStripeCheckout) {
+      const origin = getRequestOrigin(req);
+      const codeParam = encodeURIComponent(created.bookingCode);
+      const successUrl = `${origin}/?payment=success&session_id={CHECKOUT_SESSION_ID}&code=${codeParam}`;
+      const cancelUrl = `${origin}/?payment=cancelled&session_id={CHECKOUT_SESSION_ID}&code=${codeParam}`;
+      try {
+        const session = await createStripeCheckoutSession({
+          config: stripeCfg,
+          appointment: {
+            id: created.appointmentId,
+            booking_code: created.bookingCode,
+            appointment_date: appointmentDate,
+            start_time: startTime,
+            total_price: totalPrice,
+            client_email: clientEmail,
+          },
+          items: normalizedServices.map((s) => ({
+            title: s?.name || 'Trattamento',
+            quantity: 1,
+          })),
+          chargeAmount,
+          payScope,
+          successUrl,
+          cancelUrl,
+        });
+        await store.updateAppointmentStripeSession(created.appointmentId, session.id);
+        return res.status(201).json({
+          ok: true,
+          booking_code: created.bookingCode,
+          appointment_id: created.appointmentId,
+          client_id: created.clientId,
+          privacy_accepted_at: nowStr,
+          privacy_version: privacyVersion,
+          whatsapp_sent: false,
+          requires_stripe_redirect: true,
+          checkout_url: session.url,
+          stripe_session_id: session.id,
+          pay_scope: payScope,
+          charge_amount: chargeAmount,
+          total_price: totalPrice,
+        });
+      } catch (stripeErr) {
+        await store.cancelUnpaidPendingAppointment(
+          created.appointmentId,
+          `Sessione Stripe non avviata: ${stripeErr?.message || 'errore'}`
+        );
+        return sendError(
+          res,
+          stripeErr?.message || 'Impossibile avviare il checkout Stripe in questo momento. Riprova o scegli Salda in Studio.',
+          stripeErr?.status || 502,
+          'STRIPE_SESSION_FAILED'
+        );
+      }
+    }
 
     let whatsappDispatch = null;
     if (mode === 'booking') {
@@ -694,7 +815,297 @@ app.post('/api/public/book', async (req, res, next) => {
       privacy_accepted_at: nowStr,
       privacy_version: privacyVersion,
       whatsapp_sent: Boolean(whatsappDispatch?.sent),
+      requires_stripe_redirect: false,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.get('/api/public/payment-config', async (_req, res, next) => {
+  try {
+    const store = getStore();
+    const raw = (await store.getStudioSetting('payment_settings')) || {};
+    return res.json({ ok: true, config: getPublicPaymentConfig(raw) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+async function applyStripePaidSession(store, session, stripeCfg, bookingCodeHint = '') {
+  const code = String(session?.client_reference_id || session?.metadata?.booking_code || bookingCodeHint || '').trim();
+  let appt = code ? await store.getAppointmentByCode(code) : null;
+  if (!appt && session?.id) {
+    appt = await store.getAppointmentByStripeSession(session.id);
+  }
+  if (!appt) return { found: false, paid: false, appointment: null };
+
+  const isPaidSession = session?.payment_status === 'paid';
+  if (!isPaidSession) {
+    return { found: true, paid: false, appointment: appt };
+  }
+
+  const paidEur =
+    Number(session.amount_total || 0) > 0
+      ? roundMoney(Number(session.amount_total) / 100)
+      : roundMoney(session?.metadata?.charge_amount || appt.total_price);
+
+  const totalEur = roundMoney(appt.total_price);
+  const payScope = session?.metadata?.pay_scope === 'deposit' || (totalEur > 0 && paidEur < totalEur - 0.01)
+    ? 'deposit'
+    : 'full';
+  const nextPaymentStatus = totalEur > 0 && paidEur < totalEur - 0.01 ? 'partial' : 'paid';
+  const nextApptStatus =
+    stripeCfg.auto_confirm_on_paid && appt.status === 'pending' ? 'confirmed' : appt.status;
+  const intentId =
+    typeof session.payment_intent === 'string'
+      ? session.payment_intent
+      : session.payment_intent?.id || null;
+
+  const payRes = await store.recordAppointmentPayment({
+    appointmentId: appt.id,
+    paymentStatus: nextPaymentStatus,
+    paymentMethod: 'stripe_online',
+    paidAmount: paidEur,
+    transactionAmount: paidEur,
+    direction: 'payment',
+    stripeSessionId: session.id,
+    stripePaymentIntent: intentId,
+    paymentNotes:
+      payScope === 'deposit'
+        ? `Acconto online Stripe (${paidEur.toFixed(2)} €)`
+        : `Saldo completo online Stripe (${paidEur.toFixed(2)} €)`,
+    transactionNotes:
+      payScope === 'deposit' ? 'Acconto online via Stripe Checkout' : 'Saldo online via Stripe Checkout',
+    statusOverride: nextApptStatus,
+    nowStr: formatRomeNow(),
+  });
+
+  if (!payRes.duplicate && payRes.appointment && payRes.appointment.mode === 'booking') {
+    try {
+      const waCfg = await loadWhatsAppRuntimeConfig(store);
+      if (waCfg.isActive && waCfg.auto_booking_confirmed) {
+        const updatedAppt = payRes.appointment;
+        await dispatchWhatsAppMessage({
+          store,
+          configOverride: waCfg,
+          toPhone: normalizePhone(updatedAppt.client_phone) || updatedAppt.client_phone,
+          recipientName: updatedAppt.client_name,
+          clientId: updatedAppt.client_id,
+          appointmentId: updatedAppt.id,
+          templateCode: 'booking_confirmed',
+          vars: {
+            nome: updatedAppt.client_name,
+            data: formatShortItDate(updatedAppt.appointment_date),
+            ora: String(updatedAppt.start_time || '').slice(0, 5),
+            trattamenti: updatedAppt.services_summary || 'Trattamenti',
+            servizi: updatedAppt.services_summary || 'Trattamenti',
+            operatore: updatedAppt.operator_name || 'Giulia',
+            codice: updatedAppt.booking_code,
+          },
+          triggerSource: 'auto_booking',
+          allowFallback: false,
+        });
+      }
+    } catch (waErr) {
+      console.error('[Giulia Beauty Studio] Errore auto-invio conferma WA post-Stripe:', waErr?.message || waErr);
+    }
+  }
+
+  return { found: true, paid: true, ...payRes };
+}
+
+function formatPublicPaymentReceipt(appt, chargeAmountFallback = null) {
+  if (!appt) return null;
+  const total = roundMoney(appt.total_price);
+  const paid = roundMoney(appt.paid_amount ?? chargeAmountFallback ?? 0);
+  return {
+    booking_code: appt.booking_code,
+    mode: appt.mode,
+    status: appt.status,
+    payment_status: appt.payment_status || 'unpaid',
+    payment_method: appt.payment_method || 'studio',
+    total_price: total,
+    paid_amount: paid,
+    remaining_amount: Math.max(0, roundMoney(total - paid)),
+    appointment_date: appt.appointment_date,
+    start_time: String(appt.start_time || '').slice(0, 5),
+    services_summary: appt.services_summary,
+    operator_name: appt.operator_name || 'Giulia',
+    client_name: appt.client_name,
+  };
+}
+
+app.post('/api/public/stripe/verify-session', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const sessionId = String(body.session_id || '').trim();
+    const bookingCode = String(body.booking_code || '').trim();
+    if (!sessionId) {
+      return sendError(res, 'Parametro session_id mancante.', 422);
+    }
+
+    const store = getStore();
+    const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
+    const stripeCfg = resolveStripeConfig(rawPaySettings);
+    if (!stripeCfg.configured) {
+      return sendError(res, 'Configurazione Stripe non attiva.', 400);
+    }
+
+    const session = await retrieveStripeCheckoutSession({ config: stripeCfg, sessionId });
+    const sessionCode = String(session?.client_reference_id || session?.metadata?.booking_code || '').trim();
+    if (bookingCode && sessionCode && bookingCode !== sessionCode) {
+      return sendError(res, 'Sessione Stripe non corrispondente al codice prenotazione.', 403);
+    }
+
+    const applied = await applyStripePaidSession(store, session, stripeCfg, bookingCode);
+    if (!applied.found) {
+      return sendError(res, 'Prenotazione associata alla sessione Stripe non trovata.', 404);
+    }
+
+    return res.json({
+      ok: true,
+      paid: Boolean(applied.paid),
+      duplicate: Boolean(applied.duplicate),
+      receipt: formatPublicPaymentReceipt(applied.appointment),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/public/payment-fallback-studio', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const bookingCode = String(body.booking_code || '').trim();
+    const sessionId = String(body.session_id || '').trim();
+    if (!bookingCode) return sendError(res, 'Codice prenotazione mancante.', 422);
+
+    const store = getStore();
+    const appt = await store.getAppointmentByCode(bookingCode);
+    if (!appt) return sendError(res, 'Prenotazione non trovata.', 404);
+    if (sessionId && appt.stripe_session_id && appt.stripe_session_id !== sessionId) {
+      return sendError(res, 'Sessione non corrispondente alla prenotazione.', 403);
+    }
+    if ((appt.payment_status || 'unpaid') !== 'unpaid') {
+      return res.json({ ok: true, already_paid: true, receipt: formatPublicPaymentReceipt(appt) });
+    }
+
+    const updated = await store.fallbackAppointmentToStudioPayment(appt.id);
+    if (updated && updated.mode === 'booking') {
+      try {
+        const waCfg = await loadWhatsAppRuntimeConfig(store);
+        if (waCfg.isActive && waCfg.auto_booking_confirmed) {
+          await dispatchWhatsAppMessage({
+            store,
+            configOverride: waCfg,
+            toPhone: normalizePhone(updated.client_phone) || updated.client_phone,
+            recipientName: updated.client_name,
+            clientId: updated.client_id,
+            appointmentId: updated.id,
+            templateCode: 'booking_confirmed',
+            vars: {
+              nome: updated.client_name,
+              data: formatShortItDate(updated.appointment_date),
+              ora: String(updated.start_time || '').slice(0, 5),
+              trattamenti: updated.services_summary || 'Trattamenti',
+              servizi: updated.services_summary || 'Trattamenti',
+              operatore: updated.operator_name || 'Giulia',
+              codice: updated.booking_code,
+            },
+            triggerSource: 'auto_booking',
+            allowFallback: false,
+          });
+        }
+      } catch {
+        // best effort
+      }
+    }
+
+    return res.json({ ok: true, receipt: formatPublicPaymentReceipt(updated) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/public/payment-cancel-pending', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const bookingCode = String(body.booking_code || '').trim();
+    const sessionId = String(body.session_id || '').trim();
+    if (!bookingCode) return sendError(res, 'Codice prenotazione mancante.', 422);
+
+    const store = getStore();
+    const appt = await store.getAppointmentByCode(bookingCode);
+    if (!appt) return sendError(res, 'Prenotazione non trovata.', 404);
+    if (sessionId && appt.stripe_session_id && appt.stripe_session_id !== sessionId) {
+      return sendError(res, 'Sessione non corrispondente alla prenotazione.', 403);
+    }
+
+    const cancelled = await store.cancelUnpaidPendingAppointment(appt.id);
+    return res.json({ ok: true, receipt: formatPublicPaymentReceipt(cancelled) });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/webhooks/stripe', async (req, res, next) => {
+  try {
+    const store = getStore();
+    const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
+    const stripeCfg = resolveStripeConfig(rawPaySettings);
+    const sigHeader = req.headers['stripe-signature'];
+    const payloadRaw = req.rawBody || JSON.stringify(req.body || {});
+    const sigCheck = verifyStripeWebhookSignature(payloadRaw, sigHeader, stripeCfg.stripe_webhook_secret);
+    if (!sigCheck.valid) {
+      return sendError(res, sigCheck.reason || 'Firma Webhook Stripe non valida.', 400, 'STRIPE_SIGNATURE_INVALID');
+    }
+
+    const event =
+      req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0
+        ? req.body
+        : JSON.parse(Buffer.isBuffer(payloadRaw) ? payloadRaw.toString('utf8') : String(payloadRaw || '{}'));
+
+    const eventType = String(event?.type || '');
+    const obj = event?.data?.object || {};
+
+    if (eventType === 'checkout.session.completed' || eventType === 'checkout.session.async_payment_succeeded') {
+      await applyStripePaidSession(store, obj, stripeCfg);
+    } else if (eventType === 'checkout.session.expired') {
+      if (obj?.id) {
+        const appt = await store.getAppointmentByStripeSession(obj.id);
+        if (appt && appt.status === 'pending' && (appt.payment_status || 'unpaid') === 'unpaid') {
+          await store.cancelUnpaidPendingAppointment(appt.id, 'Sessione Stripe Checkout scaduta');
+        }
+      }
+    } else if (eventType === 'charge.refunded') {
+      const piId = typeof obj?.payment_intent === 'string' ? obj.payment_intent : obj?.payment_intent?.id || '';
+      if (piId) {
+        const allAppts = await store.listAppointments({});
+        const match = allAppts.find((a) => a.stripe_payment_intent === piId);
+        if (match) {
+          const refundedEur = roundMoney(Number(obj.amount_refunded || 0) / 100);
+          const alreadyPaid = roundMoney(match.paid_amount);
+          let deltaRefund = Math.min(alreadyPaid, refundedEur);
+          if (Number(obj.amount || 0) > 0) {
+            const remainingAfterRefund = Math.max(0, roundMoney(Number(obj.amount) / 100 - refundedEur));
+            deltaRefund = Math.max(0, roundMoney(alreadyPaid - remainingAfterRefund));
+          }
+          await store.recordAppointmentPayment({
+            appointmentId: match.id,
+            paymentMethod: 'stripe_online',
+            transactionAmount: deltaRefund > 0 ? deltaRefund : alreadyPaid,
+            direction: 'refund',
+            stripePaymentIntent: piId,
+            paymentNotes: `Rimborso registrato da webhook Stripe (€ ${refundedEur.toFixed(2)})`,
+            transactionNotes: 'Rimborso Stripe webhook (charge.refunded)',
+            nowStr: formatRomeNow(),
+          });
+        }
+      }
+    }
+
+    return res.json({ ok: true, received: true, event_type: eventType });
   } catch (err) {
     return next(err);
   }
@@ -785,6 +1196,44 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
       });
     }
 
+    if (action === 'record_payment') {
+      const id = Number.parseInt(body.id || body.appointment_id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
+      const appt = await store.getAppointmentById(id);
+      if (!appt) return sendError(res, 'Appuntamento non trovato.', 404);
+
+      const method = normalizePaymentMethod(body.payment_method, appt.payment_method || 'contanti');
+      const total = roundMoney(appt.total_price);
+      let reqStatus = body.payment_status ? normalizePaymentStatus(body.payment_status) : null;
+      let targetPaidAmount = body.paid_amount !== undefined ? roundMoney(body.paid_amount) : null;
+      const txAmount = body.transaction_amount !== undefined ? roundMoney(body.transaction_amount) : null;
+
+      if (targetPaidAmount === null && txAmount === null) {
+        if (reqStatus === 'paid') targetPaidAmount = total;
+        else if (reqStatus === 'unpaid') targetPaidAmount = 0;
+      }
+      const finalStatus = reqStatus || derivePaymentStatus({ totalPrice: total, paidAmount: targetPaidAmount ?? appt.paid_amount });
+      const statusOverride =
+        body.confirm_appointment && appt.status === 'pending' && finalStatus !== 'unpaid' ? 'confirmed' : null;
+
+      const recorded = await store.recordAppointmentPayment({
+        appointmentId: id,
+        paymentStatus: finalStatus,
+        paymentMethod: method,
+        paidAmount: targetPaidAmount,
+        transactionAmount: txAmount,
+        direction: body.direction === 'refund' ? 'refund' : 'payment',
+        paymentNotes: body.payment_notes !== undefined ? String(body.payment_notes || '').trim() : null,
+        transactionNotes:
+          String(body.transaction_notes || '').trim() ||
+          `Incasso registrato in agenda (${PAYMENT_METHOD_LABELS[method] || method})`,
+        statusOverride,
+        adminId: req.admin?.id || null,
+        nowStr: formatRomeNow(),
+      });
+      return res.json({ ok: true, appointment: recorded.appointment, transaction: recorded.transaction });
+    }
+
     if (action === 'update') {
       const id = Number.parseInt(body.id || '0', 10) || 0;
       if (id <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
@@ -795,7 +1244,17 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
         return sendError(res, 'Data o orario non validi.', 422);
       }
 
+      const existingAppt = await store.getAppointmentById(id);
+      if (!existingAppt) return sendError(res, 'Appuntamento non trovato.', 404);
+
       const operatorId = body.operator_id ? Number.parseInt(body.operator_id, 10) || null : undefined;
+      const nextTotalPrice = Number(body.total_price || 0) || 0;
+      const hasPaymentFields =
+        body.payment_status !== undefined ||
+        body.payment_method !== undefined ||
+        body.paid_amount !== undefined ||
+        body.payment_notes !== undefined;
+
       await store.updateAppointment(id, {
         date,
         time,
@@ -803,10 +1262,64 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
         operatorId,
         servicesJson: Array.isArray(body.services) ? JSON.stringify(body.services) : null,
         servicesSummary: (String(body.services_summary || '').trim() || 'Trattamento personalizzato').slice(0, 490),
-        totalPrice: Number(body.total_price || 0) || 0,
+        totalPrice: nextTotalPrice,
         status,
         notes: String(body.notes || '').trim(),
       });
+
+      if (hasPaymentFields) {
+        const nextMethod = normalizePaymentMethod(body.payment_method, existingAppt.payment_method || 'studio');
+        const nextNotes =
+          body.payment_notes !== undefined ? String(body.payment_notes || '').trim() : existingAppt.payment_notes || null;
+        const prevPaid = roundMoney(existingAppt.paid_amount);
+        let nextPaid =
+          body.paid_amount !== undefined && body.paid_amount !== ''
+            ? Math.max(0, roundMoney(body.paid_amount))
+            : prevPaid;
+        let nextPayStatus = normalizePaymentStatus(body.payment_status, existingAppt.payment_status || 'unpaid');
+        if (nextPayStatus === 'paid' && (body.paid_amount === undefined || nextPaid <= 0) && nextTotalPrice > 0) {
+          nextPaid = roundMoney(nextTotalPrice);
+        } else if (nextPayStatus === 'unpaid') {
+          nextPaid = 0;
+        }
+        nextPayStatus = derivePaymentStatus({
+          totalPrice: nextTotalPrice,
+          paidAmount: nextPaid,
+          requestedStatus: nextPayStatus,
+        });
+
+        if (nextPaid > prevPaid + 0.009) {
+          await store.recordAppointmentPayment({
+            appointmentId: id,
+            paymentStatus: nextPayStatus,
+            paymentMethod: nextMethod,
+            paidAmount: nextPaid,
+            transactionAmount: roundMoney(nextPaid - prevPaid),
+            direction: 'payment',
+            paymentNotes: nextNotes,
+            transactionNotes: `Pagamento aggiornato da scheda appuntamento (${PAYMENT_METHOD_LABELS[nextMethod] || nextMethod})`,
+            adminId: req.admin?.id || null,
+            nowStr: formatRomeNow(),
+          });
+        } else {
+          await store.updateAppointment(id, {
+            date,
+            time,
+            duration: Math.max(10, Number.parseInt(body.duration_minutes || '60', 10) || 60),
+            operatorId,
+            servicesJson: Array.isArray(body.services) ? JSON.stringify(body.services) : null,
+            servicesSummary: (String(body.services_summary || '').trim() || 'Trattamento personalizzato').slice(0, 490),
+            totalPrice: nextTotalPrice,
+            status,
+            notes: String(body.notes || '').trim(),
+            paymentMethod: nextMethod,
+            paymentStatus: nextPayStatus,
+            paidAmount: nextPaid,
+            paymentNotes: nextNotes,
+            paidAt: nextPayStatus === 'unpaid' ? null : existingAppt.paid_at || formatRomeNow(),
+          });
+        }
+      }
       return res.json({ ok: true, updated_id: id });
     }
 
@@ -834,6 +1347,20 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
     const apptStatus = ALLOWED_APPT_STATUSES.includes(body.status) ? body.status : 'confirmed';
     const apptMode = body.mode === 'voucher' ? 'voucher' : 'booking';
     const apptOperatorId = Number.parseInt(body.operator_id || '0', 10) || null;
+    const createTotalPrice = Number(body.total_price || 0) || 0;
+    const createPayMethod = normalizePaymentMethod(body.payment_method, 'studio');
+    let createPaidAmount =
+      body.paid_amount !== undefined && body.paid_amount !== '' ? Math.max(0, roundMoney(body.paid_amount)) : 0;
+    let createPayStatus = normalizePaymentStatus(body.payment_status, 'unpaid');
+    if (createPayStatus === 'paid' && createPaidAmount <= 0 && createTotalPrice > 0) {
+      createPaidAmount = roundMoney(createTotalPrice);
+    }
+    createPayStatus = derivePaymentStatus({
+      totalPrice: createTotalPrice,
+      paidAmount: createPaidAmount,
+      requestedStatus: createPayStatus,
+    });
+
     const created = await store.createAdminAppointment({
       clientId,
       clientName,
@@ -851,9 +1378,14 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
       operatorId: apptOperatorId,
       servicesJson: JSON.stringify(services),
       servicesSummary: servicesSummary.slice(0, 490),
-      totalPrice: Number(body.total_price || 0) || 0,
+      totalPrice: createTotalPrice,
       mode: apptMode,
-      paymentMethod: String(body.payment_method || 'studio').trim() || 'studio',
+      paymentMethod: createPayMethod,
+      paymentStatus: createPayStatus,
+      paidAmount: createPaidAmount,
+      paymentNotes: String(body.payment_notes || '').trim() || null,
+      paidAt: createPayStatus !== 'unpaid' ? formatRomeNow() : null,
+      adminId: req.admin?.id || null,
       status: apptStatus,
       notes: String(body.notes || '').trim(),
       ipHash: hashIp(req),
@@ -1912,6 +2444,194 @@ app.post('/api/admin/promotions', requireAdmin, async (req, res, next) => {
 
     const promotion = await store.createPromotion(payload);
     return res.status(201).json({ ok: true, promotion });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ============================================================================
+   ADMIN PAYMENTS, CASSA & STRIPE SETTINGS API
+   ============================================================================ */
+function computePaymentsDashboardSummary(appointments = [], transactions = []) {
+  const today = getRomeToday();
+  const [y, m, d] = today.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dayIdx = (dt.getUTCDay() + 6) % 7; // Monday = 0
+  const monDt = new Date(dt);
+  monDt.setUTCDate(dt.getUTCDate() - dayIdx);
+  const weekStart = monDt.toISOString().slice(0, 10);
+  const monthPrefix = today.slice(0, 7);
+
+  let todayCollected = 0;
+  let weekCollected = 0;
+  let monthCollected = 0;
+  let allTimeNet = 0;
+  const byMethod = {};
+
+  for (const tx of transactions) {
+    if (tx.status && tx.status !== 'succeeded') continue;
+    const rawAmt = Number(tx.amount || 0);
+    const signedAmt = tx.direction === 'refund' ? -rawAmt : rawAmt;
+    allTimeNet += signedAmt;
+    const txDate = String(tx.created_at || '').slice(0, 10);
+    if (txDate === today) todayCollected += signedAmt;
+    if (txDate >= weekStart && txDate <= today) weekCollected += signedAmt;
+    if (txDate.startsWith(monthPrefix)) monthCollected += signedAmt;
+    const mKey = tx.payment_method || 'altro';
+    byMethod[mKey] = roundMoney((byMethod[mKey] || 0) + signedAmt);
+  }
+
+  let paidCount = 0;
+  let partialCount = 0;
+  let unpaidCount = 0;
+  let outstandingTotal = 0;
+  for (const a of appointments) {
+    if (a.status === 'cancelled') continue;
+    const ps = a.payment_status || 'unpaid';
+    const total = roundMoney(a.total_price);
+    const paid = roundMoney(a.paid_amount);
+    if (ps === 'paid') paidCount += 1;
+    else if (ps === 'partial') {
+      partialCount += 1;
+      outstandingTotal += Math.max(0, roundMoney(total - paid));
+    } else if (ps === 'unpaid') {
+      unpaidCount += 1;
+      outstandingTotal += total;
+    }
+  }
+
+  return {
+    today_collected: roundMoney(todayCollected),
+    week_collected: roundMoney(weekCollected),
+    month_collected: roundMoney(monthCollected),
+    all_time_net: roundMoney(allTimeNet),
+    outstanding_total: roundMoney(outstandingTotal),
+    paid_count: paidCount,
+    partial_count: partialCount,
+    unpaid_count: unpaidCount,
+    by_method: byMethod,
+    status_labels: PAYMENT_STATUS_LABELS,
+    method_labels: PAYMENT_METHOD_LABELS,
+  };
+}
+
+app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const startDate = String(req.query.start_date || '').trim() || null;
+    const endDate = String(req.query.end_date || '').trim() || null;
+    const method = String(req.query.method || '').trim() || null;
+    const appointmentId = Number.parseInt(req.query.appointment_id || '0', 10) || 0;
+    const limit = Number.parseInt(req.query.limit || '120', 10) || 120;
+
+    const [rawSettings, transactions, allTransactionsForKpi, allAppts] = await Promise.all([
+      store.getStudioSetting('payment_settings'),
+      store.listPaymentTransactions({ startDate, endDate, method, appointmentId, limit }),
+      appointmentId > 0 || startDate || endDate || method
+        ? store.listPaymentTransactions({ limit: 500 })
+        : Promise.resolve(null),
+      store.listAppointments({}),
+    ]);
+
+    const summary = computePaymentsDashboardSummary(allAppts, allTransactionsForKpi || transactions);
+    const origin = getRequestOrigin(req);
+
+    return res.json({
+      ok: true,
+      settings: sanitizePaymentSettingsForClient(rawSettings || {}),
+      webhook_url: `${origin}/api/webhooks/stripe`,
+      summary,
+      transactions,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/payments/settings', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const existing = (await store.getStudioSetting('payment_settings')) || {};
+    const merged = mergePaymentSettingsUpdate(existing, req.body || {});
+    const saved = await store.saveStudioSetting('payment_settings', merged);
+    const origin = getRequestOrigin(req);
+    return res.json({
+      ok: true,
+      settings: sanitizePaymentSettingsForClient(saved.setting_value || merged),
+      webhook_url: `${origin}/api/webhooks/stripe`,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/payments/test-stripe', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const rawSettings = (await store.getStudioSetting('payment_settings')) || {};
+    const body = req.body || {};
+    const tempMerged = mergePaymentSettingsUpdate(rawSettings, body);
+    const config = resolveStripeConfig(tempMerged);
+    if (!config.configured) {
+      return sendError(res, 'Inserisci prima una Stripe Secret Key (sk_test_... o sk_live_...).', 422);
+    }
+    const result = await verifyStripeConnection({ config });
+    return res.json({ ok: true, ...result, mode: config.mode });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const body = req.body || {};
+    const appointmentId = Number.parseInt(body.appointment_id || '0', 10) || 0;
+    if (appointmentId <= 0) return sendError(res, 'ID appuntamento mancante.', 400);
+    const appt = await store.getAppointmentById(appointmentId);
+    if (!appt) return sendError(res, 'Appuntamento non trovato.', 404);
+
+    const currentPaid = roundMoney(appt.paid_amount);
+    if (currentPaid <= 0) {
+      return sendError(res, 'Questo appuntamento non ha importi incassati da rimborsare.', 422);
+    }
+
+    const reqAmt = body.amount !== undefined && body.amount !== '' ? roundMoney(body.amount) : currentPaid;
+    const refundAmt = Math.min(currentPaid, Math.max(0.01, reqAmt));
+    const notes = String(body.notes || '').trim() || 'Rimborso registrato dallo studio';
+    let stripeRefund = null;
+
+    if (body.call_stripe !== false && appt.stripe_payment_intent) {
+      const rawSettings = (await store.getStudioSetting('payment_settings')) || {};
+      const stripeCfg = resolveStripeConfig(rawSettings);
+      if (!stripeCfg.configured) {
+        return sendError(res, 'Chiave Stripe non configurata: impossibile emettere rimborso su carta.', 422);
+      }
+      stripeRefund = await createStripeRefund({
+        config: stripeCfg,
+        paymentIntentId: appt.stripe_payment_intent,
+        amountEur: refundAmt,
+      });
+    }
+
+    const recorded = await store.recordAppointmentPayment({
+      appointmentId,
+      paymentMethod: appt.stripe_payment_intent && body.call_stripe !== false ? 'stripe_online' : appt.payment_method,
+      transactionAmount: refundAmt,
+      direction: 'refund',
+      stripePaymentIntent: appt.stripe_payment_intent || null,
+      paymentNotes: notes,
+      transactionNotes: stripeRefund ? `Rimborso Stripe (${stripeRefund.id})` : notes,
+      adminId: req.admin?.id || null,
+      nowStr: formatRomeNow(),
+    });
+
+    return res.json({
+      ok: true,
+      appointment: recorded.appointment,
+      transaction: recorded.transaction,
+      stripe_refund_id: stripeRefund?.id || null,
+    });
   } catch (err) {
     return next(err);
   }
