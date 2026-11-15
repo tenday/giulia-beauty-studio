@@ -770,7 +770,7 @@ async function openRemindersModal() {
    CALENDAR VIEW (WEEK / DAY / LIST + INTERACTIVE DRAG, RESIZE & LONG-PRESS)
    ========================================================================== */
 const CAL_START_HOUR = 9;
-const CAL_END_HOUR = 22; // Ultima riga 21:00 (blocco 21:00-22:00, con chiusura alle 21:00)
+const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
 const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
 const CAL_MAX_DURATION = 480;
@@ -2667,7 +2667,7 @@ function renderCalendar() {
     const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
     if (!workSched.isClosed && workSched.openWindows.length > 0) {
       nextStartHour = Math.min(nextStartHour, Math.floor(workSched.workStartMin / 60));
-      nextEndHour = Math.max(nextEndHour, Math.floor(workSched.workEndMin / 60) + 1);
+      nextEndHour = Math.max(nextEndHour, Math.ceil(workSched.workEndMin / 60));
     }
     dayAppts.forEach((a) => {
       const sMin = parseTimeToMinutes(a.start_time);

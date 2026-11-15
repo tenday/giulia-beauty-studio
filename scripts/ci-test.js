@@ -578,7 +578,7 @@ function checkGdprDefaults() {
   assert(!adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = true;"));
   assert(!adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = true;"));
   assert(!/privacy_accepted:\s*true/.test(appJs), 'app.js non deve inviare privacy_accepted hardcoded a true');
-  assert(adminJs.includes('const CAL_END_HOUR = 22'), 'admin.js CAL_END_HOUR deve essere >= 22 per mostrare la riga 21:00');
+  assert(adminJs.includes('const CAL_END_HOUR = 21'), 'admin.js CAL_END_HOUR deve essere 21 (ultimo blocco 20:00-21:00)');
   assert(adminJs.includes("opForm.querySelectorAll('.op-sched-row[data-day]')"), 'admin.js deve leggere solo righe operatore con data-day');
   assert(!adminJs.includes('op-sched-row is-head'), 'admin.js non deve riusare .op-sched-row per la riga intestazione');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');

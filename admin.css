@@ -691,7 +691,7 @@ body {
 .cal-day-col {
   position: relative;
   border-right: 1px solid rgba(168, 108, 114, 0.12);
-  min-height: calc(var(--cal-hours-count, 13) * var(--cal-hour-px, 96px));
+  min-height: calc(var(--cal-hours-count, 12) * var(--cal-hour-px, 96px));
   transition: background-color 0.12s ease;
 }
 
