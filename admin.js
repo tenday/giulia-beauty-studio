@@ -769,7 +769,7 @@ async function openRemindersModal() {
 /* ==========================================================================
    CALENDAR VIEW (WEEK / DAY / LIST + INTERACTIVE DRAG, RESIZE & LONG-PRESS)
    ========================================================================== */
-const CAL_START_HOUR = 8;
+const CAL_START_HOUR = 9;
 const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
 const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
@@ -777,6 +777,17 @@ const CAL_MAX_DURATION = 480;
 const CAL_LONG_PRESS_MS = 480;
 const CAL_AUTO_REFRESH_MS = 20000;
 const CAL_AUTO_REFRESH_STORAGE_KEY = 'gb_cal_autorefresh';
+
+// 0 = Domenica, 1 = Lunedì, 2 = Martedì, 3 = Mercoledì, 4 = Giovedì, 5 = Venerdì, 6 = Sabato
+const STUDIO_WEEKLY_HOURS = {
+  0: { enabled: false, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  1: { enabled: true, start: '09:00', end: '15:00', break_start: '', break_end: '' },
+  2: { enabled: false, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  3: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  4: { enabled: true, start: '13:00', end: '21:00', break_start: '', break_end: '' },
+  5: { enabled: true, start: '09:00', end: '19:00', break_start: '', break_end: '' },
+  6: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+};
 
 function getInitialCalAutoRefresh() {
   try {
@@ -823,7 +834,176 @@ const CAL_UI = {
   lastApptsSnapshotSig: '',
   lastScheduleSnapshotSig: '',
   lastMetaSnapshotSig: '',
+  viewStartHour: CAL_START_HOUR,
+  viewEndHour: CAL_END_HOUR,
 };
+
+function getCalendarStartHour() {
+  const h = Number(CAL_UI.viewStartHour);
+  return Number.isFinite(h) ? h : CAL_START_HOUR;
+}
+
+function getCalendarEndHour() {
+  const h = Number(CAL_UI.viewEndHour);
+  return Number.isFinite(h) && h > getCalendarStartHour() ? h : CAL_END_HOUR;
+}
+
+function getOperatorScheduleObject(op) {
+  const out = {};
+  for (let dow = 0; dow <= 6; dow += 1) {
+    out[dow] = { ...STUDIO_WEEKLY_HOURS[dow] };
+  }
+  if (!op) return out;
+  let parsed = op.weekly_schedule;
+  if (!parsed && op.weekly_schedule_json) {
+    try {
+      parsed = typeof op.weekly_schedule_json === 'string'
+        ? JSON.parse(op.weekly_schedule_json)
+        : op.weekly_schedule_json;
+    } catch {
+      parsed = null;
+    }
+  }
+  if (parsed && typeof parsed === 'object') {
+    for (let dow = 0; dow <= 6; dow += 1) {
+      const entry = parsed[String(dow)] || parsed[dow];
+      if (entry && typeof entry === 'object') {
+        out[dow] = {
+          enabled: Boolean(entry.enabled),
+          start: /^\d{2}:\d{2}$/.test(entry.start || '') ? entry.start : out[dow].start,
+          end: /^\d{2}:\d{2}$/.test(entry.end || '') ? entry.end : out[dow].end,
+          break_start: /^\d{2}:\d{2}$/.test(entry.break_start || '') ? entry.break_start : '',
+          break_end: /^\d{2}:\d{2}$/.test(entry.break_end || '') ? entry.break_end : '',
+        };
+      }
+    }
+  }
+  return out;
+}
+
+function formatCompactHoursRange(startStr, endStr) {
+  const s = String(startStr || '').endsWith(':00') ? String(startStr).slice(0, 2) : String(startStr || '');
+  const e = String(endStr || '').endsWith(':00') ? String(endStr).slice(0, 2) : String(endStr || '');
+  return `${s}–${e}`;
+}
+
+function getDayWorkingSchedule(isoDate, dowInput = null, operatorIdFilter = STATE.operatorFilter) {
+  let dow = dowInput;
+  if (dow === null || dow === undefined) {
+    const parsedDate = parseIsoDate(isoDate);
+    dow = parsedDate ? parsedDate.getDay() : 1;
+  }
+
+  const allOps = Array.isArray(STATE.operators) ? STATE.operators : [];
+  let candidateOps = [];
+  if (Number(operatorIdFilter) > 0) {
+    const single = allOps.find((o) => Number(o.id) === Number(operatorIdFilter));
+    if (single && Number(single.active) !== 0) candidateOps = [single];
+  } else {
+    candidateOps = allOps.filter((o) => Number(o.active) !== 0);
+  }
+
+  const rawIntervals = [];
+  if (allOps.length === 0) {
+    const defCfg = STUDIO_WEEKLY_HOURS[dow];
+    if (defCfg && defCfg.enabled) {
+      rawIntervals.push({
+        startMin: parseTimeToMinutes(defCfg.start),
+        endMin: parseTimeToMinutes(defCfg.end),
+      });
+    }
+  } else {
+    for (const op of candidateOps) {
+      const fullDayAbs = (STATE.absences || []).some(
+        (abs) =>
+          Number(abs.operator_id) === Number(op.id) &&
+          isoDate >= abs.start_date &&
+          isoDate <= abs.end_date &&
+          (!abs.start_time || !abs.end_time)
+      );
+      if (fullDayAbs) continue;
+      const cfg = getOperatorScheduleObject(op)[dow];
+      if (!cfg || !cfg.enabled) continue;
+      const startMin = parseTimeToMinutes(cfg.start);
+      const endMin = parseTimeToMinutes(cfg.end);
+      if (endMin <= startMin) continue;
+
+      if (cfg.break_start && cfg.break_end) {
+        const bStart = parseTimeToMinutes(cfg.break_start);
+        const bEnd = parseTimeToMinutes(cfg.break_end);
+        if (bEnd > bStart && bStart < endMin && bEnd > startMin) {
+          if (bStart > startMin) rawIntervals.push({ startMin, endMin: Math.min(endMin, bStart) });
+          if (bEnd < endMin) rawIntervals.push({ startMin: Math.max(startMin, bEnd), endMin });
+          continue;
+        }
+      }
+      rawIntervals.push({ startMin, endMin });
+    }
+  }
+
+  if (rawIntervals.length === 0) {
+    return {
+      isClosed: true,
+      label: 'Chiuso',
+      compactLabel: 'Chiuso',
+      openWindows: [],
+      workStartMin: null,
+      workEndMin: null,
+      defaultStartTime: STUDIO_WEEKLY_HOURS[dow]?.start || '09:00',
+    };
+  }
+
+  rawIntervals.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const openWindows = [];
+  for (const iv of rawIntervals) {
+    const prev = openWindows[openWindows.length - 1];
+    if (!prev || iv.startMin > prev.endMin) {
+      openWindows.push({ startMin: iv.startMin, endMin: iv.endMin });
+    } else {
+      prev.endMin = Math.max(prev.endMin, iv.endMin);
+    }
+  }
+
+  const label = openWindows
+    .map((w) => `${minutesToTimeStr(w.startMin)}–${minutesToTimeStr(w.endMin)}`)
+    .join(' / ');
+  const workStartMin = openWindows[0].startMin;
+  const workEndMin = openWindows[openWindows.length - 1].endMin;
+  const compactLabel =
+    openWindows.length === 1
+      ? formatCompactHoursRange(minutesToTimeStr(workStartMin), minutesToTimeStr(workEndMin))
+      : label;
+  const has10 = openWindows.some((w) => 600 >= w.startMin && 600 < w.endMin);
+  const defaultStartTime = has10 ? '10:00' : minutesToTimeStr(workStartMin);
+
+  return {
+    isClosed: false,
+    label,
+    compactLabel,
+    openWindows,
+    workStartMin,
+    workEndMin,
+    defaultStartTime,
+  };
+}
+
+function getOffHoursBandsForDay(daySched, gridStartMin, gridEndMin) {
+  if (!daySched || daySched.isClosed || daySched.openWindows.length === 0) return [];
+  const offBands = [];
+  let cursor = gridStartMin;
+  for (const win of daySched.openWindows) {
+    const wStart = Math.max(gridStartMin, win.startMin);
+    const wEnd = Math.min(gridEndMin, win.endMin);
+    if (wStart > cursor) {
+      offBands.push({ startMin: cursor, endMin: wStart });
+    }
+    if (wEnd > cursor) cursor = wEnd;
+  }
+  if (cursor < gridEndMin) {
+    offBands.push({ startMin: cursor, endMin: gridEndMin });
+  }
+  return offBands;
+}
 
 function getAppointmentNoteInfo(appt) {
   const apptNote = String(appt?.notes || '').trim();
@@ -879,7 +1059,7 @@ function snapMinutes(mins, step = CAL_SNAP_MIN) {
 
 function computeEventTopPx(startTimeStr) {
   const hourPx = getCalHourPx();
-  const minutesFromStart = parseTimeToMinutes(startTimeStr) - CAL_START_HOUR * 60;
+  const minutesFromStart = parseTimeToMinutes(startTimeStr) - getCalendarStartHour() * 60;
   return Math.round((Math.max(0, minutesFromStart) / 60) * hourPx * 10) / 10 + 1;
 }
 
@@ -1178,13 +1358,15 @@ function parseAppointmentServices(appt) {
 function computeSlotTimeFromDayColY(colEl, clientY, stepMin = CAL_SNAP_MIN) {
   if (!colEl) return null;
   const hourPx = getCalHourPx() || 88;
+  const startHour = getCalendarStartHour();
+  const endHour = getCalendarEndHour();
   const rect = colEl.getBoundingClientRect();
   const relY = Math.max(0, clientY - rect.top);
-  const rawMins = CAL_START_HOUR * 60 + (relY / hourPx) * 60;
+  const rawMins = startHour * 60 + (relY / hourPx) * 60;
   const step = Math.max(5, Number(stepMin) || CAL_SNAP_MIN);
-  const maxStartMin = CAL_END_HOUR * 60 - CAL_SNAP_MIN;
+  const maxStartMin = endHour * 60 - CAL_SNAP_MIN;
   const snapped = Math.floor(rawMins / step) * step;
-  const totalMins = Math.max(CAL_START_HOUR * 60, Math.min(maxStartMin, snapped));
+  const totalMins = Math.max(startHour * 60, Math.min(maxStartMin, snapped));
   return { totalMins, timeStr: minutesToTimeStr(totalMins) };
 }
 
@@ -1429,17 +1611,18 @@ function renderMiniCalendarPopover() {
     .map((d) => {
       const iso = toIsoDate(d);
       const dow = d.getDay();
+      const daySched = getDayWorkingSchedule(iso, dow);
       const cls = [
         'cal-mini-day',
         d.getMonth() !== m ? 'is-other-month' : '',
-        dow === 0 || dow === 2 ? 'is-closed' : '',
+        daySched.isClosed ? 'is-closed' : '',
         weekHighlight && iso >= weekStartIso && iso <= weekEndIso ? 'is-in-week' : '',
         iso === todayIso ? 'is-today' : '',
         iso === anchorIso ? 'is-selected' : '',
       ]
         .filter(Boolean)
         .join(' ');
-      return `<button type="button" class="${cls}" data-mini-iso="${iso}" aria-label="${d.getDate()} ${MONTHS_IT[d.getMonth()]} ${d.getFullYear()}">${d.getDate()}</button>`;
+      return `<button type="button" class="${cls}" data-mini-iso="${iso}" title="${escapeHtml(daySched.label)}" aria-label="${d.getDate()} ${MONTHS_IT[d.getMonth()]} ${d.getFullYear()} (${escapeHtml(daySched.label)})">${d.getDate()}</button>`;
     })
     .join('');
 
@@ -2029,8 +2212,8 @@ function bindInteractiveCalendarGrid(container) {
     const deltaScrollY = container.scrollTop - g.startScrollTop;
     const totalDeltaY = g.lastY - g.startY + deltaScrollY;
     const deltaMins = snapMinutes((totalDeltaY / hourPx) * 60);
-    const maxStartMin = CAL_END_HOUR * 60 - CAL_SNAP_MIN;
-    g.targetStartMin = Math.max(CAL_START_HOUR * 60, Math.min(maxStartMin, g.initialStartMin + deltaMins));
+    const maxStartMin = getCalendarEndHour() * 60 - CAL_SNAP_MIN;
+    g.targetStartMin = Math.max(getCalendarStartHour() * 60, Math.min(maxStartMin, g.initialStartMin + deltaMins));
 
     const targetCol = STATE.calMode === 'week' ? findDayColAtX(g.lastX) || g.originColEl : g.originColEl;
     if (targetCol && targetCol !== g.currentDropCol) {
@@ -2062,7 +2245,7 @@ function bindInteractiveCalendarGrid(container) {
     const deltaScrollY = container.scrollTop - g.startScrollTop;
     const totalDeltaY = g.lastY - g.startY + deltaScrollY;
     const deltaMins = snapMinutes((totalDeltaY / hourPx) * 60);
-    const maxEndMin = (CAL_END_HOUR + 1) * 60;
+    const maxEndMin = getCalendarEndHour() * 60;
     const maxAllowedDur = Math.min(CAL_MAX_DURATION, maxEndMin - g.initialStartMin);
     g.targetDuration = Math.max(CAL_MIN_DURATION, Math.min(maxAllowedDur, g.initialDuration + deltaMins));
 
@@ -2475,31 +2658,53 @@ function renderCalendar() {
     days.push(d);
   }
 
+  let nextStartHour = CAL_START_HOUR;
+  let nextEndHour = CAL_END_HOUR;
+  const rawMeta = days.map((d) => {
+    const iso = toIsoDate(d);
+    const dow = d.getDay();
+    const workSched = getDayWorkingSchedule(iso, dow);
+    const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
+    if (!workSched.isClosed && workSched.openWindows.length > 0) {
+      nextStartHour = Math.min(nextStartHour, Math.floor(workSched.workStartMin / 60));
+      nextEndHour = Math.max(nextEndHour, Math.ceil(workSched.workEndMin / 60));
+    }
+    dayAppts.forEach((a) => {
+      const sMin = parseTimeToMinutes(a.start_time);
+      const eMin = sMin + Math.max(15, Number(a.duration_minutes) || 60);
+      nextStartHour = Math.min(nextStartHour, Math.floor(sMin / 60));
+      nextEndHour = Math.max(nextEndHour, Math.ceil(eMin / 60));
+    });
+    return { d, iso, dow, workSched, isClosed: workSched.isClosed, dayAppts };
+  });
+
+  const viewStartHour = Math.max(0, nextStartHour);
+  const viewEndHour = Math.min(24, Math.max(viewStartHour + 1, nextEndHour));
+  CAL_UI.viewStartHour = viewStartHour;
+  CAL_UI.viewEndHour = viewEndHour;
+
   const hours = [];
-  for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) {
+  for (let h = viewStartHour; h < viewEndHour; h++) {
     hours.push(h);
   }
 
   const hourPx = getCalHourPx();
   container.style?.setProperty?.('--cal-hour-px', `${hourPx}px`);
+  container.style?.setProperty?.('--cal-hours-count', String(hours.length));
 
   const todayIso = toIsoDate(new Date());
   const gridClass = STATE.calMode === 'week' ? 'week-grid' : 'day-grid';
 
-  const daysMeta = days.map((d) => {
-    const iso = toIsoDate(d);
-    const dow = d.getDay();
-    const isClosed = dow === 0 || dow === 2;
-    const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
-    const lanesMap = layoutDayEvents(dayAppts);
+  const daysMeta = rawMeta.map((meta) => {
+    const lanesMap = layoutDayEvents(meta.dayAppts);
     let maxLanes = 1;
     lanesMap.forEach((info) => {
       if (info.laneCount > maxLanes) maxLanes = info.laneCount;
     });
-    return { d, iso, dow, isClosed, dayAppts, lanesMap, maxLanes };
+    return { ...meta, lanesMap, maxLanes };
   });
 
-  let gridInlineStyle = `--cal-hour-px:${hourPx}px;`;
+  let gridInlineStyle = `--cal-hour-px:${hourPx}px; --cal-hours-count:${hours.length};`;
   if (STATE.calMode === 'week') {
     const dayTracks = [];
     let totalMinW = 70;
@@ -2515,17 +2720,20 @@ function renderCalendar() {
   let html = `<div class="${gridClass}" style="${gridInlineStyle}">`;
   html += `<div class="cal-corner-cell"><span class="cal-day-name">Ora</span></div>`;
 
-  daysMeta.forEach(({ d, iso, dow, isClosed }) => {
+  daysMeta.forEach(({ d, iso, dow, workSched, isClosed }) => {
     const isToday = iso === todayIso;
     const dayAbsences = (STATE.absences || []).filter((abs) => iso >= abs.start_date && iso <= abs.end_date);
     const absHtml = dayAbsences
       .map((abs) => `<div class="cal-absence-pill">🏖️ ${escapeHtml(abs.operator_name)} (${escapeHtml(abs.type)})</div>`)
       .join('');
+    const schedBadgeHtml = isClosed
+      ? '<span class="cal-closed-tag">Chiuso</span>'
+      : `<span class="cal-hours-tag">${escapeHtml(workSched.label)}</span>`;
     html += `
       <div class="cal-day-header ${isToday ? 'is-today' : ''} ${isClosed ? 'is-closed' : ''}">
         <span class="cal-day-name">${DAYS_IT[dow]}</span>
         <span class="cal-day-num">${d.getDate()}</span>
-        ${isClosed ? '<span class="cal-closed-tag">Chiuso</span>' : ''}
+        ${schedBadgeHtml}
         ${absHtml}
       </div>
     `;
@@ -2539,12 +2747,37 @@ function renderCalendar() {
   html += `</div>`;
 
   // Day columns
-  daysMeta.forEach(({ iso, isClosed, dayAppts, lanesMap }) => {
+  const gridStartMin = viewStartHour * 60;
+  const gridEndMin = viewEndHour * 60;
+  daysMeta.forEach(({ iso, workSched, isClosed, dayAppts, lanesMap }) => {
     html += `<div class="cal-day-col ${isClosed ? 'is-closed' : ''}" data-date="${iso}">`;
     hours.forEach((h) => {
       const slotTime = `${String(h).padStart(2, '0')}:00`;
-      html += `<div class="cal-hour-slot" data-date="${iso}" data-hour="${h}" data-time="${slotTime}" title="Clicca per aggiungere appuntamento alle ${slotTime}"></div>`;
+      html += `<div class="cal-hour-slot" data-date="${iso}" data-hour="${h}" data-time="${slotTime}" title="Clicca per aggiungere appuntamento alle ${slotTime} (${escapeHtml(workSched.label)})"></div>`;
     });
+
+    if (!isClosed) {
+      const offBands = getOffHoursBandsForDay(workSched, gridStartMin, gridEndMin);
+      offBands.forEach((band) => {
+        const topPx = Math.round(((band.startMin - gridStartMin) / 60) * hourPx * 10) / 10;
+        const heightPx = Math.max(8, Math.round(((band.endMin - band.startMin) / 60) * hourPx * 10) / 10);
+        const isMorningBand = band.startMin === gridStartMin && band.endMin < gridEndMin;
+        const isEveningBand = band.endMin === gridEndMin && band.startMin > gridStartMin;
+        const bandCls = [
+          'cal-offhours-band',
+          isMorningBand ? 'is-morning-band' : '',
+          isEveningBand ? 'is-evening-band' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const bandLabel = isMorningBand
+          ? `Apertura ${minutesToTimeStr(band.endMin)}`
+          : isEveningBand
+            ? `Chiusura ${minutesToTimeStr(band.startMin)}`
+            : `Pausa ${minutesToTimeStr(band.startMin)}–${minutesToTimeStr(band.endMin)}`;
+        html += `<div class="${bandCls}" style="top:${topPx}px; height:${heightPx}px;"><span class="cal-offhours-label">${escapeHtml(bandLabel)}</span></div>`;
+      });
+    }
 
     dayAppts.forEach((appt) => {
       const laneInfo = lanesMap.get(Number(appt.id)) || {
@@ -2652,15 +2885,11 @@ function renderMonthCalendar(container) {
     byDate.get(key).push(a);
   });
 
-  const dowHeaders = [
-    { label: 'Lun', closed: false },
-    { label: 'Mar', closed: true },
-    { label: 'Mer', closed: false },
-    { label: 'Gio', closed: false },
-    { label: 'Ven', closed: false },
-    { label: 'Sab', closed: false },
-    { label: 'Dom', closed: true },
-  ];
+  const dowOrder = [1, 2, 3, 4, 5, 6, 0];
+  const dowHeaders = dowOrder.map((dow) => ({
+    label: DAYS_IT[dow],
+    closed: !Object.values(STUDIO_WEEKLY_HOURS).length ? false : getDayWorkingSchedule(toIsoDate(STATE.anchorDate), dow).isClosed,
+  }));
 
   let html = '<div class="month-grid">';
   dowHeaders.forEach((d) => {
@@ -2670,7 +2899,8 @@ function renderMonthCalendar(container) {
   gridDays.forEach((d) => {
     const iso = toIsoDate(d);
     const dow = d.getDay();
-    const isClosed = dow === 0 || dow === 2;
+    const daySched = getDayWorkingSchedule(iso, dow);
+    const isClosed = daySched.isClosed;
     const dayAppts = (byDate.get(iso) || []).slice().sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
     const activeCount = dayAppts.filter((a) => a.status !== 'cancelled').length;
     const cellCls = [
@@ -2710,10 +2940,11 @@ function renderMonthCalendar(container) {
       .join('');
 
     html += `
-      <div class="${cellCls}" data-month-date="${iso}" title="Clicca per aprire il giorno ${formatShortItDate(iso)}">
+      <div class="${cellCls}" data-month-date="${iso}" title="Clicca per aprire il giorno ${formatShortItDate(iso)} (${escapeHtml(daySched.label)})">
         <div class="cal-month-cell-head">
           <button type="button" class="cal-month-day-btn" data-month-day="${iso}" title="Apri vista giorno">${d.getDate()}</button>
           <div class="cal-month-head-actions">
+            <span class="cal-month-hours">${escapeHtml(daySched.compactLabel)}</span>
             ${activeCount > 0 ? `<span class="cal-month-count">${activeCount}</span>` : ''}
             <button type="button" class="cal-month-week-btn" data-month-week="${iso}" title="Apri la settimana di questo giorno">Sett.</button>
           </div>
@@ -3020,8 +3251,12 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     document.getElementById('apptNewClientBirthDate').value = '';
     document.getElementById('apptNewClientPrefNotes').value = '';
     document.getElementById('apptNewClientPrivacy').checked = false;
-    document.getElementById('apptDateInput').value = presetDate || toIsoDate(STATE.anchorDate);
-    document.getElementById('apptTimeInput').value = presetTime || '10:00';
+    const targetDate = presetDate || toIsoDate(STATE.anchorDate);
+    const opSel = document.getElementById('apptOperatorSelect');
+    const selectedOpId = opSel && opSel.value ? Number(opSel.value) : 0;
+    const defaultDaySched = getDayWorkingSchedule(targetDate, null, selectedOpId);
+    document.getElementById('apptDateInput').value = targetDate;
+    document.getElementById('apptTimeInput').value = presetTime || defaultDaySched.defaultStartTime;
     document.getElementById('apptDurationInput').value = 60;
     document.getElementById('apptServicesSummaryInput').value = '';
     document.getElementById('apptPriceInput').value = 0;
@@ -3036,7 +3271,44 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
     waBtn.onclick = null;
   }
 
+  updateApptScheduleHint();
   modal.classList.add('open');
+}
+
+function updateApptScheduleHint() {
+  const hintEl = document.getElementById('apptScheduleHint');
+  if (!hintEl) return;
+  const dateStr = document.getElementById('apptDateInput')?.value || '';
+  if (!dateStr) {
+    hintEl.hidden = true;
+    return;
+  }
+  const timeStr = document.getElementById('apptTimeInput')?.value || '';
+  const durMin = Math.max(10, Number(document.getElementById('apptDurationInput')?.value) || 60);
+  const opVal = Number(document.getElementById('apptOperatorSelect')?.value || 0);
+  const daySched = getDayWorkingSchedule(dateStr, null, opVal > 0 ? opVal : 0);
+  const parsedDate = parseIsoDate(dateStr);
+  const dayLabel = parsedDate ? DAY_NAMES_IT[parsedDate.getDay()] : dateStr;
+
+  if (daySched.isClosed) {
+    hintEl.className = 'appt-schedule-hint is-warning';
+    hintEl.textContent = `⚠ ${dayLabel} lo studio risulta chiuso (${daySched.label}). Puoi comunque salvare come eccezione.`;
+    hintEl.hidden = false;
+    return;
+  }
+
+  let outside = false;
+  if (/^\d{2}:\d{2}/.test(timeStr)) {
+    const startMin = parseTimeToMinutes(timeStr);
+    const endMin = startMin + durMin;
+    outside = !daySched.openWindows.some((w) => startMin >= w.startMin && endMin <= w.endMin);
+  }
+
+  hintEl.className = outside ? 'appt-schedule-hint is-warning' : 'appt-schedule-hint';
+  hintEl.textContent = outside
+    ? `⚠ Orario selezionato fuori dal turno di ${dayLabel} (${daySched.label}).`
+    : `Orario lavorativo ${dayLabel}: ${daySched.label}`;
+  hintEl.hidden = false;
 }
 
 /* ==========================================================================
@@ -3507,6 +3779,12 @@ document.addEventListener('DOMContentLoaded', () => {
     renderSelectedClientNotePreview(e.target.value);
   });
   document.getElementById('newApptQuickBtn').addEventListener('click', () => openAppointmentModal());
+  ['apptDateInput', 'apptTimeInput', 'apptDurationInput', 'apptOperatorSelect'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', updateApptScheduleHint);
+    el.addEventListener('change', updateApptScheduleHint);
+  });
   document.getElementById('pickExistingClientTab').addEventListener('click', () => setClientPickerMode('existing'));
   document.getElementById('createInlineClientTab').addEventListener('click', () => setClientPickerMode('new'));
   document.getElementById('closeApptModalBtn').addEventListener('click', () => {
@@ -4807,24 +5085,46 @@ function renderMessagesView() {
    ========================================================================== */
 const DAY_NAMES_IT = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
 
+function formatOperatorWeeklySummary(op) {
+  const sched = getOperatorScheduleObject(op);
+  const shortDays = { 1: 'Lun', 2: 'Mar', 3: 'Mer', 4: 'Gio', 5: 'Ven', 6: 'Sab', 0: 'Dom' };
+  const parts = [1, 2, 3, 4, 5, 6, 0].map((dow) => {
+    const cfg = sched[dow];
+    return cfg && cfg.enabled
+      ? `${shortDays[dow]} ${formatCompactHoursRange(cfg.start, cfg.end)}`
+      : `${shortDays[dow]} Chiuso`;
+  });
+  return parts.join(' • ');
+}
+
 function renderScheduleGrid(scheduleObj) {
   const grid = document.getElementById('opScheduleGrid');
   if (!grid) return;
   const order = ['1', '2', '3', '4', '5', '6', '0'];
-  grid.innerHTML = order
+  const headerHtml = `
+    <div class="op-sched-row is-head">
+      <span>Giorno</span>
+      <span>Apertura</span>
+      <span>Chiusura</span>
+      <span>Pausa da</span>
+      <span>Pausa a</span>
+    </div>
+  `;
+  grid.innerHTML = headerHtml + order
     .map((day) => {
-      const cfg = (scheduleObj && (scheduleObj[day] || scheduleObj[Number(day)])) || {
-        enabled: day !== '0',
+      const defCfg = STUDIO_WEEKLY_HOURS[Number(day)] || {
+        enabled: day !== '0' && day !== '2',
         start: '09:00',
-        end: '19:30',
+        end: '18:00',
         break_start: '',
         break_end: '',
       };
+      const cfg = (scheduleObj && (scheduleObj[day] || scheduleObj[Number(day)])) || defCfg;
       return `
         <div class="op-sched-row" data-day="${day}">
           <label class="op-sched-day"><input type="checkbox" class="op-sched-enabled" ${cfg.enabled ? 'checked' : ''} /> ${DAY_NAMES_IT[Number(day)]}</label>
-          <input type="text" class="op-sched-start" value="${escapeHtml(cfg.start || '09:00')}" placeholder="09:00" />
-          <input type="text" class="op-sched-end" value="${escapeHtml(cfg.end || '19:30')}" placeholder="19:30" />
+          <input type="text" class="op-sched-start" value="${escapeHtml(cfg.start || defCfg.start)}" placeholder="${escapeHtml(defCfg.start)}" />
+          <input type="text" class="op-sched-end" value="${escapeHtml(cfg.end || defCfg.end)}" placeholder="${escapeHtml(defCfg.end)}" />
           <input type="text" class="op-sched-bstart" value="${escapeHtml(cfg.break_start || '')}" placeholder="Pausa inizio" />
           <input type="text" class="op-sched-bend" value="${escapeHtml(cfg.break_end || '')}" placeholder="Pausa fine" />
         </div>
@@ -4842,7 +5142,7 @@ function openOperatorModal(op) {
   document.getElementById('opColorInput').value = op ? op.color || '#b85675' : '#b85675';
   document.getElementById('opActiveCheck').checked = op ? Boolean(op.active) : true;
   document.getElementById('deleteOperatorBtn').hidden = !op;
-  renderScheduleGrid(op ? op.weekly_schedule : null);
+  renderScheduleGrid(op ? getOperatorScheduleObject(op) : null);
   modal.classList.add('open');
 }
 
@@ -4857,11 +5157,12 @@ function renderSettingsView() {
         ? '<p class="muted-text">Nessun operatore configurato.</p>'
         : STATE.operators
             .map(
-              (op) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              (op) => `<div class="rec-item" style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
                 <div>
                   <span class="op-dot" style="background:${escapeHtml(op.color || '#b85675')}"></span>
                   <strong>${escapeHtml(op.name)}</strong> ${!op.active ? '<span class="muted-text">(Disattivo)</span>' : ''}
                   <div class="muted-text" style="font-size:0.78rem;">${escapeHtml(op.role || '')}</div>
+                  <div class="muted-text" style="font-size:0.72rem;margin-top:2px;">${escapeHtml(formatOperatorWeeklySummary(op))}</div>
                 </div>
                 <button type="button" class="btn-outline-sm edit-op-btn" data-id="${op.id}">Orari &amp; Modifica</button>
               </div>`

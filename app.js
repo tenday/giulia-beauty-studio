@@ -384,31 +384,42 @@ async function refreshAvailableSlots(dateStr) {
     if (!data.ok) throw new Error('API error');
 
     const booked = new Set(data.booked_slots || []);
-    let firstFreeBtn = null;
+    let currentButtons = buttons;
 
-    buttons.forEach((btn) => {
-      const t = btn.dataset.time;
-      const isBusy = data.closed || booked.has(t);
-      btn.disabled = isBusy;
-      btn.classList.toggle('is-booked', isBusy);
-      btn.textContent = isBusy ? `${t} (Occupato)` : t;
-      if (isBusy && btn.classList.contains('active')) {
-        btn.classList.remove('active');
-      }
-      if (!isBusy && !firstFreeBtn) {
-        firstFreeBtn = btn;
-      }
-    });
+    if (!data.closed && Array.isArray(data.day_slots) && data.day_slots.length > 0) {
+      slotsGrid.innerHTML = data.day_slots
+        .map((item) => {
+          const t = String(item.time || '');
+          const isBusy = !item.available;
+          const isActive = !isBusy && t === selectedTimeSlot;
+          return `<button type="button" class="time-slot-btn${isActive ? ' active' : ''}${isBusy ? ' is-booked' : ''}" data-time="${t}"${isBusy ? ' disabled' : ''}>${isBusy ? `${t} (Occupato)` : t}</button>`;
+        })
+        .join('');
+      currentButtons = Array.from(slotsGrid.querySelectorAll('.time-slot-btn'));
+    } else {
+      currentButtons.forEach((btn) => {
+        const t = btn.dataset.time;
+        const isBusy = data.closed || booked.has(t);
+        btn.disabled = isBusy;
+        btn.classList.toggle('is-booked', isBusy);
+        btn.textContent = isBusy ? (data.closed ? `${t} (Chiuso)` : `${t} (Occupato)`) : t;
+        if (isBusy && btn.classList.contains('active')) {
+          btn.classList.remove('active');
+        }
+      });
+    }
 
+    const firstFreeBtn = currentButtons.find((btn) => !btn.disabled) || null;
     if (!slotsGrid.querySelector('.time-slot-btn.active') && firstFreeBtn) {
       firstFreeBtn.classList.add('active');
       selectedTimeSlot = firstFreeBtn.dataset.time;
     }
 
     if (statusEl) {
+      const busyInsideDay = currentButtons.filter((b) => b.disabled).length;
       statusEl.textContent = data.closed
         ? 'Studio chiuso'
-        : booked.size > 0
+        : busyInsideDay > 0
           ? 'Disponibilità in tempo reale'
           : 'Tutti gli orari liberi';
     }
@@ -603,15 +614,14 @@ function initApp() {
   tabBooking.addEventListener('click', () => setPurchaseMode('booking'));
   tabVoucher.addEventListener('click', () => setPurchaseMode('voucher'));
 
-  // Time Slots Selection
+  // Time Slots Selection (delegated so dynamically updated per-day slots work cleanly)
   const timeSlotsGrid = document.getElementById('timeSlotsGrid');
-  timeSlotsGrid.querySelectorAll('.time-slot-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (btn.disabled) return;
-      timeSlotsGrid.querySelectorAll('.time-slot-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedTimeSlot = btn.dataset.time;
-    });
+  timeSlotsGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.time-slot-btn');
+    if (!btn || btn.disabled) return;
+    timeSlotsGrid.querySelectorAll('.time-slot-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedTimeSlot = btn.dataset.time;
   });
 
   // Payment Method Selection

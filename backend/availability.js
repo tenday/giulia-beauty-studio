@@ -3,19 +3,44 @@
  */
 const { isValidIsoDate, timeToMinutes, slotOverlapsBooked } = require('./helpers');
 
-const CANDIDATE_SLOTS = ['09:30', '11:00', '14:30', '16:00', '17:30', '18:30'];
+const CANDIDATE_SLOTS = ['09:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '18:30', '19:30'];
+
+// 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
+const STUDIO_WEEKLY_HOURS = {
+  0: { enabled: false, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  1: { enabled: true, start: '09:00', end: '15:00', break_start: '', break_end: '' },
+  2: { enabled: false, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  3: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  4: { enabled: true, start: '13:00', end: '21:00', break_start: '', break_end: '' },
+  5: { enabled: true, start: '09:00', end: '19:00', break_start: '', break_end: '' },
+  6: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+};
 
 function buildDefaultSchedule() {
-  // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
-  return {
-    0: { enabled: false, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    1: { enabled: true, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    2: { enabled: false, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    3: { enabled: true, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    4: { enabled: true, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    5: { enabled: true, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-    6: { enabled: true, start: '09:00', end: '19:30', break_start: '', break_end: '' },
-  };
+  const out = {};
+  for (let dow = 0; dow <= 6; dow += 1) {
+    out[dow] = { ...STUDIO_WEEKLY_HOURS[dow] };
+  }
+  return out;
+}
+
+function isLegacyDefaultSchedule(raw) {
+  if (!raw) return false;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== 'object') return false;
+    for (let dow = 0; dow <= 6; dow += 1) {
+      const entry = parsed[String(dow)] || parsed[dow];
+      if (!entry || typeof entry !== 'object') return false;
+      const shouldEnable = dow !== 0 && dow !== 2;
+      if (Boolean(entry.enabled) !== shouldEnable) return false;
+      if ((entry.start || '') !== '09:00' || (entry.end || '') !== '19:30') return false;
+      if ((entry.break_start || '') !== '' || (entry.break_end || '') !== '') return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseOperatorSchedule(raw) {
@@ -29,8 +54,8 @@ function parseOperatorSchedule(raw) {
         if (entry && typeof entry === 'object') {
           base[dow] = {
             enabled: Boolean(entry.enabled),
-            start: /^\d{2}:\d{2}$/.test(entry.start || '') ? entry.start : '09:00',
-            end: /^\d{2}:\d{2}$/.test(entry.end || '') ? entry.end : '19:30',
+            start: /^\d{2}:\d{2}$/.test(entry.start || '') ? entry.start : base[dow].start,
+            end: /^\d{2}:\d{2}$/.test(entry.end || '') ? entry.end : base[dow].end,
             break_start: /^\d{2}:\d{2}$/.test(entry.break_start || '') ? entry.break_start : '',
             break_end: /^\d{2}:\d{2}$/.test(entry.break_end || '') ? entry.break_end : '',
           };
@@ -150,13 +175,22 @@ function computeDateSlotAvailability({
       closed: true,
       bookedSlots: [...CANDIDATE_SLOTS],
       freeSlots: [],
+      daySlots: [],
     };
   }
 
   const bookedSlots = [];
   const freeSlots = [];
+  const daySlots = [];
 
   for (const slot of CANDIDATE_SLOTS) {
+    const slotStartMin = timeToMinutes(slot);
+    const inWorkingWindow = workingOpsOnDate.some((op) => {
+      const dayCfg = parseOperatorSchedule(op.weekly_schedule_json)[dow];
+      if (!dayCfg || !dayCfg.enabled) return false;
+      return slotStartMin >= timeToMinutes(dayCfg.start) && slotStartMin < timeToMinutes(dayCfg.end);
+    });
+
     const availOps = getAvailableOperatorsForSlot({
       dateStr,
       slotTime: slot,
@@ -166,10 +200,14 @@ function computeDateSlotAvailability({
       bookedRows,
       requestedOperatorId,
     });
-    if (availOps.length === 0) {
-      bookedSlots.push(slot);
-    } else {
+    const isFree = availOps.length > 0;
+    if (isFree) {
       freeSlots.push(slot);
+    } else {
+      bookedSlots.push(slot);
+    }
+    if (inWorkingWindow || isFree) {
+      daySlots.push({ time: slot, available: isFree });
     }
   }
 
@@ -177,12 +215,15 @@ function computeDateSlotAvailability({
     closed: false,
     bookedSlots,
     freeSlots,
+    daySlots,
   };
 }
 
 module.exports = {
   CANDIDATE_SLOTS,
+  STUDIO_WEEKLY_HOURS,
   buildDefaultSchedule,
+  isLegacyDefaultSchedule,
   parseOperatorSchedule,
   isOperatorWorkingAtSlot,
   getAvailableOperatorsForSlot,

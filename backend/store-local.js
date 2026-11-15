@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { formatRomeNow, getRomeNowParts } = require('./helpers');
-const { getAvailableOperatorsForSlot } = require('./availability');
+const { getAvailableOperatorsForSlot, buildDefaultSchedule, isLegacyDefaultSchedule } = require('./availability');
 const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
 
 const DB_FILE = path.resolve(process.cwd(), process.env.LOCAL_DB_FILE || '.local-dev-db.json');
@@ -83,6 +83,15 @@ function ensureLocalCollections(state) {
       updated_at: now,
     });
     dirty = true;
+  } else {
+    const updatedDefaultJson = JSON.stringify(buildDefaultSchedule());
+    for (const op of state.operators) {
+      if (isLegacyDefaultSchedule(op.weekly_schedule_json)) {
+        op.weekly_schedule_json = updatedDefaultJson;
+        op.updated_at = formatRomeNow();
+        dirty = true;
+      }
+    }
   }
   const existingCodes = new Set((state.message_templates || []).map((t) => t.code));
   for (const tpl of DEFAULT_MESSAGE_TEMPLATES) {

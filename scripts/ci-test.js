@@ -103,6 +103,28 @@ async function runApiSuite() {
     const opsList = await req('GET', '/api/admin/operators');
     const sara = opsList.json.operators.find((o) => o.name === 'Sara');
     assert(sara);
+    assert.strictEqual(sara.weekly_schedule[1].enabled, true);
+    assert.strictEqual(sara.weekly_schedule[1].start, '09:00');
+    assert.strictEqual(sara.weekly_schedule[1].end, '15:00');
+    assert.strictEqual(sara.weekly_schedule[2].enabled, false);
+    assert.strictEqual(sara.weekly_schedule[3].end, '18:00');
+    assert.strictEqual(sara.weekly_schedule[4].start, '13:00');
+    assert.strictEqual(sara.weekly_schedule[4].end, '21:00');
+    assert.strictEqual(sara.weekly_schedule[5].end, '19:00');
+    assert.strictEqual(sara.weekly_schedule[6].end, '18:00');
+    assert.strictEqual(sara.weekly_schedule[0].enabled, false);
+
+    // Day-specific slot checks aligned to weekly working hours
+    const monSlots = await req('GET', `/api/public/slots?date=2026-11-30&duration=60&operator_id=${sara.id}`);
+    assert.strictEqual(monSlots.json.closed, false);
+    assert(!monSlots.json.booked_slots.includes('13:00'), 'Lunedì 13:00 deve risultare libero (09:00-15:00)');
+    assert(monSlots.json.booked_slots.includes('16:00'), 'Lunedì 16:00 deve risultare fuori orario');
+    const tueSlots = await req('GET', `/api/public/slots?date=2026-12-01&duration=60&operator_id=${sara.id}`);
+    assert.strictEqual(tueSlots.json.closed, true);
+    const thuSlots = await req('GET', `/api/public/slots?date=2026-12-03&duration=60&operator_id=${sara.id}`);
+    assert(thuSlots.json.booked_slots.includes('11:00'), 'Giovedì 11:00 deve risultare fuori orario (13:00-21:00)');
+    assert(!thuSlots.json.booked_slots.includes('19:30'), 'Giovedì 19:30 deve risultare libero (13:00-21:00)');
+    assert(Array.isArray(thuSlots.json.day_slots) && thuSlots.json.day_slots.some((s) => s.time === '13:00' && s.available));
 
     const testDate = '2026-12-02';
     const absRes = await req('POST', '/api/admin/absences', {

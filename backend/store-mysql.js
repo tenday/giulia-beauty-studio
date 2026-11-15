@@ -4,7 +4,7 @@
 const crypto = require('crypto');
 const { isDbConfigured, getPool, ensureSchemaMigrations, applySchema } = require('./db');
 const { formatRomeNow, getRomeNowParts, generateBookingCode } = require('./helpers');
-const { getAvailableOperatorsForSlot } = require('./availability');
+const { getAvailableOperatorsForSlot, buildDefaultSchedule, isLegacyDefaultSchedule } = require('./availability');
 const { getDefaultOperatorPayload, DEFAULT_MESSAGE_TEMPLATES } = require('./defaults');
 
 let defaultsSeeded = false;
@@ -13,13 +13,23 @@ async function ensureDefaults(targetPool = getPool()) {
   if (defaultsSeeded) return;
   await ensureSchemaMigrations(targetPool);
 
-  const [opRows] = await targetPool.query('SELECT COUNT(*) AS cnt FROM operators');
-  if (Number(opRows[0]?.cnt || 0) === 0) {
+  const [opRows] = await targetPool.query('SELECT id, weekly_schedule_json FROM operators');
+  if (opRows.length === 0) {
     const def = getDefaultOperatorPayload();
     await targetPool.query(
       'INSERT INTO operators (name, role, color, active, weekly_schedule_json) VALUES (?, ?, ?, ?, ?)',
       [def.name, def.role, def.color, def.active, def.weekly_schedule_json]
     );
+  } else {
+    const updatedDefaultJson = JSON.stringify(buildDefaultSchedule());
+    for (const row of opRows) {
+      if (isLegacyDefaultSchedule(row.weekly_schedule_json)) {
+        await targetPool.query('UPDATE operators SET weekly_schedule_json = ? WHERE id = ?', [
+          updatedDefaultJson,
+          row.id,
+        ]);
+      }
+    }
   }
 
   for (const tpl of DEFAULT_MESSAGE_TEMPLATES) {

@@ -9,7 +9,11 @@ const crypto = require('crypto');
 const express = require('express');
 const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
-const { computeDateSlotAvailability, buildDefaultSchedule } = require('./backend/availability');
+const {
+  computeDateSlotAvailability,
+  buildDefaultSchedule,
+  parseOperatorSchedule,
+} = require('./backend/availability');
 const {
   sanitizeWhatsAppSettingsForClient,
   mergeWhatsAppSettingsUpdate,
@@ -393,10 +397,16 @@ app.get('/api/public/slots', async (req, res, next) => {
     });
 
     if (avail.closed) {
-      return res.json({ ok: true, date: dateStr, closed: true, booked_slots: avail.bookedSlots });
+      return res.json({ ok: true, date: dateStr, closed: true, booked_slots: avail.bookedSlots, day_slots: [] });
     }
 
-    return res.json({ ok: true, date: dateStr, closed: false, booked_slots: avail.bookedSlots });
+    return res.json({
+      ok: true,
+      date: dateStr,
+      closed: false,
+      booked_slots: avail.bookedSlots,
+      day_slots: avail.daySlots,
+    });
   } catch (err) {
     return next(err);
   }
@@ -872,7 +882,11 @@ app.get('/api/admin/operators', requireAdmin, async (_req, res, next) => {
       store.listOperators(false),
       store.listOperatorAbsences(0),
     ]);
-    return res.json({ ok: true, operators, absences });
+    const hydratedOperators = (operators || []).map((op) => ({
+      ...op,
+      weekly_schedule: parseOperatorSchedule(op.weekly_schedule_json),
+    }));
+    return res.json({ ok: true, operators: hydratedOperators, absences });
   } catch (err) {
     return next(err);
   }
