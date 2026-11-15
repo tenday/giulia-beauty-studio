@@ -126,6 +126,23 @@ async function runApiSuite() {
     assert(!thuSlots.json.booked_slots.includes('19:30'), 'Giovedì 19:30 deve risultare libero (13:00-21:00)');
     assert(Array.isArray(thuSlots.json.day_slots) && thuSlots.json.day_slots.some((s) => s.time === '13:00' && s.available));
 
+    // Verify editing operator weekly schedule works cleanly and persists
+    const customSchedule = { ...sara.weekly_schedule, 3: { ...sara.weekly_schedule[3], break_start: '13:00', break_end: '14:00' } };
+    const updOpRes = await req('POST', '/api/admin/operators', {
+      action: 'save',
+      id: sara.id,
+      name: sara.name,
+      role: sara.role,
+      color: sara.color,
+      active: true,
+      weekly_schedule: customSchedule,
+    });
+    assert.strictEqual(updOpRes.status, 200);
+    const opsAfterUpd = await req('GET', '/api/admin/operators');
+    const saraUpdated = opsAfterUpd.json.operators.find((o) => o.id === sara.id);
+    assert.strictEqual(saraUpdated.weekly_schedule[3].break_start, '13:00');
+    assert.strictEqual(saraUpdated.weekly_schedule[3].break_end, '14:00');
+
     const testDate = '2026-12-02';
     const absRes = await req('POST', '/api/admin/absences', {
       action: 'create',
@@ -561,6 +578,9 @@ function checkGdprDefaults() {
   assert(!adminJs.includes("document.getElementById('apptNewClientPrivacy').checked = true;"));
   assert(!adminJs.includes("document.getElementById('clientPrivacyCrmCheck').checked = true;"));
   assert(!/privacy_accepted:\s*true/.test(appJs), 'app.js non deve inviare privacy_accepted hardcoded a true');
+  assert(adminJs.includes('const CAL_END_HOUR = 22'), 'admin.js CAL_END_HOUR deve essere >= 22 per mostrare la riga 21:00');
+  assert(adminJs.includes("opForm.querySelectorAll('.op-sched-row[data-day]')"), 'admin.js deve leggere solo righe operatore con data-day');
+  assert(!adminJs.includes('op-sched-row is-head'), 'admin.js non deve riusare .op-sched-row per la riga intestazione');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 

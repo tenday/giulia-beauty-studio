@@ -770,7 +770,7 @@ async function openRemindersModal() {
    CALENDAR VIEW (WEEK / DAY / LIST + INTERACTIVE DRAG, RESIZE & LONG-PRESS)
    ========================================================================== */
 const CAL_START_HOUR = 9;
-const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
+const CAL_END_HOUR = 22; // Ultima riga 21:00 (blocco 21:00-22:00, con chiusura alle 21:00)
 const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
 const CAL_MAX_DURATION = 480;
@@ -2667,7 +2667,7 @@ function renderCalendar() {
     const dayAppts = STATE.appointments.filter((a) => a.appointment_date === iso);
     if (!workSched.isClosed && workSched.openWindows.length > 0) {
       nextStartHour = Math.min(nextStartHour, Math.floor(workSched.workStartMin / 60));
-      nextEndHour = Math.max(nextEndHour, Math.ceil(workSched.workEndMin / 60));
+      nextEndHour = Math.max(nextEndHour, Math.floor(workSched.workEndMin / 60) + 1);
     }
     dayAppts.forEach((a) => {
       const sMin = parseTimeToMinutes(a.start_time);
@@ -4296,32 +4296,44 @@ document.addEventListener('DOMContentLoaded', () => {
   if (opForm) {
     opForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const schedule = {};
-      document.querySelectorAll('.op-sched-row').forEach((row) => {
-        const day = row.dataset.day;
-        schedule[day] = {
-          enabled: row.querySelector('.op-sched-enabled').checked,
-          start: row.querySelector('.op-sched-start').value,
-          end: row.querySelector('.op-sched-end').value,
-          break_start: row.querySelector('.op-sched-bstart').value,
-          break_end: row.querySelector('.op-sched-bend').value,
-        };
-      });
-      await apiFetch('admin/operators', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'save',
-          id: Number(document.getElementById('opIdInput').value) || 0,
-          name: document.getElementById('opNameInput').value.trim(),
-          role: document.getElementById('opRoleInput').value.trim(),
-          color: document.getElementById('opColorInput').value,
-          active: document.getElementById('opActiveCheck').checked,
-          weekly_schedule: schedule,
-        }),
-      });
-      document.getElementById('operatorModal').classList.remove('open');
-      await refreshAllData();
-      renderSettingsView();
+      const submitBtn = opForm.querySelector('button[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        const schedule = {};
+        opForm.querySelectorAll('.op-sched-row[data-day]').forEach((row) => {
+          const day = row.dataset.day;
+          const enabledEl = row.querySelector('.op-sched-enabled');
+          if (!day || !enabledEl) return;
+          const defCfg = STUDIO_WEEKLY_HOURS[Number(day)] || { start: '09:00', end: '18:00' };
+          schedule[day] = {
+            enabled: Boolean(enabledEl.checked),
+            start: normalizeScheduleTimeInput(row.querySelector('.op-sched-start')?.value, defCfg.start),
+            end: normalizeScheduleTimeInput(row.querySelector('.op-sched-end')?.value, defCfg.end),
+            break_start: normalizeScheduleTimeInput(row.querySelector('.op-sched-bstart')?.value, ''),
+            break_end: normalizeScheduleTimeInput(row.querySelector('.op-sched-bend')?.value, ''),
+          };
+        });
+        await apiFetch('admin/operators', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'save',
+            id: Number(document.getElementById('opIdInput').value) || 0,
+            name: document.getElementById('opNameInput').value.trim(),
+            role: document.getElementById('opRoleInput').value.trim(),
+            color: document.getElementById('opColorInput').value,
+            active: document.getElementById('opActiveCheck').checked,
+            weekly_schedule: schedule,
+          }),
+        });
+        document.getElementById('operatorModal').classList.remove('open');
+        await refreshAllData();
+        renderSettingsView();
+        showAgendaToast('Orari di lavoro operatore salvati');
+      } catch (err) {
+        showAgendaToast(err.message || 'Errore nel salvataggio degli orari di lavoro', 'error');
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
     });
   }
 
@@ -5097,12 +5109,23 @@ function formatOperatorWeeklySummary(op) {
   return parts.join(' • ');
 }
 
+function normalizeScheduleTimeInput(raw, fallback = '') {
+  const cleaned = String(raw || '').trim().replace('.', ':');
+  if (!cleaned) return fallback;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(cleaned);
+  if (!match) return fallback;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function renderScheduleGrid(scheduleObj) {
   const grid = document.getElementById('opScheduleGrid');
   if (!grid) return;
   const order = ['1', '2', '3', '4', '5', '6', '0'];
   const headerHtml = `
-    <div class="op-sched-row is-head">
+    <div class="op-sched-head">
       <span>Giorno</span>
       <span>Apertura</span>
       <span>Chiusura</span>
