@@ -3426,3 +3426,102 @@ body {
   padding: 10px 10px;
   font-size: 0.78rem;
 }
+
+/* ==========================================================================
+   CONFIGURABLE CATALOG EDITOR & APPT QUICK ADD
+   ========================================================================== */
+.catalog-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 410px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1040px) {
+  .catalog-admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.appt-catalog-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.appt-catalog-label-row label {
+  margin-bottom: 0;
+}
+
+.appt-catalog-label-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.appt-quick-service-box {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fdf6f8;
+  border: 1px dashed rgba(168, 108, 114, 0.45);
+  margin-bottom: 10px;
+}
+
+.catalog-category-pill-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fdf9fa;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+}
+
+.catalog-group-block {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.catalog-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fdf6f5;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.84rem;
+}
+
+.catalog-service-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(168, 108, 114, 0.12);
+}
+
+.catalog-service-row:last-child {
+  border-bottom: none;
+}
+
+.catalog-service-row.is-inactive {
+  opacity: 0.58;
+  background: #fafafa;
+}
+
+.catalog-service-meta {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+}

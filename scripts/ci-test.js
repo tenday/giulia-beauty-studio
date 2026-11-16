@@ -994,6 +994,75 @@ async function runApiSuite() {
     assert.strictEqual(cancelRes.status, 200);
     assert.strictEqual(cancelRes.json.receipt.status, 'cancelled');
 
+    // 14. Configurable Service Catalog Regression Suite
+    const pubCatInitial = await req('GET', '/api/public/catalog');
+    assert.strictEqual(pubCatInitial.status, 200);
+    assert.strictEqual(pubCatInitial.json.total_count, 43);
+
+    const adminCatInitial = await req('GET', '/api/admin/catalog');
+    assert.strictEqual(adminCatInitial.status, 200);
+    assert.strictEqual(adminCatInitial.json.categories.length, 6);
+    assert.strictEqual(adminCatInitial.json.services.length, 43);
+
+    // Create custom category + custom service + test storefront/agenda visibility
+    const createCatRes = await req('POST', '/api/admin/catalog', {
+      action: 'create_category',
+      title: 'MASSAGGI & CORPO',
+      motto: 'Relax completo in atelier',
+      column_side: 'right',
+      sort_order: 80,
+    });
+    assert.strictEqual(createCatRes.status, 201);
+    assert.ok(createCatRes.json.category.slug);
+    const customCatId = createCatRes.json.category.id;
+    const customCatSlug = createCatRes.json.category.slug;
+
+    const createSrvRes = await req('POST', '/api/admin/catalog', {
+      action: 'create_service',
+      category_slug: customCatSlug,
+      subgroup_label: 'Benessere Corpo',
+      name: 'Massaggio Rilassante 50m',
+      price: 55,
+      duration_minutes: 50,
+      description: 'Oli essenziali caldi.',
+      show_in_storefront: true,
+    });
+    assert.strictEqual(createSrvRes.status, 201);
+    const newSrvId = createSrvRes.json.service.id;
+
+    // Non-empty category cannot be deleted
+    const delNonEmptyCat = await req('POST', '/api/admin/catalog', {
+      action: 'delete_category',
+      id: customCatId,
+    });
+    assert.strictEqual(delNonEmptyCat.status, 409);
+
+    // Public catalog reflects new category & treatment (+1 = 44)
+    const pubCatUpdated = await req('GET', '/api/public/catalog');
+    assert.strictEqual(pubCatUpdated.status, 200);
+    assert.strictEqual(pubCatUpdated.json.total_count, 44);
+
+    // Update service -> internal only (show_in_storefront: false) & new price
+    const updSrvRes = await req('POST', '/api/admin/catalog', {
+      action: 'update_service',
+      id: newSrvId,
+      price: 60,
+      show_in_storefront: false,
+    });
+    assert.strictEqual(updSrvRes.status, 200);
+    assert.strictEqual(updSrvRes.json.service.price, 60);
+
+    const pubAfterHide = await req('GET', '/api/public/catalog');
+    assert.strictEqual(pubAfterHide.json.total_count, 43);
+    const adminAfterHide = await req('GET', '/api/admin/catalog');
+    assert.strictEqual(adminAfterHide.json.services.length, 44);
+
+    // Delete custom service -> empty category can now be deleted cleanly
+    const delSrvRes = await req('POST', '/api/admin/catalog', { action: 'delete_service', id: newSrvId });
+    assert.strictEqual(delSrvRes.status, 200);
+    const delCatRes = await req('POST', '/api/admin/catalog', { action: 'delete_category', id: customCatId });
+    assert.strictEqual(delCatRes.status, 200);
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_WHATSAPP_FETCH__;
@@ -1040,6 +1109,9 @@ function checkGdprDefaults() {
   assert(agendaHtml.includes('id="stripeSettingsForm"') && agendaHtml.includes('id="apptCassaBox"'), 'agenda.html deve contenere pannello Stripe e box Cassa');
   assert(adminJs.includes('function initPaymentSettingsControls(') && adminJs.includes('pay-contanti'), 'admin.js deve gestire impostazioni Stripe e cassa rapida');
   assert(appJs.includes('function handleStripeReturnFromQuery('), 'app.js deve gestire il rientro da Stripe Checkout');
+  assert(agendaHtml.includes('id="apptQuickNewServiceToggleBtn"') && agendaHtml.includes('id="catalogServiceForm"'), 'agenda.html deve contenere gestione listino configurabile e quick-add in modale');
+  assert(adminJs.includes('function initCatalogControls(') && adminJs.includes('function renderCatalogView('), 'admin.js deve gestire CRUD listino configurabile');
+  assert(appJs.includes('function loadPublicCatalog(') && appJs.includes('function renderPublicCategoryPills('), 'app.js deve caricare il listino dinamico e i filtri categoria');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 

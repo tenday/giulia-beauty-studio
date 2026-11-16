@@ -40,6 +40,10 @@ const STATE = {
   promotions: [],
   promoEditorItems: [],
   selectedApptPromoId: 0,
+  catalogCategories: [],
+  catalogServices: [],
+  catalogStructured: [],
+  catalogActive: [],
   paymentSettings: null,
   paymentWebhookUrl: '',
   paymentSummary: null,
@@ -455,6 +459,7 @@ async function refreshAllData() {
     loadAutomationData(),
     loadGiftCards(),
     loadPromotions(),
+    loadCatalogData(),
     loadPaymentsData(),
     loadAdminUsers(),
     loadInsights(),
@@ -467,6 +472,7 @@ async function refreshAllData() {
   renderMessagesView();
   renderGiftCardsView();
   renderPromotionsView();
+  renderCatalogView();
   renderInsightsView();
   renderSettingsView();
   CAL_UI.lastCalendarSyncAt = Date.now();
@@ -2287,7 +2293,7 @@ function startAgendaAutoRefresh() {
   }
 }
 
-const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'promotions', 'insights', 'settings'];
+const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'promotions', 'catalog', 'insights', 'settings'];
 
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
@@ -2313,6 +2319,7 @@ function switchAdminView(viewName) {
   if (viewName === 'messages') renderMessagesView();
   if (viewName === 'giftcards') renderGiftCardsView();
   if (viewName === 'promotions') renderPromotionsView();
+  if (viewName === 'catalog') renderCatalogView();
   if (viewName === 'insights') renderInsightsView();
   if (viewName === 'settings') renderSettingsView();
 }
@@ -3450,16 +3457,21 @@ function populateClientSelect() {
   select.innerHTML = opts;
 }
 
-function buildCatalogPicker() {
+function buildCatalogPicker(preserveCheckedIds = null) {
   const box = document.getElementById('apptCatalogPicker');
   if (!box || !window.STUDIO_CATALOG) return;
+  const checkedBefore =
+    preserveCheckedIds instanceof Set
+      ? preserveCheckedIds
+      : new Set(Array.from(box.querySelectorAll('input:checked')).map((c) => String(c.value)));
   let html = '';
   window.STUDIO_CATALOG.forEach((cat) => {
-    cat.subgroups.forEach((sg) => {
-      sg.items.forEach((item) => {
+    (cat.subgroups || []).forEach((sg) => {
+      (sg.items || []).forEach((item) => {
+        const isChecked = checkedBefore.has(String(item.id));
         html += `
-          <label class="catalog-pick-item">
-            <input type="checkbox" value="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}" data-price="${item.price}" data-duration="${item.duration}" />
+          <label class="catalog-pick-item" data-search-text="${escapeHtml(`${cat.title} ${item.name} ${item.price}`).toLowerCase()}">
+            <input type="checkbox" value="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}" data-price="${item.price}" data-duration="${item.duration}"${isChecked ? ' checked' : ''} />
             <span>${escapeHtml(item.name)} (${item.price}€)</span>
           </label>
         `;
@@ -3467,6 +3479,7 @@ function buildCatalogPicker() {
     });
   });
   box.innerHTML = html;
+  filterApptCatalogPickerItems();
 
   box.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
     cb.addEventListener('change', () => {
@@ -3622,6 +3635,11 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   const modal = document.getElementById('apptModal');
   const alertEl = document.getElementById('apptModalAlert');
   alertEl.hidden = true;
+  const quickSearch = document.getElementById('apptCatalogSearchInput');
+  const quickNewBox = document.getElementById('apptQuickNewServiceBox');
+  if (quickSearch) quickSearch.value = '';
+  if (quickNewBox) quickNewBox.hidden = true;
+  filterApptCatalogPickerItems();
 
   // Reset checkboxes & promo selector
   document.querySelectorAll('#apptCatalogPicker input[type="checkbox"]').forEach((c) => {
@@ -4952,6 +4970,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initPaymentSettingsControls();
   initGiftCardGeneratorControls();
   initPromotionsControls();
+  initCatalogControls();
 });
 
 /* ==========================================================================
@@ -7829,5 +7848,502 @@ function initPaymentSettingsControls() {
     await loadPaymentsData(STATE.paymentMethodFilter);
     renderPaymentSettingsPanel();
     showAgendaToast('Registro incassi aggiornato ✓');
+  });
+}
+
+/* ==========================================================================
+   CONFIGURABLE SERVICE CATALOG (CATEGORIES, SERVICES & APPT QUICK ADD)
+   ========================================================================== */
+function filterApptCatalogPickerItems() {
+  const box = document.getElementById('apptCatalogPicker');
+  const q = String(document.getElementById('apptCatalogSearchInput')?.value || '')
+    .trim()
+    .toLowerCase();
+  if (!box) return;
+  box.querySelectorAll('.catalog-pick-item').forEach((labelEl) => {
+    const txt = labelEl.dataset.searchText || labelEl.textContent.toLowerCase();
+    labelEl.hidden = Boolean(q && !txt.includes(q));
+  });
+}
+
+function applyCatalogPayloadToUi(data = {}) {
+  STATE.catalogCategories = data.categories || [];
+  STATE.catalogServices = data.services || [];
+  STATE.catalogStructured = data.catalog || [];
+  STATE.catalogActive = data.activeCatalog || data.active_catalog || [];
+
+  const activeRuntimeCatalog = STATE.catalogActive.length > 0 ? STATE.catalogActive : window.STUDIO_CATALOG || [];
+  if (typeof window.rebuildServiceMap === 'function') {
+    window.rebuildServiceMap(activeRuntimeCatalog);
+  } else {
+    window.STUDIO_CATALOG = activeRuntimeCatalog;
+  }
+
+  const badge = document.getElementById('catalogNavBadge');
+  if (badge) {
+    const activeCount = (STATE.catalogServices || []).filter((s) => Number(s.active) === 1).length;
+    badge.textContent = String(activeCount);
+    badge.hidden = activeCount === 0;
+  }
+
+  buildCatalogPicker();
+  populateGiftCardSelectors();
+  populatePromoCatalogDropdown();
+  populateCatalogCategorySelects();
+}
+
+async function loadCatalogData() {
+  try {
+    const data = await apiFetch('admin/catalog', { method: 'GET', silentLoader: true });
+    if (data && data.ok) {
+      applyCatalogPayloadToUi(data);
+    }
+  } catch (err) {
+    console.warn('[Admin Catalog] fallback catalog.js:', err?.message || err);
+  }
+}
+
+function populateCatalogCategorySelects() {
+  const cats = STATE.catalogCategories || [];
+  const srvCatSel = document.getElementById('catSrvCategorySelect');
+  const quickCatSel = document.getElementById('quickNewSrvCatSelect');
+  const filterSel = document.getElementById('catalogAdminCatFilter');
+  const sgDatalist = document.getElementById('catalogSubgroupSuggestions');
+
+  const activeOpts = cats.map(
+    (c) => `<option value="${escapeHtml(c.slug)}">${escapeHtml(c.title)}${Number(c.active) !== 1 ? ' (Nascosta)' : ''}</option>`
+  );
+
+  if (srvCatSel) {
+    const prev = srvCatSel.value;
+    srvCatSel.innerHTML = activeOpts.join('');
+    if (prev && cats.some((c) => c.slug === prev)) srvCatSel.value = prev;
+  }
+  if (quickCatSel) {
+    const prev = quickCatSel.value;
+    quickCatSel.innerHTML = activeOpts.join('');
+    if (prev && cats.some((c) => c.slug === prev)) quickCatSel.value = prev;
+  }
+  if (filterSel) {
+    const prev = filterSel.value;
+    filterSel.innerHTML = `<option value="">Tutte le categorie (${cats.length})</option>${activeOpts.join('')}`;
+    if (prev) filterSel.value = prev;
+  }
+  if (sgDatalist) {
+    const uniqueSubgroups = Array.from(
+      new Set((STATE.catalogServices || []).map((s) => String(s.subgroup_label || '').trim()).filter(Boolean))
+    );
+    sgDatalist.innerHTML = uniqueSubgroups.map((sg) => `<option value="${escapeHtml(sg)}"></option>`).join('');
+  }
+}
+
+function resetCatalogServiceForm() {
+  const idEl = document.getElementById('catSrvEditIdInput');
+  const titleEl = document.getElementById('catalogSrvEditorTitle');
+  const resetBtn = document.getElementById('resetCatalogServiceBtn');
+  const alertEl = document.getElementById('catalogServiceAlert');
+  if (idEl) idEl.value = '';
+  if (titleEl) titleEl.textContent = 'Nuovo Trattamento';
+  if (resetBtn) resetBtn.hidden = true;
+  if (alertEl) alertEl.hidden = true;
+
+  const nameEl = document.getElementById('catSrvNameInput');
+  const sgEl = document.getElementById('catSrvSubgroupInput');
+  const priceEl = document.getElementById('catSrvPriceInput');
+  const durEl = document.getElementById('catSrvDurationInput');
+  const sortEl = document.getElementById('catSrvSortInput');
+  const descEl = document.getElementById('catSrvDescInput');
+  const activeEl = document.getElementById('catSrvActiveCheck');
+  const storeEl = document.getElementById('catSrvStorefrontCheck');
+  if (nameEl) nameEl.value = '';
+  if (sgEl) sgEl.value = '';
+  if (priceEl) priceEl.value = '35';
+  if (durEl) durEl.value = '60';
+  if (sortEl) sortEl.value = '100';
+  if (descEl) descEl.value = '';
+  if (activeEl) activeEl.checked = true;
+  if (storeEl) storeEl.checked = true;
+}
+
+function loadCatalogServiceIntoEditor(srv) {
+  if (!srv) return;
+  document.getElementById('catSrvEditIdInput').value = String(srv.id);
+  document.getElementById('catalogSrvEditorTitle').textContent = `Modifica: ${srv.name}`;
+  document.getElementById('resetCatalogServiceBtn').hidden = false;
+  document.getElementById('catSrvNameInput').value = srv.name || '';
+  document.getElementById('catSrvCategorySelect').value = srv.category_slug || '';
+  document.getElementById('catSrvSubgroupInput').value = srv.subgroup_label || '';
+  document.getElementById('catSrvPriceInput').value = Number(srv.price || 0);
+  document.getElementById('catSrvDurationInput').value = Number(srv.duration_minutes || 30);
+  document.getElementById('catSrvSortInput').value = Number(srv.sort_order || 0);
+  document.getElementById('catSrvDescInput').value = srv.description || '';
+  document.getElementById('catSrvActiveCheck').checked = Number(srv.active) === 1;
+  document.getElementById('catSrvStorefrontCheck').checked = Number(srv.show_in_storefront) === 1;
+  document.getElementById('catalogServiceAlert').hidden = true;
+}
+
+function resetCatalogCategoryForm() {
+  document.getElementById('catCatEditIdInput').value = '';
+  document.getElementById('resetCatalogCatBtn').hidden = true;
+  document.getElementById('catCatTitleInput').value = '';
+  document.getElementById('catCatMottoInput').value = '';
+  document.getElementById('catCatColumnSelect').value = 'right';
+  document.getElementById('catCatSortInput').value = '70';
+  document.getElementById('catCatActiveCheck').checked = true;
+  document.getElementById('catalogCategoryAlert').hidden = true;
+}
+
+function loadCatalogCategoryIntoEditor(cat) {
+  if (!cat) return;
+  document.getElementById('catCatEditIdInput').value = String(cat.id);
+  document.getElementById('resetCatalogCatBtn').hidden = false;
+  document.getElementById('catCatTitleInput').value = cat.title || '';
+  document.getElementById('catCatMottoInput').value = cat.motto || '';
+  document.getElementById('catCatColumnSelect').value = cat.column_side === 'left' ? 'left' : 'right';
+  document.getElementById('catCatSortInput').value = Number(cat.sort_order || 0);
+  document.getElementById('catCatActiveCheck').checked = Number(cat.active) === 1;
+  document.getElementById('catalogCategoryAlert').hidden = true;
+}
+
+function renderCatalogView() {
+  populateCatalogCategorySelects();
+  const catListBox = document.getElementById('catalogCategoriesList');
+  if (catListBox) {
+    const cats = STATE.catalogCategories || [];
+    if (cats.length === 0) {
+      catListBox.innerHTML = '<p class="muted-text" style="font-size:0.8rem;">Nessuna categoria configurata.</p>';
+    } else {
+      catListBox.innerHTML = cats
+        .map((c) => {
+          const count = (STATE.catalogServices || []).filter((s) => s.category_slug === c.slug).length;
+          return `
+            <div class="catalog-category-pill-row">
+              <div>
+                <strong>${escapeHtml(c.title)}</strong>
+                <span class="muted-text" style="font-size:0.72rem;"> • ${count} voci • ${c.column_side === 'left' ? 'Col. Sx' : 'Col. Dx'}${Number(c.active) !== 1 ? ' • Nascosta' : ''}</span>
+              </div>
+              <div style="display:flex;gap:4px;">
+                <button type="button" class="btn-outline-sm btn-xs cat-edit-btn" data-id="${c.id}" title="Modifica categoria">✏️</button>
+                <button type="button" class="btn-outline-sm btn-xs cat-del-btn" data-id="${c.id}" title="Elimina categoria vuota">✕</button>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+
+      catListBox.querySelectorAll('.cat-edit-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const cat = (STATE.catalogCategories || []).find((c) => Number(c.id) === Number(btn.dataset.id));
+          if (cat) loadCatalogCategoryIntoEditor(cat);
+        });
+      });
+
+      catListBox.querySelectorAll('.cat-del-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            const res = await apiFetch('admin/catalog', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'delete_category', id: Number(btn.dataset.id) }),
+            });
+            applyCatalogPayloadToUi(res);
+            renderCatalogView();
+            showAgendaToast('Categoria eliminata');
+          } catch (err) {
+            showAgendaToast(err.message || 'Errore eliminazione categoria', 'error');
+          }
+        });
+      });
+    }
+  }
+
+  const listBox = document.getElementById('catalogServicesListContainer');
+  if (!listBox) return;
+
+  const q = String(document.getElementById('catalogAdminSearchInput')?.value || '')
+    .trim()
+    .toLowerCase();
+  const catFilter = String(document.getElementById('catalogAdminCatFilter')?.value || '').trim();
+  const cats = STATE.catalogCategories || [];
+  const allServices = STATE.catalogServices || [];
+
+  const blocks = cats
+    .filter((c) => !catFilter || c.slug === catFilter)
+    .map((cat) => {
+      const catServices = allServices.filter((s) => {
+        if (s.category_slug !== cat.slug) return false;
+        if (!q) return true;
+        return (
+          String(s.name || '').toLowerCase().includes(q) ||
+          String(s.subgroup_label || '').toLowerCase().includes(q) ||
+          String(s.description || '').toLowerCase().includes(q) ||
+          String(cat.title || '').toLowerCase().includes(q)
+        );
+      });
+      if (catServices.length === 0) return '';
+
+      const rowsHtml = catServices
+        .map((s) => {
+          const isActive = Number(s.active) === 1;
+          const onWeb = Number(s.show_in_storefront) === 1;
+          return `
+            <div class="catalog-service-row${!isActive ? ' is-inactive' : ''}">
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <strong>${escapeHtml(s.name)}</strong>
+                  ${s.subgroup_label ? `<span class="status-badge" style="background:#f5eff1;color:#6f4b53;">${escapeHtml(s.subgroup_label)}</span>` : ''}
+                  ${!isActive ? '<span class="status-badge badge-cancelled">Disattivato</span>' : ''}
+                  ${isActive && !onWeb ? '<span class="status-badge badge-pending">Solo Agenda</span>' : ''}
+                </div>
+                <div class="catalog-service-meta">
+                  <strong>${formatPromoEuroAmount(s.price)} €</strong> • ${Number(s.duration_minutes || 30)} min
+                  ${s.description ? ` — ${escapeHtml(s.description)}` : ''}
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" class="btn-outline-sm btn-xs srv-edit-btn" data-id="${s.id}">Modifica</button>
+                <button type="button" class="btn-outline-sm btn-xs srv-toggle-btn" data-id="${s.id}">${isActive ? 'Nascondi' : 'Attiva'}</button>
+                <button type="button" class="btn-danger-outline btn-xs srv-del-btn" data-id="${s.id}" title="Elimina trattamento">✕</button>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+
+      return `
+        <div class="catalog-group-block">
+          <div class="catalog-group-header">
+            <strong>${escapeHtml(cat.title)} (${catServices.length})</strong>
+            <span class="muted-text" style="font-size:0.75rem;">${cat.motto ? escapeHtml(cat.motto) : ''}</span>
+          </div>
+          ${rowsHtml}
+        </div>
+      `;
+    })
+    .filter(Boolean);
+
+  if (blocks.length === 0) {
+    listBox.innerHTML = '<div class="muted-text" style="padding:24px;text-align:center;">Nessun trattamento trovato con i filtri attuali.</div>';
+    return;
+  }
+  listBox.innerHTML = blocks.join('');
+
+  listBox.querySelectorAll('.srv-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const srv = (STATE.catalogServices || []).find((s) => Number(s.id) === Number(btn.dataset.id));
+      if (srv) {
+        loadCatalogServiceIntoEditor(srv);
+        document.getElementById('catSrvNameInput')?.focus();
+      }
+    });
+  });
+
+  listBox.querySelectorAll('.srv-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const res = await apiFetch('admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'toggle_service', id: Number(btn.dataset.id) }),
+      });
+      applyCatalogPayloadToUi(res);
+      renderCatalogView();
+      showAgendaToast('Visibilità trattamento aggiornata ✓');
+    });
+  });
+
+  listBox.querySelectorAll('.srv-del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Conferma';
+        setTimeout(() => {
+          if (btn.isConnected) {
+            btn.dataset.armed = '0';
+            btn.textContent = '✕';
+          }
+        }, 3000);
+        return;
+      }
+      const res = await apiFetch('admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete_service', id: Number(btn.dataset.id) }),
+      });
+      if (Number(document.getElementById('catSrvEditIdInput')?.value || 0) === Number(btn.dataset.id)) {
+        resetCatalogServiceForm();
+      }
+      applyCatalogPayloadToUi(res);
+      renderCatalogView();
+      showAgendaToast('Trattamento rimosso dal listino');
+    });
+  });
+}
+
+function initCatalogControls() {
+  document.getElementById('apptCatalogSearchInput')?.addEventListener('input', () => {
+    filterApptCatalogPickerItems();
+  });
+
+  document.getElementById('apptQuickNewServiceToggleBtn')?.addEventListener('click', () => {
+    const box = document.getElementById('apptQuickNewServiceBox');
+    if (!box) return;
+    box.hidden = !box.hidden;
+    if (!box.hidden) {
+      populateCatalogCategorySelects();
+      document.getElementById('quickNewSrvAlert').hidden = true;
+      document.getElementById('quickNewSrvNameInput')?.focus();
+    }
+  });
+
+  document.getElementById('quickNewSrvCancelBtn')?.addEventListener('click', () => {
+    const box = document.getElementById('apptQuickNewServiceBox');
+    if (box) box.hidden = true;
+  });
+
+  document.getElementById('apptGoManageCatalogBtn')?.addEventListener('click', () => {
+    document.getElementById('apptModal')?.classList.remove('open');
+    switchAdminView('catalog');
+  });
+
+  document.getElementById('quickNewSrvSaveBtn')?.addEventListener('click', async () => {
+    const name = (document.getElementById('quickNewSrvNameInput')?.value || '').trim();
+    const catSlug = document.getElementById('quickNewSrvCatSelect')?.value || '';
+    const price = Number(document.getElementById('quickNewSrvPriceInput')?.value || 0);
+    const dur = Number(document.getElementById('quickNewSrvDurationInput')?.value || 30);
+    const subgroup = (document.getElementById('quickNewSrvSubgroupInput')?.value || '').trim();
+    const showWeb = Boolean(document.getElementById('quickNewSrvStorefrontCheck')?.checked);
+    const alertEl = document.getElementById('quickNewSrvAlert');
+    const saveBtn = document.getElementById('quickNewSrvSaveBtn');
+
+    if (alertEl) alertEl.hidden = true;
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      const box = document.getElementById('apptCatalogPicker');
+      const checkedBefore = new Set(
+        Array.from(box?.querySelectorAll('input:checked') || []).map((c) => String(c.value))
+      );
+      const res = await apiFetch('admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create_service',
+          category_slug: catSlug,
+          subgroup_label: subgroup,
+          name,
+          price,
+          duration_minutes: dur,
+          show_in_storefront: showWeb,
+          active: 1,
+        }),
+      });
+      if (res?.service?.service_key) {
+        checkedBefore.add(String(res.service.service_key));
+      }
+      applyCatalogPayloadToUi(res);
+      buildCatalogPicker(checkedBefore);
+      renderCatalogView();
+
+      const newCheckbox = res?.service?.service_key
+        ? document.querySelector(`#apptCatalogPicker input[value="${CSS.escape(res.service.service_key)}"]`)
+        : null;
+      if (newCheckbox) {
+        newCheckbox.checked = true;
+        newCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      document.getElementById('quickNewSrvNameInput').value = '';
+      document.getElementById('quickNewSrvSubgroupInput').value = '';
+      document.getElementById('apptQuickNewServiceBox').hidden = true;
+      showAgendaToast('Nuovo trattamento salvato nel Listino e selezionato ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.textContent = err.message || 'Errore salvataggio trattamento';
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+
+  document.getElementById('resetCatalogServiceBtn')?.addEventListener('click', resetCatalogServiceForm);
+  document.getElementById('resetCatalogCatBtn')?.addEventListener('click', resetCatalogCategoryForm);
+
+  document.getElementById('catalogAdminSearchInput')?.addEventListener('input', () => renderCatalogView());
+  document.getElementById('catalogAdminCatFilter')?.addEventListener('change', () => renderCatalogView());
+
+  document.getElementById('catalogServiceForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const editId = Number(document.getElementById('catSrvEditIdInput')?.value || 0);
+    const alertEl = document.getElementById('catalogServiceAlert');
+    const saveBtn = document.getElementById('saveCatalogServiceBtn');
+    if (alertEl) alertEl.hidden = true;
+    if (saveBtn) saveBtn.disabled = true;
+
+    const payload = {
+      action: editId > 0 ? 'update_service' : 'create_service',
+      id: editId > 0 ? editId : undefined,
+      name: (document.getElementById('catSrvNameInput')?.value || '').trim(),
+      category_slug: document.getElementById('catSrvCategorySelect')?.value || '',
+      subgroup_label: (document.getElementById('catSrvSubgroupInput')?.value || '').trim(),
+      price: Number(document.getElementById('catSrvPriceInput')?.value || 0),
+      duration_minutes: Number(document.getElementById('catSrvDurationInput')?.value || 30),
+      sort_order: Number(document.getElementById('catSrvSortInput')?.value || 100),
+      description: (document.getElementById('catSrvDescInput')?.value || '').trim(),
+      active: Boolean(document.getElementById('catSrvActiveCheck')?.checked),
+      show_in_storefront: Boolean(document.getElementById('catSrvStorefrontCheck')?.checked),
+    };
+
+    try {
+      const res = await apiFetch('admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      applyCatalogPayloadToUi(res);
+      resetCatalogServiceForm();
+      renderCatalogView();
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.className = 'admin-alert admin-alert-ok';
+        alertEl.textContent = editId > 0 ? 'Trattamento aggiornato in Agenda e Vetrina ✓' : 'Trattamento aggiunto al Listino ✓';
+      }
+      showAgendaToast(editId > 0 ? 'Trattamento aggiornato ✓' : 'Nuovo trattamento aggiunto al Listino ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.className = 'admin-alert admin-alert-error';
+        alertEl.textContent = err.message;
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+
+  document.getElementById('catalogCategoryForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const editId = Number(document.getElementById('catCatEditIdInput')?.value || 0);
+    const alertEl = document.getElementById('catalogCategoryAlert');
+    if (alertEl) alertEl.hidden = true;
+
+    try {
+      const res = await apiFetch('admin/catalog', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: editId > 0 ? 'update_category' : 'create_category',
+          id: editId > 0 ? editId : undefined,
+          title: (document.getElementById('catCatTitleInput')?.value || '').trim(),
+          motto: (document.getElementById('catCatMottoInput')?.value || '').trim(),
+          column_side: document.getElementById('catCatColumnSelect')?.value || 'right',
+          sort_order: Number(document.getElementById('catCatSortInput')?.value || 70),
+          active: Boolean(document.getElementById('catCatActiveCheck')?.checked),
+        }),
+      });
+      applyCatalogPayloadToUi(res);
+      resetCatalogCategoryForm();
+      renderCatalogView();
+      showAgendaToast(editId > 0 ? 'Categoria aggiornata ✓' : 'Nuova categoria creata ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.className = 'admin-alert admin-alert-error';
+        alertEl.textContent = err.message;
+      }
+    }
   });
 }

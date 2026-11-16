@@ -12,8 +12,14 @@ function publicFetchWithLoader(url, options = {}, loaderOptions = {}) {
   }
   return run();
 }
-const STUDIO_CATALOG = window.STUDIO_CATALOG || [];
-const SERVICE_MAP = window.SERVICE_MAP || new Map();
+function getStudioCatalog() {
+  return window.STUDIO_CATALOG || [];
+}
+
+function getServiceMap() {
+  if (window.SERVICE_MAP instanceof Map) return window.SERVICE_MAP;
+  return new Map();
+}
 
 // Concierge Presets
 const CONCIERGE_PRESETS = {
@@ -154,18 +160,18 @@ function renderListino() {
 
   let totalRendered = 0;
 
-  STUDIO_CATALOG.forEach((cat) => {
+  getStudioCatalog().forEach((cat) => {
     if (activeCategory !== 'all' && cat.id !== activeCategory) return;
 
     // Filter subgroups by search query
-    const filteredSubgroups = cat.subgroups
+    const filteredSubgroups = (cat.subgroups || [])
       .map((sg) => {
-        const matchingItems = sg.items.filter(
+        const matchingItems = (sg.items || []).filter(
           (item) =>
             !q ||
-            item.name.toLowerCase().includes(q) ||
-            item.desc.toLowerCase().includes(q) ||
-            cat.title.toLowerCase().includes(q)
+            String(item.name || '').toLowerCase().includes(q) ||
+            String(item.desc || '').toLowerCase().includes(q) ||
+            String(cat.title || '').toLowerCase().includes(q)
         );
         return { ...sg, items: matchingItems };
       })
@@ -211,13 +217,13 @@ function renderListino() {
         li.innerHTML = `
           <div class="service-info">
             <div class="service-name-line">
-              <span class="service-name">${item.name}</span>
-              <span class="service-duration">${item.duration} min</span>
+              <span class="service-name">${escapePublicHtml(item.name)}</span>
+              <span class="service-duration">${Number(item.duration || 30)} min</span>
             </div>
-            <p class="service-desc">${item.desc}</p>
+            <p class="service-desc">${escapePublicHtml(item.desc || '')}</p>
           </div>
           <div class="service-price-action">
-            <span class="service-price">${item.price} €</span>
+            <span class="service-price">${formatEurPublic(item.price)}</span>
             <span class="btn-select-service" aria-hidden="true">${isSelected ? '✓' : '+'}</span>
           </div>
         `;
@@ -262,7 +268,7 @@ function toggleServiceInBag(serviceId) {
   if (existingIdx > -1) {
     selectedBag.splice(existingIdx, 1);
   } else {
-    const svc = SERVICE_MAP.get(serviceId);
+    const svc = getServiceMap().get(serviceId);
     if (svc) {
       selectedBag.push({
         uid: `${svc.id}-${Date.now()}`,
@@ -286,7 +292,7 @@ function addMultipleServices(serviceIds, openDrawerAfter = true) {
   serviceIds.forEach((id) => {
     const alreadyIn = selectedBag.some((b) => b.id === id);
     if (!alreadyIn) {
-      const svc = SERVICE_MAP.get(id);
+      const svc = getServiceMap().get(id);
       if (svc) {
         selectedBag.push({
           uid: `${svc.id}-${Date.now()}-${Math.random()}`,
@@ -801,7 +807,79 @@ async function loadPublicPromotions() {
   renderPublicPromotions();
 }
 
+function formatCategoryPillLabel(title) {
+  const words = String(title || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return 'Categoria';
+  return words.map((w) => (w === 'e' ? '&' : w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
+}
+
+function renderPublicCategoryPills() {
+  if (!categoryPillsEl) return;
+  const catalog = getStudioCatalog();
+  if (activeCategory !== 'all' && !catalog.some((c) => c.id === activeCategory)) {
+    activeCategory = 'all';
+  }
+  const totalCount = catalog.reduce(
+    (sum, cat) => sum + (cat.subgroups || []).reduce((s2, sg) => s2 + (sg.items || []).length, 0),
+    0
+  );
+  const pills = [
+    `<button type="button" class="cat-pill${activeCategory === 'all' ? ' active' : ''}" data-cat="all">Tutti (${totalCount})</button>`,
+  ];
+  catalog.forEach((cat) => {
+    const count = (cat.subgroups || []).reduce((s, sg) => s + (sg.items || []).length, 0);
+    if (count === 0) return;
+    pills.push(
+      `<button type="button" class="cat-pill${activeCategory === cat.id ? ' active' : ''}" data-cat="${escapePublicHtml(
+        cat.id
+      )}">${escapePublicHtml(formatCategoryPillLabel(cat.title))} (${count})</button>`
+    );
+  });
+  categoryPillsEl.innerHTML = pills.join('');
+}
+
+function updateConciergeMetaUi() {
+  const conciergeTitleEl = document.getElementById('conciergeTitle');
+  const conciergeMetaEl = document.getElementById('conciergeMeta');
+  const preset = CONCIERGE_PRESETS[activeConciergePreset];
+  if (!preset || !conciergeTitleEl || !conciergeMetaEl) return;
+  const map = getServiceMap();
+  const matched = preset.ids.filter((id) => map.has(id));
+  const idsToUse = matched.length > 0 ? matched : [];
+  const total = idsToUse.reduce((sum, id) => sum + Number(map.get(id)?.price || 0), 0);
+  conciergeTitleEl.textContent = preset.title;
+  conciergeMetaEl.innerHTML = `${idsToUse.length || preset.ids.length} Trattamenti • Totale <strong>${formatEurPublic(total)}</strong>`;
+}
+
+async function loadPublicCatalog() {
+  try {
+    const res = await fetch(`${API_BASE}/public/catalog`);
+    const data = await res.json();
+    if (res.ok && data && data.ok && Array.isArray(data.catalog)) {
+      if (typeof window.rebuildServiceMap === 'function') {
+        window.rebuildServiceMap(data.catalog);
+      } else {
+        window.STUDIO_CATALOG = data.catalog;
+      }
+      renderPublicCategoryPills();
+      renderListino();
+      updateConciergeMetaUi();
+      reconcileStorefrontBagPromotions();
+      updateBagUI();
+    }
+  } catch {
+    // Fallback static catalog.js already active
+  }
+}
+
 function initApp() {
+  renderPublicCategoryPills();
+  updateConciergeMetaUi();
+  loadPublicCatalog();
   loadPublicOperators();
   loadPublicPromotions();
   const opSel = document.getElementById('bookingOperatorSelect');
@@ -827,15 +905,15 @@ function initApp() {
     });
   }
 
-  // Category filter pills
-  categoryPillsEl.querySelectorAll('.cat-pill').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      categoryPillsEl.querySelectorAll('.cat-pill').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-      activeCategory = btn.dataset.cat;
-      renderListino();
-    });
+  // Category filter pills (delegated so dynamically added categories work)
+  categoryPillsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.cat-pill');
+    if (!btn) return;
+    categoryPillsEl.querySelectorAll('.cat-pill').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    activeCategory = btn.dataset.cat || 'all';
+    renderListino();
   });
 
   // Instant search
@@ -864,10 +942,7 @@ function initApp() {
       conciergeOptionsEl.querySelectorAll('.quiz-option-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       activeConciergePreset = btn.dataset.preset;
-      const preset = CONCIERGE_PRESETS[activeConciergePreset];
-      const total = preset.ids.reduce((sum, id) => sum + (SERVICE_MAP.get(id)?.price || 0), 0);
-      conciergeTitleEl.textContent = preset.title;
-      conciergeMetaEl.innerHTML = `${preset.ids.length} Trattamenti • Totale <strong>${total} €</strong>`;
+      updateConciergeMetaUi();
     });
   });
 
@@ -1593,9 +1668,10 @@ function isStorefrontPromoActiveForDate(promo, targetDate = '') {
 }
 
 function getPromoCatalogIdsForStorefront(promo) {
+  const map = getServiceMap();
   return (promo?.services || [])
     .map((s) => String(s?.id || '').trim())
-    .filter((id) => id && SERVICE_MAP.has(id));
+    .filter((id) => id && map.has(id));
 }
 
 function reconcileStorefrontBagPromotions() {
@@ -1616,7 +1692,7 @@ function reconcileStorefrontBagPromotions() {
         const stillEligible = eligiblePromos.some((p) => Number(p.id) === Number(item.promo_id));
         if (!stillEligible && Array.isArray(item.includedServiceIds)) {
           item.includedServiceIds.forEach((sid) => {
-            const srv = SERVICE_MAP.get(sid);
+            const srv = getServiceMap().get(sid);
             if (srv) {
               nextBag.push({
                 uid: `${srv.id}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
@@ -1636,7 +1712,7 @@ function reconcileStorefrontBagPromotions() {
         const promoIds = getPromoCatalogIdsForStorefront(promo);
         const origSum = Number(promo.original_price || 0) > 0
           ? Number(promo.original_price)
-          : promoIds.reduce((sum, id) => sum + Number(SERVICE_MAP.get(id)?.price || 0), 0);
+          : promoIds.reduce((sum, id) => sum + Number(getServiceMap().get(id)?.price || 0), 0);
         const savings = Math.max(0, origSum - Number(promo.promo_price || 0));
         return { promo, promoIds, origSum, savings };
       })
@@ -1722,7 +1798,7 @@ function installStorefrontPromoCartSync() {
         const restIds = bundled.includedServiceIds.filter((id) => id !== serviceId);
         selectedBag.splice(bundleIdx, 1);
         restIds.forEach((id) => {
-          const srv = SERVICE_MAP.get(id);
+          const srv = getServiceMap().get(id);
           if (srv) {
             selectedBag.push({
               uid: `${srv.id}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,

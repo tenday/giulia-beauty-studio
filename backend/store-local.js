@@ -18,6 +18,14 @@ const {
   DEFAULT_MESSAGE_TEMPLATES,
   DEFAULT_MONTHLY_PROMOTIONS,
 } = require('./defaults');
+const {
+  slugifyCatalogKey,
+  buildDefaultCatalogSeed,
+  normalizeCategoryRow,
+  normalizeServiceRow,
+  sortByOrderThenId,
+  buildStructuredCatalog,
+} = require('./catalog-utils');
 
 const DB_FILE = path.resolve(process.cwd(), process.env.LOCAL_DB_FILE || '.local-dev-db.json');
 
@@ -42,6 +50,8 @@ function defaultState() {
       automation_run: 0,
       promotion: 0,
       payment_tx: 0,
+      cat_category: 0,
+      cat_service: 0,
     },
     admin_users: [],
     admin_sessions: [],
@@ -63,6 +73,8 @@ function defaultState() {
     automation_runs: [],
     monthly_promotions: [],
     payment_transactions: [],
+    catalog_categories: [],
+    catalog_services: [],
   };
 }
 
@@ -146,6 +158,35 @@ function ensureLocalCollections(state) {
     }
     state.studio_settings.push({
       setting_key: 'promotions_seeded',
+      setting_value: '1',
+      updated_at: formatRomeNow(),
+    });
+    dirty = true;
+  }
+  const hasCatSeedFlag = (state.studio_settings || []).some((s) => s.setting_key === 'catalog_seeded');
+  if (!hasCatSeedFlag) {
+    if ((state.catalog_categories || []).length === 0 && (state.catalog_services || []).length === 0) {
+      const now = formatRomeNow();
+      const seed = buildDefaultCatalogSeed();
+      seed.categories.forEach((cat) => {
+        state.catalog_categories.push({
+          id: nextId(state, 'cat_category'),
+          ...cat,
+          created_at: now,
+          updated_at: now,
+        });
+      });
+      seed.services.forEach((srv) => {
+        state.catalog_services.push({
+          id: nextId(state, 'cat_service'),
+          ...srv,
+          created_at: now,
+          updated_at: now,
+        });
+      });
+    }
+    state.studio_settings.push({
+      setting_key: 'catalog_seeded',
       setting_value: '1',
       updated_at: formatRomeNow(),
     });
@@ -2140,6 +2181,180 @@ async function recordAppointmentPayment({
   return { appointment: hydrateLocalAppointment(db, appt), transaction: insertedTx, duplicate: false };
 }
 
+/* ============================================================================
+   CONFIGURABLE SERVICE CATALOG (CATEGORIES & TREATMENTS)
+   ============================================================================ */
+async function listCatalogData() {
+  const db = readDb();
+  const categories = (db.catalog_categories || []).map(normalizeCategoryRow).sort(sortByOrderThenId);
+  const services = (db.catalog_services || []).map(normalizeServiceRow).sort(sortByOrderThenId);
+  return {
+    categories,
+    services,
+    catalog: buildStructuredCatalog(categories, services, { includeInactive: true, storefrontOnly: false }),
+    activeCatalog: buildStructuredCatalog(categories, services, { includeInactive: false, storefrontOnly: false }),
+    storefrontCatalog: buildStructuredCatalog(categories, services, { includeInactive: false, storefrontOnly: true }),
+  };
+}
+
+async function listPublicCatalog() {
+  const data = await listCatalogData();
+  return data.storefrontCatalog;
+}
+
+async function createCatalogCategory({ title, motto = '', columnSide = 'right', sortOrder = 0, active = 1, slug = '' }) {
+  const db = readDb();
+  const cleanTitle = String(title || '').trim().slice(0, 115);
+  if (!cleanTitle) {
+    const err = new Error('Inserisci il nome della categoria.');
+    err.status = 422;
+    throw err;
+  }
+  let resolvedSlug = String(slug || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '');
+  if (!resolvedSlug || (db.catalog_categories || []).some((c) => c.slug === resolvedSlug)) {
+    resolvedSlug = slugifyCatalogKey(cleanTitle, 'cat');
+  }
+  const now = formatRomeNow();
+  const row = {
+    id: nextId(db, 'cat_category'),
+    slug: resolvedSlug,
+    title: cleanTitle,
+    motto: String(motto || '').trim() || null,
+    column_side: columnSide === 'left' ? 'left' : 'right',
+    sort_order: Number(sortOrder || 0),
+    active: active ? 1 : 0,
+    created_at: now,
+    updated_at: now,
+  };
+  db.catalog_categories.push(row);
+  writeDb(db);
+  return normalizeCategoryRow(row);
+}
+
+async function updateCatalogCategory(id, updates = {}) {
+  const db = readDb();
+  const row = (db.catalog_categories || []).find((c) => Number(c.id) === Number(id));
+  if (!row) return null;
+  if (updates.title !== undefined) {
+    const clean = String(updates.title || '').trim().slice(0, 115);
+    if (clean) row.title = clean;
+  }
+  if (updates.motto !== undefined) row.motto = String(updates.motto || '').trim() || null;
+  if (updates.columnSide !== undefined) row.column_side = updates.columnSide === 'left' ? 'left' : 'right';
+  if (updates.sortOrder !== undefined) row.sort_order = Number(updates.sortOrder || 0);
+  if (updates.active !== undefined) row.active = updates.active ? 1 : 0;
+  row.updated_at = formatRomeNow();
+  writeDb(db);
+  return normalizeCategoryRow(row);
+}
+
+async function deleteCatalogCategory(id) {
+  const db = readDb();
+  const cat = (db.catalog_categories || []).find((c) => Number(c.id) === Number(id));
+  if (!cat) return false;
+  if ((db.catalog_services || []).some((s) => s.category_slug === cat.slug)) {
+    const err = new Error('Sposta o elimina prima i trattamenti presenti in questa categoria.');
+    err.status = 409;
+    err.code = 'CATEGORY_NOT_EMPTY';
+    throw err;
+  }
+  db.catalog_categories = db.catalog_categories.filter((c) => Number(c.id) !== Number(id));
+  writeDb(db);
+  return true;
+}
+
+async function createCatalogService({
+  categorySlug,
+  subgroupLabel = '',
+  name,
+  price = 0,
+  durationMinutes = 30,
+  description = '',
+  sortOrder = 0,
+  active = 1,
+  showInStorefront = 1,
+  serviceKey = '',
+}) {
+  const db = readDb();
+  const cleanName = String(name || '').trim().slice(0, 155);
+  if (cleanName.length < 2) {
+    const err = new Error('Inserisci il nome del trattamento.');
+    err.status = 422;
+    throw err;
+  }
+  const cleanCat = String(categorySlug || '').trim();
+  if (!(db.catalog_categories || []).some((c) => c.slug === cleanCat)) {
+    const err = new Error('Seleziona una categoria valida dal listino.');
+    err.status = 422;
+    throw err;
+  }
+  let resolvedKey = String(serviceKey || '').trim().replace(/[^a-zA-Z0-9_-]+/g, '');
+  if (!resolvedKey || (db.catalog_services || []).some((s) => s.service_key === resolvedKey)) {
+    resolvedKey = slugifyCatalogKey(cleanName, cleanCat.slice(0, 10) || 'srv');
+  }
+  const now = formatRomeNow();
+  const row = {
+    id: nextId(db, 'cat_service'),
+    service_key: resolvedKey,
+    category_slug: cleanCat,
+    subgroup_label: String(subgroupLabel || '').trim() || null,
+    name: cleanName,
+    price: Number(Math.max(0, Number(price || 0)).toFixed(2)),
+    duration_minutes: Math.max(5, Number.parseInt(durationMinutes || '30', 10) || 30),
+    description: String(description || '').trim() || null,
+    sort_order: Number(sortOrder || 0),
+    active: active ? 1 : 0,
+    show_in_storefront: showInStorefront ? 1 : 0,
+    created_at: now,
+    updated_at: now,
+  };
+  db.catalog_services.push(row);
+  writeDb(db);
+  return normalizeServiceRow(row);
+}
+
+async function updateCatalogService(id, updates = {}) {
+  const db = readDb();
+  const row = (db.catalog_services || []).find((s) => Number(s.id) === Number(id));
+  if (!row) return null;
+  if (updates.categorySlug !== undefined) {
+    const nextCat = String(updates.categorySlug || '').trim();
+    if (!(db.catalog_categories || []).some((c) => c.slug === nextCat)) {
+      const err = new Error('Categoria selezionata non valida.');
+      err.status = 422;
+      throw err;
+    }
+    row.category_slug = nextCat;
+  }
+  if (updates.subgroupLabel !== undefined) row.subgroup_label = String(updates.subgroupLabel || '').trim() || null;
+  if (updates.name !== undefined) {
+    const clean = String(updates.name || '').trim().slice(0, 155);
+    if (clean) row.name = clean;
+  }
+  if (updates.price !== undefined) row.price = Number(Math.max(0, Number(priceNum(updates.price))).toFixed(2));
+  if (updates.durationMinutes !== undefined) {
+    row.duration_minutes = Math.max(5, Number.parseInt(updates.durationMinutes || '30', 10) || 30);
+  }
+  if (updates.description !== undefined) row.description = String(updates.description || '').trim() || null;
+  if (updates.sortOrder !== undefined) row.sort_order = Number(updates.sortOrder || 0);
+  if (updates.active !== undefined) row.active = updates.active ? 1 : 0;
+  if (updates.showInStorefront !== undefined) row.show_in_storefront = updates.showInStorefront ? 1 : 0;
+  row.updated_at = formatRomeNow();
+  writeDb(db);
+  return normalizeServiceRow(row);
+}
+
+function priceNum(v) {
+  const n = Number(v || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function deleteCatalogService(id) {
+  const db = readDb();
+  db.catalog_services = (db.catalog_services || []).filter((s) => Number(s.id) !== Number(id));
+  writeDb(db);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -2217,4 +2432,12 @@ module.exports = {
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,
   recordAppointmentPayment,
+  listCatalogData,
+  listPublicCatalog,
+  createCatalogCategory,
+  updateCatalogCategory,
+  deleteCatalogCategory,
+  createCatalogService,
+  updateCatalogService,
+  deleteCatalogService,
 };

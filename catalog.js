@@ -1,9 +1,9 @@
 /**
- * GIULIA BEAUTY STUDIO — Shared Official Service Catalog (43 Treatments)
- * Used by both Public Boutique (app.js) and Admin Agenda/CRM (admin.js)
+ * GIULIA BEAUTY STUDIO — Shared Official Service Catalog (Default Seed + Runtime Builder)
+ * Used by Public Boutique (app.js), Admin Agenda/CRM (admin.js), and Backend DB seeding
  */
 
-window.STUDIO_CATALOG = [
+const DEFAULT_STUDIO_CATALOG = [
   {
     id: 'nails',
     column: 'left',
@@ -137,11 +137,31 @@ window.STUDIO_CATALOG = [
   }
 ];
 
-window.SERVICE_MAP = new Map();
-window.STUDIO_CATALOG.forEach((cat) => {
-  cat.subgroups.forEach((sg) => {
-    sg.items.forEach((item) => {
-      window.SERVICE_MAP.set(item.id, { ...item, categoryId: cat.id, categoryTitle: cat.title });
+function rebuildServiceMapFromCatalog(catalog) {
+  const list = Array.isArray(catalog) ? catalog : [];
+  const map = new Map();
+  list.forEach((cat) => {
+    (cat.subgroups || []).forEach((sg) => {
+      (sg.items || []).forEach((item) => {
+        map.set(item.id, { ...item, categoryId: cat.id, categoryTitle: cat.title });
+      });
     });
   });
-});
+  return map;
+}
+
+if (typeof window !== 'undefined') {
+  window.DEFAULT_STUDIO_CATALOG = DEFAULT_STUDIO_CATALOG;
+  window.STUDIO_CATALOG = DEFAULT_STUDIO_CATALOG;
+  window.rebuildServiceMap = function (catalog) {
+    const next = Array.isArray(catalog) ? catalog : DEFAULT_STUDIO_CATALOG;
+    window.STUDIO_CATALOG = next;
+    window.SERVICE_MAP = rebuildServiceMapFromCatalog(next);
+    return window.SERVICE_MAP;
+  };
+  window.rebuildServiceMap(DEFAULT_STUDIO_CATALOG);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { DEFAULT_STUDIO_CATALOG, rebuildServiceMapFromCatalog };
+}

@@ -16,6 +16,14 @@ const {
   DEFAULT_MESSAGE_TEMPLATES,
   DEFAULT_MONTHLY_PROMOTIONS,
 } = require('./defaults');
+const {
+  slugifyCatalogKey,
+  buildDefaultCatalogSeed,
+  normalizeCategoryRow,
+  normalizeServiceRow,
+  sortByOrderThenId,
+  buildStructuredCatalog,
+} = require('./catalog-utils');
 
 let defaultsSeeded = false;
 
@@ -82,6 +90,46 @@ async function ensureDefaults(targetPool = getPool()) {
     }
     await targetPool.query(
       "INSERT IGNORE INTO studio_settings (setting_key, setting_value) VALUES ('promotions_seeded', '1')"
+    );
+  }
+
+  const [catSeedRows] = await targetPool.query(
+    "SELECT setting_value FROM studio_settings WHERE setting_key = 'catalog_seeded' LIMIT 1"
+  );
+  if (catSeedRows.length === 0) {
+    const [catCnt] = await targetPool.query('SELECT COUNT(*) AS cnt FROM catalog_categories');
+    const [srvCnt] = await targetPool.query('SELECT COUNT(*) AS cnt FROM catalog_services');
+    if (Number(catCnt[0]?.cnt || 0) === 0 && Number(srvCnt[0]?.cnt || 0) === 0) {
+      const seed = buildDefaultCatalogSeed();
+      for (const cat of seed.categories) {
+        await targetPool.query(
+          `INSERT IGNORE INTO catalog_categories (slug, title, motto, column_side, sort_order, active)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [cat.slug, cat.title, cat.motto, cat.column_side, cat.sort_order, cat.active]
+        );
+      }
+      for (const srv of seed.services) {
+        await targetPool.query(
+          `INSERT IGNORE INTO catalog_services
+            (service_key, category_slug, subgroup_label, name, price, duration_minutes, description, sort_order, active, show_in_storefront)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            srv.service_key,
+            srv.category_slug,
+            srv.subgroup_label,
+            srv.name,
+            srv.price,
+            srv.duration_minutes,
+            srv.description,
+            srv.sort_order,
+            srv.active,
+            srv.show_in_storefront,
+          ]
+        );
+      }
+    }
+    await targetPool.query(
+      "INSERT IGNORE INTO studio_settings (setting_key, setting_value) VALUES ('catalog_seeded', '1')"
     );
   }
   defaultsSeeded = true;
@@ -2140,6 +2188,190 @@ async function recordAppointmentPayment({
   }
 }
 
+/* ============================================================================
+   CONFIGURABLE SERVICE CATALOG (CATEGORIES & TREATMENTS)
+   ============================================================================ */
+async function listCatalogData() {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [catRows] = await pool.query('SELECT * FROM catalog_categories ORDER BY sort_order ASC, id ASC');
+  const [srvRows] = await pool.query('SELECT * FROM catalog_services ORDER BY sort_order ASC, id ASC');
+  const categories = catRows.map(normalizeCategoryRow).sort(sortByOrderThenId);
+  const services = srvRows.map(normalizeServiceRow).sort(sortByOrderThenId);
+  return {
+    categories,
+    services,
+    catalog: buildStructuredCatalog(categories, services, { includeInactive: true, storefrontOnly: false }),
+    activeCatalog: buildStructuredCatalog(categories, services, { includeInactive: false, storefrontOnly: false }),
+    storefrontCatalog: buildStructuredCatalog(categories, services, { includeInactive: false, storefrontOnly: true }),
+  };
+}
+
+async function listPublicCatalog() {
+  const data = await listCatalogData();
+  return data.storefrontCatalog;
+}
+
+async function createCatalogCategory({ title, motto = '', columnSide = 'right', sortOrder = 0, active = 1, slug = '' }) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const cleanTitle = String(title || '').trim().slice(0, 115);
+  if (!cleanTitle) {
+    const err = new Error('Inserisci il nome della categoria.');
+    err.status = 422;
+    throw err;
+  }
+  let resolvedSlug = String(slug || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '');
+  if (!resolvedSlug) resolvedSlug = slugifyCatalogKey(cleanTitle, 'cat');
+  const [dup] = await pool.query('SELECT id FROM catalog_categories WHERE slug = ? LIMIT 1', [resolvedSlug]);
+  if (dup.length > 0) {
+    resolvedSlug = slugifyCatalogKey(cleanTitle, 'cat');
+  }
+  const [ins] = await pool.query(
+    `INSERT INTO catalog_categories (slug, title, motto, column_side, sort_order, active)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [resolvedSlug, cleanTitle, String(motto || '').trim() || null, columnSide === 'left' ? 'left' : 'right', Number(sortOrder || 0), active ? 1 : 0]
+  );
+  const [rows] = await pool.query('SELECT * FROM catalog_categories WHERE id = ?', [Number(ins.insertId)]);
+  return rows[0] ? normalizeCategoryRow(rows[0]) : null;
+}
+
+async function updateCatalogCategory(id, updates = {}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query('SELECT * FROM catalog_categories WHERE id = ? LIMIT 1', [Number(id)]);
+  if (rows.length === 0) return null;
+  const existing = normalizeCategoryRow(rows[0]);
+  await pool.query(
+    `UPDATE catalog_categories
+     SET title = ?, motto = ?, column_side = ?, sort_order = ?, active = ?
+     WHERE id = ?`,
+    [
+      updates.title !== undefined ? String(updates.title || '').trim().slice(0, 115) || existing.title : existing.title,
+      updates.motto !== undefined ? String(updates.motto || '').trim() || null : existing.motto || null,
+      updates.columnSide !== undefined ? (updates.columnSide === 'left' ? 'left' : 'right') : existing.column_side,
+      updates.sortOrder !== undefined ? Number(updates.sortOrder || 0) : existing.sort_order,
+      updates.active !== undefined ? (updates.active ? 1 : 0) : existing.active,
+      id,
+    ]
+  );
+  const [after] = await pool.query('SELECT * FROM catalog_categories WHERE id = ? LIMIT 1', [Number(id)]);
+  return after[0] ? normalizeCategoryRow(after[0]) : null;
+}
+
+async function deleteCatalogCategory(id) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query('SELECT * FROM catalog_categories WHERE id = ? LIMIT 1', [Number(id)]);
+  if (rows.length === 0) return false;
+  const cat = rows[0];
+  const [cntRows] = await pool.query('SELECT COUNT(*) AS cnt FROM catalog_services WHERE category_slug = ?', [cat.slug]);
+  if (Number(cntRows[0]?.cnt || 0) > 0) {
+    const err = new Error('Sposta o elimina prima i trattamenti presenti in questa categoria.');
+    err.status = 409;
+    err.code = 'CATEGORY_NOT_EMPTY';
+    throw err;
+  }
+  await pool.query('DELETE FROM catalog_categories WHERE id = ?', [Number(id)]);
+  return true;
+}
+
+async function createCatalogService({
+  categorySlug,
+  subgroupLabel = '',
+  name,
+  price = 0,
+  durationMinutes = 30,
+  description = '',
+  sortOrder = 0,
+  active = 1,
+  showInStorefront = 1,
+  serviceKey = '',
+}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const cleanName = String(name || '').trim().slice(0, 155);
+  if (cleanName.length < 2) {
+    const err = new Error('Inserisci il nome del trattamento.');
+    err.status = 422;
+    throw err;
+  }
+  const cleanCat = String(categorySlug || '').trim();
+  const [catRows] = await pool.query('SELECT slug FROM catalog_categories WHERE slug = ? LIMIT 1', [cleanCat]);
+  if (catRows.length === 0) {
+    const err = new Error('Seleziona una categoria valida dal listino.');
+    err.status = 422;
+    throw err;
+  }
+  let resolvedKey = String(serviceKey || '').trim().replace(/[^a-zA-Z0-9_-]+/g, '');
+  if (!resolvedKey) resolvedKey = slugifyCatalogKey(cleanName, cleanCat.slice(0, 10) || 'srv');
+  const [dup] = await pool.query('SELECT id FROM catalog_services WHERE service_key = ? LIMIT 1', [resolvedKey]);
+  if (dup.length > 0) resolvedKey = slugifyCatalogKey(cleanName, cleanCat.slice(0, 10) || 'srv');
+
+  const [ins] = await pool.query(
+    `INSERT INTO catalog_services
+     (service_key, category_slug, subgroup_label, name, price, duration_minutes, description, sort_order, active, show_in_storefront)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      resolvedKey,
+      cleanCat,
+      String(subgroupLabel || '').trim() || null,
+      cleanName,
+      Math.max(0, Number(price || 0)).toFixed(2),
+      Math.max(5, Number.parseInt(durationMinutes || '30', 10) || 30),
+      String(description || '').trim() || null,
+      Number(sortOrder || 0),
+      active ? 1 : 0,
+      showInStorefront ? 1 : 0,
+    ]
+  );
+  const [rows] = await pool.query('SELECT * FROM catalog_services WHERE id = ?', [Number(ins.insertId)]);
+  return rows[0] ? normalizeServiceRow(rows[0]) : null;
+}
+
+async function updateCatalogService(id, updates = {}) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const [rows] = await pool.query('SELECT * FROM catalog_services WHERE id = ? LIMIT 1', [Number(id)]);
+  if (rows.length === 0) return null;
+  const existing = normalizeServiceRow(rows[0]);
+  const nextCat = updates.categorySlug !== undefined ? String(updates.categorySlug || '').trim() : existing.category_slug;
+  if (nextCat !== existing.category_slug) {
+    const [catRows] = await pool.query('SELECT slug FROM catalog_categories WHERE slug = ? LIMIT 1', [nextCat]);
+    if (catRows.length === 0) {
+      const err = new Error('Categoria selezionata non valida.');
+      err.status = 422;
+      throw err;
+    }
+  }
+  await pool.query(
+    `UPDATE catalog_services
+     SET category_slug = ?, subgroup_label = ?, name = ?, price = ?, duration_minutes = ?,
+         description = ?, sort_order = ?, active = ?, show_in_storefront = ?
+     WHERE id = ?`,
+    [
+      nextCat,
+      updates.subgroupLabel !== undefined ? String(updates.subgroupLabel || '').trim() || null : existing.subgroup_label || null,
+      updates.name !== undefined ? String(updates.name || '').trim().slice(0, 155) || existing.name : existing.name,
+      updates.price !== undefined ? Math.max(0, Number(updates.price || 0)).toFixed(2) : existing.price.toFixed(2),
+      updates.durationMinutes !== undefined ? Math.max(5, Number.parseInt(updates.durationMinutes || '30', 10) || 30) : existing.duration_minutes,
+      updates.description !== undefined ? String(updates.description || '').trim() || null : existing.description || null,
+      updates.sortOrder !== undefined ? Number(updates.sortOrder || 0) : existing.sort_order,
+      updates.active !== undefined ? (updates.active ? 1 : 0) : existing.active,
+      updates.showInStorefront !== undefined ? (updates.showInStorefront ? 1 : 0) : existing.show_in_storefront,
+      id,
+    ]
+  );
+  const [after] = await pool.query('SELECT * FROM catalog_services WHERE id = ? LIMIT 1', [Number(id)]);
+  return after[0] ? normalizeServiceRow(after[0]) : null;
+}
+
+async function deleteCatalogService(id) {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  await pool.query('DELETE FROM catalog_services WHERE id = ?', [Number(id)]);
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -2217,4 +2449,12 @@ module.exports = {
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,
   recordAppointmentPayment,
+  listCatalogData,
+  listPublicCatalog,
+  createCatalogCategory,
+  updateCatalogCategory,
+  deleteCatalogCategory,
+  createCatalogService,
+  updateCatalogService,
+  deleteCatalogService,
 };

@@ -2638,6 +2638,129 @@ app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
 });
 
 /* ============================================================================
+   CONFIGURABLE SERVICE CATALOG API (PUBLIC + ADMIN)
+   ============================================================================ */
+app.get('/api/public/catalog', async (_req, res, next) => {
+  try {
+    const store = getStore();
+    const catalog = await store.listPublicCatalog();
+    const totalCount = catalog.reduce(
+      (sum, cat) => sum + (cat.subgroups || []).reduce((s2, sg) => s2 + (sg.items || []).length, 0),
+      0
+    );
+    return res.json({ ok: true, catalog, total_count: totalCount });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.get('/api/admin/catalog', requireAdmin, async (_req, res, next) => {
+  try {
+    const store = getStore();
+    const data = await store.listCatalogData();
+    return res.json({ ok: true, ...data });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/catalog', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const body = req.body || {};
+    const action = String(body.action || 'create_service').trim();
+    let affectedService = null;
+    let affectedCategory = null;
+
+    if (action === 'create_category') {
+      affectedCategory = await store.createCatalogCategory({
+        title: body.title,
+        motto: body.motto,
+        columnSide: body.column_side === 'left' ? 'left' : 'right',
+        sortOrder: Number(body.sort_order ?? 100) || 100,
+        active: body.active !== undefined ? (body.active ? 1 : 0) : 1,
+        slug: body.slug || '',
+      });
+    } else if (action === 'update_category') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID categoria mancante.', 400);
+      affectedCategory = await store.updateCatalogCategory(id, {
+        title: body.title,
+        motto: body.motto,
+        columnSide: body.column_side,
+        sortOrder: body.sort_order,
+        active: body.active,
+      });
+      if (!affectedCategory) return sendError(res, 'Categoria non trovata.', 404);
+    } else if (action === 'toggle_category') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      const list = await store.listCatalogData();
+      const existing = list.categories.find((c) => Number(c.id) === id);
+      if (!existing) return sendError(res, 'Categoria non trovata.', 404);
+      affectedCategory = await store.updateCatalogCategory(id, {
+        active: body.active !== undefined ? Boolean(body.active) : Number(existing.active) !== 1,
+      });
+    } else if (action === 'delete_category') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID categoria mancante.', 400);
+      await store.deleteCatalogCategory(id);
+    } else if (action === 'create_service') {
+      affectedService = await store.createCatalogService({
+        categorySlug: body.category_slug,
+        subgroupLabel: body.subgroup_label,
+        name: body.name,
+        price: Number(body.price || 0),
+        durationMinutes: Number(body.duration_minutes || 30),
+        description: body.description,
+        sortOrder: Number(body.sort_order ?? 100) || 100,
+        active: body.active !== undefined ? (body.active ? 1 : 0) : 1,
+        showInStorefront: body.show_in_storefront !== undefined ? (body.show_in_storefront ? 1 : 0) : 1,
+        serviceKey: body.service_key || '',
+      });
+    } else if (action === 'update_service') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID trattamento mancante.', 400);
+      affectedService = await store.updateCatalogService(id, {
+        categorySlug: body.category_slug,
+        subgroupLabel: body.subgroup_label,
+        name: body.name,
+        price: body.price,
+        durationMinutes: body.duration_minutes,
+        description: body.description,
+        sortOrder: body.sort_order,
+        active: body.active,
+        showInStorefront: body.show_in_storefront,
+      });
+      if (!affectedService) return sendError(res, 'Trattamento non trovato.', 404);
+    } else if (action === 'toggle_service') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      const list = await store.listCatalogData();
+      const existing = list.services.find((s) => Number(s.id) === id);
+      if (!existing) return sendError(res, 'Trattamento non trovato.', 404);
+      affectedService = await store.updateCatalogService(id, {
+        active: body.active !== undefined ? Boolean(body.active) : Number(existing.active) !== 1,
+      });
+    } else if (action === 'delete_service') {
+      const id = Number.parseInt(body.id || '0', 10) || 0;
+      if (id <= 0) return sendError(res, 'ID trattamento mancante.', 400);
+      await store.deleteCatalogService(id);
+    } else {
+      return sendError(res, 'Azione listino non supportata.', 400);
+    }
+
+    const updatedData = await store.listCatalogData();
+    return res.status(action.startsWith('create_') ? 201 : 200).json({
+      ok: true,
+      ...updatedData,
+      service: affectedService,
+      category: affectedCategory,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/* ============================================================================
    STATIC FRONTEND & GLOBAL API ERROR HANDLER
    ============================================================================ */
 app.use(express.static(ROOT_DIR, { extensions: ['html'] }));
