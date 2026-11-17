@@ -1229,7 +1229,7 @@ async function runApiSuite() {
     const prevAiModel = process.env.AI_MODEL;
     process.env.AI_API_KEY = 'sk-ol-ci-mock-key';
     process.env.AI_BASE_URL = 'https://openlimits.app/v1';
-    process.env.AI_MODEL = 'openai/gpt-6-luna';
+    process.env.AI_MODEL = 'anthropic/claude-haiku-4.5';
 
     let capturedAiReq = null;
     globalThis.__GBS_AI_FETCH__ = async (url, opts) => {
@@ -1241,7 +1241,7 @@ async function runApiSuite() {
       return new Response(
         JSON.stringify({
           id: 'chatcmpl-ci-1',
-          model: 'openai/gpt-6-luna',
+          model: 'anthropic/claude-haiku-4.5',
           choices: [{ message: { role: 'assistant', content: 'Ciao Giulia, ecco i dati aggiornati dello studio.' } }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -1260,7 +1260,7 @@ async function runApiSuite() {
         history: [{ role: 'user', content: 'Ciao' }, { role: 'assistant', content: 'Ciao Giulia!' }],
       });
       assert.strictEqual(aiChatRes.status, 200);
-      assert.strictEqual(aiChatRes.json.engine, 'ai (openai/gpt-6-luna)');
+      assert.strictEqual(aiChatRes.json.engine, 'ai (anthropic/claude-haiku-4.5)');
       assert(aiChatRes.json.answer.includes('Ciao Giulia'));
       assert.strictEqual(capturedAiReq.url, 'https://openlimits.app/v1/chat/completions');
       assert.strictEqual(capturedAiReq.auth, 'Bearer sk-ol-ci-mock-key');

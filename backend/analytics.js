@@ -846,7 +846,7 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
 
     if (aiApiKey) {
       const baseUrl = String(process.env.AI_BASE_URL || 'https://openlimits.app/v1').trim();
-      const model = String(process.env.AI_MODEL || 'openai/gpt-6-luna').trim();
+      const model = String(process.env.AI_MODEL || 'anthropic/claude-haiku-4.5').trim();
       const remoteRes = await callOpenAiCompatibleChat({
         apiKey: aiApiKey,
         baseUrl,
