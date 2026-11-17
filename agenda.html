@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="admin.css?v=20" />
+  <link rel="stylesheet" href="admin.css?v=21" />
 </head>
 <body>
 
@@ -29,53 +29,86 @@
   <div id="adminWorkspace" class="admin-workspace" hidden>
     <!-- Top Header -->
     <header class="admin-header">
-      <div class="admin-header-left">
-        <img src="assets/logo-monogram.png" alt="GB" class="admin-header-logo" />
-        <div>
-          <strong class="admin-brand-title">GIULIA BEAUTY STUDIO</strong>
-          <span class="admin-brand-sub" id="adminWelcomeLabel">Gestionale Agenda &amp; CRM</span>
+      <div class="admin-header-top">
+        <div class="admin-header-left">
+          <img src="assets/logo-monogram.png" alt="GB" class="admin-header-logo" />
+          <div>
+            <strong class="admin-brand-title">GIULIA BEAUTY STUDIO</strong>
+            <span class="admin-brand-sub" id="adminWelcomeLabel">Gestionale Agenda &amp; CRM</span>
+          </div>
+        </div>
+
+        <div class="admin-header-actions">
+          <button type="button" class="btn-outline-sm" id="openRemindersModalBtn" title="Invia promemoria WhatsApp per gli appuntamenti di domani">
+            📲 Promemoria Domani (<span id="tomorrowRemindersBadge">0</span>)
+          </button>
+          <button type="button" class="btn-primary-admin" id="newApptQuickBtn">
+            + Nuovo Appuntamento
+          </button>
+          <a href="index.html" class="btn-ghost-admin" title="Apri sito pubblico">Sito</a>
+          <button type="button" class="btn-ghost-admin" id="logoutBtn">Esci</button>
         </div>
       </div>
 
-      <nav class="admin-tabs" role="tablist" aria-label="Sezioni gestionale">
-        <button type="button" class="admin-tab-btn active" data-view="agenda">
-          📅 Agenda
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="clients">
-          👩 Clienti &amp; Privacy
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="inventory">
-          📦 Magazzino
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="messages">
-          💬 Messaggi
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="giftcards">
-          🎁 Gift Card
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="promotions">
-          🏷️ Promo Mese <span class="tab-mini-badge" id="promoNavBadge" hidden>0</span>
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="catalog">
-          💅 Listino <span class="tab-mini-badge" id="catalogNavBadge" hidden>0</span>
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="insights">
-          ✨ AI &amp; Report
-        </button>
-        <button type="button" class="admin-tab-btn" data-view="settings">
-          ⚙️ Staff &amp; Impostazioni
-        </button>
-      </nav>
-
-      <div class="admin-header-actions">
-        <button type="button" class="btn-outline-sm" id="openRemindersModalBtn" title="Invia promemoria WhatsApp per gli appuntamenti di domani">
-          📲 Promemoria Domani (<span id="tomorrowRemindersBadge">0</span>)
-        </button>
-        <button type="button" class="btn-primary-admin" id="newApptQuickBtn">
-          + Nuovo Appuntamento
-        </button>
-        <a href="index.html" class="btn-ghost-admin" title="Apri sito pubblico">Sito</a>
-        <button type="button" class="btn-ghost-admin" id="logoutBtn">Esci</button>
+      <div class="admin-tabs-bar">
+        <nav class="admin-tabs" role="tablist" aria-label="Sezioni gestionale">
+          <button type="button" class="admin-tab-btn active" data-view="agenda" role="tab" aria-selected="true">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2.5"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            </span>
+            <span class="admin-tab-label">Agenda</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="clients" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+            <span class="admin-tab-label">Clienti &amp; Privacy</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="inventory" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
+            </span>
+            <span class="admin-tab-label">Magazzino</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="messages" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>
+            </span>
+            <span class="admin-tab-label">Messaggi</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="giftcards" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5"/></svg>
+            </span>
+            <span class="admin-tab-label">Gift Card</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="promotions" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".9" fill="currentColor"/></svg>
+            </span>
+            <span class="admin-tab-label">Promo Mese</span>
+            <span class="tab-mini-badge" id="promoNavBadge" hidden>0</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="catalog" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h8M8 11h6"/></svg>
+            </span>
+            <span class="admin-tab-label">Listino</span>
+            <span class="tab-mini-badge" id="catalogNavBadge" hidden>0</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="insights" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+            </span>
+            <span class="admin-tab-label">AI &amp; Report</span>
+          </button>
+          <button type="button" class="admin-tab-btn" data-view="settings" role="tab" aria-selected="false">
+            <span class="admin-tab-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>
+            </span>
+            <span class="admin-tab-label">Staff &amp; Impostazioni</span>
+          </button>
+        </nav>
       </div>
     </header>
 
@@ -1876,6 +1909,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=23"></script>
+  <script src="admin.js?v=24"></script>
 </body>
 </html>

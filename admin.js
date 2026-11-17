@@ -2299,7 +2299,12 @@ function switchAdminView(viewName) {
   }
   STATE.activeView = viewName;
   document.querySelectorAll('.admin-tab-btn').forEach((b) => {
-    b.classList.toggle('active', b.dataset.view === viewName);
+    const isActive = b.dataset.view === viewName;
+    b.classList.toggle('active', isActive);
+    b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    if (isActive && b.parentElement && b.parentElement.scrollWidth > b.parentElement.clientWidth + 4) {
+      b.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
   });
   ALL_ADMIN_VIEWS.forEach((v) => {
     const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
