@@ -5368,7 +5368,132 @@ function appendAiChatBubblePair(role, { html = '', isLoading = false } = {}) {
   return created;
 }
 
+let __activeVoiceDictation = null;
+
+function stopActiveVoiceDictation() {
+  if (__activeVoiceDictation && typeof __activeVoiceDictation.stop === 'function') {
+    __activeVoiceDictation.stop();
+  }
+}
+
+function bindVoiceDictationButton({ btnId, inputId }) {
+  const btnEl = document.getElementById(btnId);
+  const inputEl = document.getElementById(inputId);
+  if (!btnEl || !inputEl || btnEl.dataset.micBound === '1') return;
+  btnEl.dataset.micBound = '1';
+
+  const getCtor = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  if (!getCtor()) {
+    btnEl.classList.add('is-unsupported');
+  }
+
+  let recognition = null;
+  let prevPlaceholder = inputEl.placeholder || '';
+  let basePrefix = '';
+
+  const cleanup = () => {
+    btnEl.classList.remove('is-listening');
+    btnEl.setAttribute('aria-pressed', 'false');
+    btnEl.title = 'Dettatura vocale (Italiano)';
+    btnEl.setAttribute('aria-label', 'Avvia dettatura vocale');
+    inputEl.classList.remove('is-dictating');
+    inputEl.placeholder = prevPlaceholder;
+    if (__activeVoiceDictation && __activeVoiceDictation.btnEl === btnEl) {
+      __activeVoiceDictation = null;
+    }
+    recognition = null;
+  };
+
+  const stopThis = () => {
+    const rec = recognition;
+    recognition = null;
+    if (rec) {
+      try {
+        rec.stop();
+      } catch {
+        // ignore if already stopped
+      }
+    }
+    cleanup();
+  };
+
+  btnEl.addEventListener('click', () => {
+    const Ctor = getCtor();
+    if (!Ctor) {
+      btnEl.classList.add('is-unsupported');
+      showAgendaToast('Dettatura vocale non supportata su questo browser: usa Chrome, Edge o Safari.', 'error');
+      return;
+    }
+
+    if (recognition && btnEl.classList.contains('is-listening')) {
+      stopThis();
+      inputEl.focus();
+      return;
+    }
+
+    stopActiveVoiceDictation();
+    btnEl.classList.remove('is-unsupported');
+    prevPlaceholder = inputEl.getAttribute('placeholder') || '';
+    basePrefix = inputEl.value.trim() ? `${inputEl.value.trimEnd()} ` : '';
+
+    try {
+      const rec = new Ctor();
+      rec.lang = 'it-IT';
+      rec.interimResults = true;
+      rec.continuous = true;
+      rec.maxAlternatives = 1;
+      recognition = rec;
+
+      __activeVoiceDictation = { btnEl, stop: stopThis };
+      btnEl.classList.add('is-listening');
+      btnEl.setAttribute('aria-pressed', 'true');
+      btnEl.title = 'Ascolto in corso… clicca per fermare';
+      btnEl.setAttribute('aria-label', 'Ferma dettatura vocale');
+      inputEl.classList.add('is-dictating');
+      inputEl.placeholder = '🎤 Sto ascoltando… parla ora';
+      inputEl.focus();
+
+      rec.onresult = (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const piece = event.results[i]?.[0]?.transcript || '';
+          transcript += piece;
+        }
+        const combined = `${basePrefix}${transcript}`.replace(/\s+/g, ' ').trimStart();
+        inputEl.value = combined;
+      };
+
+      rec.onerror = (event) => {
+        const code = String(event?.error || '');
+        if (code !== 'aborted') {
+          if (code === 'not-allowed' || code === 'service-not-allowed') {
+            showAgendaToast("Consenti l'accesso al microfono dal browser per usare la dettatura.", 'error');
+          } else if (code === 'no-speech') {
+            showAgendaToast('Nessuna voce rilevata: riprova a parlare.');
+          } else if (code === 'audio-capture') {
+            showAgendaToast('Nessun microfono rilevato sul dispositivo.', 'error');
+          } else if (code === 'network') {
+            showAgendaToast('Errore di rete durante il riconoscimento vocale.', 'error');
+          }
+        }
+        cleanup();
+      };
+
+      rec.onend = () => {
+        cleanup();
+        inputEl.focus();
+      };
+
+      rec.start();
+    } catch (err) {
+      cleanup();
+      showAgendaToast(err?.message || 'Impossibile avviare la dettatura vocale.', 'error');
+    }
+  });
+}
+
 function resetAiConversationThreads() {
+  stopActiveVoiceDictation();
   STATE.aiChatHistory = [];
   const tabBox = document.getElementById('aiChatMessages');
   if (tabBox) {
@@ -5392,6 +5517,8 @@ function toggleFloatingAiWidget(forceOpen = null) {
     const box = document.getElementById('aiWidgetMessages');
     if (box) box.scrollTop = box.scrollHeight;
     document.getElementById('aiWidgetInput')?.focus();
+  } else {
+    stopActiveVoiceDictation();
   }
 }
 
@@ -5404,6 +5531,9 @@ function initFloatingAiWidget() {
   if (!fab || fab.dataset.bound === '1') return;
   fab.dataset.bound = '1';
 
+  bindVoiceDictationButton({ btnId: 'aiWidgetMicBtn', inputId: 'aiWidgetInput' });
+  bindVoiceDictationButton({ btnId: 'aiChatMicBtn', inputId: 'aiQuestionInput' });
+
   fab.addEventListener('click', () => toggleFloatingAiWidget());
   closeBtn?.addEventListener('click', () => toggleFloatingAiWidget(false));
   resetBtn?.addEventListener('click', () => {
@@ -5413,6 +5543,7 @@ function initFloatingAiWidget() {
 
   form?.addEventListener('submit', (e) => {
     e.preventDefault();
+    stopActiveVoiceDictation();
     const q = (input?.value || '').trim();
     if (!q) return;
     if (input) input.value = '';
@@ -5438,6 +5569,7 @@ function initFloatingAiWidget() {
 }
 
 async function sendAiQuestion(question) {
+  stopActiveVoiceDictation();
   const qText = String(question || '').trim();
   if (!qText || __sendingAiQuestion) return;
   const containers = getAiMessageContainers();

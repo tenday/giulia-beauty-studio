@@ -2012,7 +2012,59 @@ body {
 
 .ai-chat-form {
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+
+.ai-mic-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: #fdf6f5;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.15s ease;
+}
+
+.ai-mic-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ai-mic-btn:hover {
+  background: var(--bg-soft);
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.ai-mic-btn.is-listening {
+  background: #b91c3a;
+  border-color: #b91c3a;
+  color: #fffbfa;
+  animation: aiMicPulse 1.3s infinite ease-in-out;
+}
+
+.ai-mic-btn.is-unsupported {
+  opacity: 0.55;
+}
+
+.form-control.is-dictating {
+  border-color: #b91c3a !important;
+  background: #fff7f8 !important;
+}
+
+@keyframes aiMicPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(185, 28, 58, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(185, 28, 58, 0);
+  }
 }
 
 /* ==========================================================================

@@ -1408,7 +1408,8 @@ function checkGdprDefaults() {
   assert(!serverJs.includes('sendWhatsAppCloudMessage') && !whatsappJs.includes('graph.facebook.com'), 'Nessun riferimento a Meta Graph API deve restare');
   assert(adminJs.includes('async function sendWhatsAppSemiautomatic('), 'admin.js deve usare sendWhatsAppSemiautomatic');
   assert(agendaHtml.includes('id="aiWidgetFab"') && agendaHtml.includes('id="aiWidgetPanel"'), 'agenda.html deve contenere il chatbot AI flottante sempre richiamabile');
-  assert(adminJs.includes('function initFloatingAiWidget('), 'admin.js deve inizializzare initFloatingAiWidget');
+  assert(agendaHtml.includes('id="aiWidgetMicBtn"') && agendaHtml.includes('id="aiChatMicBtn"'), 'agenda.html deve esporre i pulsanti dettatura vocale in chat');
+  assert(adminJs.includes('function initFloatingAiWidget(') && adminJs.includes('function bindVoiceDictationButton('), 'admin.js deve inizializzare widget AI e dettatura vocale');
   assert(!adminJs.includes('sk-ol-') && !agendaHtml.includes('sk-ol-'), 'Nessuna API key deve comparire lato client');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
