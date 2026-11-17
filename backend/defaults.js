@@ -129,24 +129,8 @@ const DEFAULT_MONTHLY_PROMOTIONS = [
 ];
 
 const DEFAULT_WHATSAPP_SETTINGS = {
-  enabled: false,
-  phone_number_id: '',
-  business_account_id: '',
-  access_token: '',
-  api_version: 'v21.0',
-  cron_secret: '',
-  fallback_to_wa_me: true,
-  auto_booking_confirmed: true,
-  auto_privacy_otp: true,
-  auto_reminder_tomorrow: true,
-  reminder_send_hour: 10,
-  auto_birthday_wishes: true,
-  birthday_send_hour: 9,
-  auto_winback_inactive: true,
-  winback_inactive_days: 45,
-  winback_cooldown_days: 30,
-  winback_send_hour: 11,
-  winback_max_per_run: 25,
+  mode: 'wa_me',
+  semiautomatic: true,
 };
 
 const DEFAULT_PAYMENT_SETTINGS = {

@@ -16,9 +16,8 @@ const {
   parseOperatorSchedule,
 } = require('./backend/availability');
 const {
-  sanitizeWhatsAppSettingsForClient,
-  mergeWhatsAppSettingsUpdate,
-  sendWhatsAppCloudMessage,
+  buildWaMeUrl,
+  getWhatsAppModeStatus,
 } = require('./backend/whatsapp');
 const {
   PAYMENT_STATUS_LABELS,
@@ -40,9 +39,6 @@ const {
 } = require('./backend/payments');
 const {
   dispatchWhatsAppMessage,
-  loadWhatsAppRuntimeConfig,
-  runAutomationSuite,
-  startAutomationScheduler,
   formatShortItDate,
 } = require('./backend/jobs');
 const {
@@ -774,39 +770,6 @@ app.post('/api/public/book', async (req, res, next) => {
       }
     }
 
-    let whatsappDispatch = null;
-    if (mode === 'booking') {
-      try {
-        const waCfg = await loadWhatsAppRuntimeConfig(store);
-        if (waCfg.isActive && waCfg.auto_booking_confirmed) {
-          const ops = await store.listOperators(false);
-          const opName = ops.find((o) => Number(o.id) === Number(operatorId))?.name || 'Giulia';
-          whatsappDispatch = await dispatchWhatsAppMessage({
-            store,
-            configOverride: waCfg,
-            toPhone: phoneNormalized || clientPhoneRaw,
-            recipientName: clientName,
-            clientId: created.clientId,
-            appointmentId: created.appointmentId,
-            templateCode: 'booking_confirmed',
-            vars: {
-              nome: clientName,
-              data: formatShortItDate(appointmentDate),
-              ora: startTime,
-              trattamenti: servicesSummary,
-              servizi: servicesSummary,
-              operatore: opName,
-              codice: created.bookingCode,
-            },
-            triggerSource: 'auto_booking',
-            allowFallback: false,
-          });
-        }
-      } catch (waErr) {
-        console.error('[Giulia Beauty Studio] Errore auto-invio conferma booking WA:', waErr?.message || waErr);
-      }
-    }
-
     return res.status(201).json({
       ok: true,
       booking_code: created.bookingCode,
@@ -814,7 +777,7 @@ app.post('/api/public/book', async (req, res, next) => {
       client_id: created.clientId,
       privacy_accepted_at: nowStr,
       privacy_version: privacyVersion,
-      whatsapp_sent: Boolean(whatsappDispatch?.sent),
+      whatsapp_sent: false,
       requires_stripe_redirect: false,
     });
   } catch (err) {
@@ -880,37 +843,6 @@ async function applyStripePaidSession(store, session, stripeCfg, bookingCodeHint
     statusOverride: nextApptStatus,
     nowStr: formatRomeNow(),
   });
-
-  if (!payRes.duplicate && payRes.appointment && payRes.appointment.mode === 'booking') {
-    try {
-      const waCfg = await loadWhatsAppRuntimeConfig(store);
-      if (waCfg.isActive && waCfg.auto_booking_confirmed) {
-        const updatedAppt = payRes.appointment;
-        await dispatchWhatsAppMessage({
-          store,
-          configOverride: waCfg,
-          toPhone: normalizePhone(updatedAppt.client_phone) || updatedAppt.client_phone,
-          recipientName: updatedAppt.client_name,
-          clientId: updatedAppt.client_id,
-          appointmentId: updatedAppt.id,
-          templateCode: 'booking_confirmed',
-          vars: {
-            nome: updatedAppt.client_name,
-            data: formatShortItDate(updatedAppt.appointment_date),
-            ora: String(updatedAppt.start_time || '').slice(0, 5),
-            trattamenti: updatedAppt.services_summary || 'Trattamenti',
-            servizi: updatedAppt.services_summary || 'Trattamenti',
-            operatore: updatedAppt.operator_name || 'Giulia',
-            codice: updatedAppt.booking_code,
-          },
-          triggerSource: 'auto_booking',
-          allowFallback: false,
-        });
-      }
-    } catch (waErr) {
-      console.error('[Giulia Beauty Studio] Errore auto-invio conferma WA post-Stripe:', waErr?.message || waErr);
-    }
-  }
 
   return { found: true, paid: true, ...payRes };
 }
@@ -992,36 +924,6 @@ app.post('/api/public/payment-fallback-studio', async (req, res, next) => {
     }
 
     const updated = await store.fallbackAppointmentToStudioPayment(appt.id);
-    if (updated && updated.mode === 'booking') {
-      try {
-        const waCfg = await loadWhatsAppRuntimeConfig(store);
-        if (waCfg.isActive && waCfg.auto_booking_confirmed) {
-          await dispatchWhatsAppMessage({
-            store,
-            configOverride: waCfg,
-            toPhone: normalizePhone(updated.client_phone) || updated.client_phone,
-            recipientName: updated.client_name,
-            clientId: updated.client_id,
-            appointmentId: updated.id,
-            templateCode: 'booking_confirmed',
-            vars: {
-              nome: updated.client_name,
-              data: formatShortItDate(updated.appointment_date),
-              ora: String(updated.start_time || '').slice(0, 5),
-              trattamenti: updated.services_summary || 'Trattamenti',
-              servizi: updated.services_summary || 'Trattamenti',
-              operatore: updated.operator_name || 'Giulia',
-              codice: updated.booking_code,
-            },
-            triggerSource: 'auto_booking',
-            allowFallback: false,
-          });
-        }
-      } catch {
-        // best effort
-      }
-    }
-
     return res.json({ ok: true, receipt: formatPublicPaymentReceipt(updated) });
   } catch (err) {
     return next(err);
@@ -1392,44 +1294,39 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
     });
 
     let whatsappDispatch = null;
-    if (apptMode === 'booking' && apptStatus === 'confirmed' && body.send_whatsapp !== false) {
+    if (apptMode === 'booking' && apptStatus === 'confirmed' && body.send_whatsapp === true) {
       try {
-        const waCfg = await loadWhatsAppRuntimeConfig(store);
-        if (waCfg.isActive && waCfg.auto_booking_confirmed) {
-          const [ops, clientList] = await Promise.all([
-            store.listOperators(false),
-            clientId > 0 ? store.listClients('') : Promise.resolve([]),
-          ]);
-          const opName = ops.find((o) => Number(o.id) === Number(apptOperatorId))?.name || 'Giulia';
-          const resolvedClient = clientId > 0 ? clientList.find((c) => Number(c.id) === Number(clientId)) : null;
-          const targetPhone = resolvedClient?.phone || clientPhone;
-          const targetName = resolvedClient?.full_name || clientName;
-          if (targetPhone) {
-            whatsappDispatch = await dispatchWhatsAppMessage({
-              store,
-              configOverride: waCfg,
-              toPhone: targetPhone,
-              recipientName: targetName,
-              clientId: created.clientId,
-              appointmentId: created.id,
-              templateCode: 'booking_confirmed',
-              vars: {
-                nome: targetName,
-                data: formatShortItDate(date),
-                ora: time,
-                trattamenti: servicesSummary,
-                servizi: servicesSummary,
-                operatore: opName,
-                codice: created.bookingCode,
-              },
-              adminId: req.admin?.id || null,
-              triggerSource: 'auto_booking',
-              allowFallback: false,
-            });
-          }
+        const [ops, clientList] = await Promise.all([
+          store.listOperators(false),
+          clientId > 0 ? store.listClients('') : Promise.resolve([]),
+        ]);
+        const opName = ops.find((o) => Number(o.id) === Number(apptOperatorId))?.name || 'Giulia';
+        const resolvedClient = clientId > 0 ? clientList.find((c) => Number(c.id) === Number(clientId)) : null;
+        const targetPhone = resolvedClient?.phone || clientPhone;
+        const targetName = resolvedClient?.full_name || clientName;
+        if (targetPhone) {
+          whatsappDispatch = await dispatchWhatsAppMessage({
+            store,
+            toPhone: targetPhone,
+            recipientName: targetName,
+            clientId: created.clientId,
+            appointmentId: created.id,
+            templateCode: 'booking_confirmed',
+            vars: {
+              nome: targetName,
+              data: formatShortItDate(date),
+              ora: time,
+              trattamenti: servicesSummary,
+              servizi: servicesSummary,
+              operatore: opName,
+              codice: created.bookingCode,
+            },
+            adminId: req.admin?.id || null,
+            triggerSource: 'manual',
+          });
         }
       } catch (waErr) {
-        console.error('[Giulia Beauty Studio] Errore auto-invio conferma agenda WA:', waErr?.message || waErr);
+        console.error('[Giulia Beauty Studio] Errore preparazione WA conferma agenda:', waErr?.message || waErr);
       }
     }
 
@@ -1443,6 +1340,8 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
         ? {
             sent: whatsappDispatch.sent,
             sent_via: whatsappDispatch.sent_via,
+            wa_url: whatsappDispatch.wa_url || whatsappDispatch.fallback_url || null,
+            message_text: whatsappDispatch.message_text || '',
             error: whatsappDispatch.error || null,
           }
         : null,
@@ -1707,29 +1606,42 @@ app.post('/api/admin/clients/:id/privacy-request', requireAdmin, async (req, res
     });
 
     let whatsappDispatch = null;
-    const autoSendRequested = req.body?.auto_send !== false;
-    if (autoSendRequested && created?.client?.phone) {
-      const waCfg = await loadWhatsAppRuntimeConfig(store);
-      if (waCfg.isActive && waCfg.auto_privacy_otp) {
-        const origin = getRequestOrigin(req);
-        const signUrl = `${origin}/privacy-sign.html?token=${encodeURIComponent(created.token)}`;
-        whatsappDispatch = await dispatchWhatsAppMessage({
-          store,
-          configOverride: waCfg,
-          toPhone: created.client.phone,
-          recipientName: created.client.full_name,
-          clientId,
-          templateCode: 'privacy_sign',
-          vars: {
-            nome: created.client.full_name,
-            link: signUrl,
-            otp: created.otp_code,
-          },
-          adminId: req.admin?.id || null,
-          triggerSource: 'auto_privacy',
-          allowFallback: Boolean(waCfg.fallback_to_wa_me),
-        });
-      }
+    const origin = getRequestOrigin(req);
+    const signUrl = `${origin}/privacy-sign.html?token=${encodeURIComponent(created.token)}`;
+    const vars = {
+      nome: created?.client?.full_name || 'Cliente',
+      link: signUrl,
+      otp: created.otp_code,
+    };
+
+    const sendWaRequested = req.body?.send_whatsapp !== false && req.body?.auto_send !== false;
+    if (sendWaRequested && created?.client?.phone) {
+      whatsappDispatch = await dispatchWhatsAppMessage({
+        store,
+        toPhone: created.client.phone,
+        recipientName: created.client.full_name,
+        clientId,
+        templateCode: 'privacy_sign',
+        vars,
+        adminId: req.admin?.id || null,
+        triggerSource: 'auto_privacy',
+      });
+    } else {
+      const templates = await store.listMessageTemplates();
+      const tpl = templates.find((t) => t.code === 'privacy_sign');
+      const fallbackBody = tpl?.body_template || 'Ciao {nome} ♡ Completa la firma Privacy GDPR qui: {link}\nCodice OTP: *{otp}*';
+      const rendered = fallbackBody
+        .replace(/\{nome\}/g, vars.nome)
+        .replace(/\{link\}/g, vars.link)
+        .replace(/\{otp\}/g, vars.otp);
+      whatsappDispatch = {
+        ok: false,
+        sent: false,
+        sent_via: 'wa_me',
+        wa_url: buildWaMeUrl(created?.client?.phone || '', rendered),
+        fallback_url: buildWaMeUrl(created?.client?.phone || '', rendered),
+        message_text: rendered,
+      };
     }
 
     return res.status(201).json({ ok: true, request: created, whatsapp_dispatch: whatsappDispatch });
@@ -1845,19 +1757,18 @@ function getRequestOrigin(req) {
   return host ? `${proto}://${host}` : '';
 }
 
-app.get('/api/admin/messages', requireAdmin, async (req, res, next) => {
+app.get('/api/admin/messages', requireAdmin, async (_req, res, next) => {
   try {
     const store = getStore();
-    const [templates, logs, waConfig] = await Promise.all([
+    const [templates, logs] = await Promise.all([
       store.listMessageTemplates(),
       store.listMessageLogs(120),
-      loadWhatsAppRuntimeConfig(store),
     ]);
     return res.json({
       ok: true,
       templates,
       logs,
-      whatsapp_status: sanitizeWhatsAppSettingsForClient(waConfig, getRequestOrigin(req)),
+      whatsapp_status: getWhatsAppModeStatus(),
     });
   } catch (err) {
     return next(err);
@@ -1938,191 +1849,29 @@ app.post('/api/admin/whatsapp/send', requireAdmin, async (req, res, next) => {
       customText: String(body.message_text || '').trim(),
       adminId: req.admin?.id || null,
       triggerSource: String(body.trigger_source || 'manual').trim().slice(0, 40) || 'manual',
-      allowFallback: body.allow_fallback !== false,
     });
 
-    if (!result.ok && !result.fallback_url) {
-      return res.status(result.sent_via === 'empty_message' ? 422 : 502).json({
+    if (!result.ok) {
+      return res.status(result.sent_via === 'empty_message' || result.sent_via === 'invalid_phone' ? 422 : 400).json({
         ok: false,
         sent: false,
         sent_via: result.sent_via,
-        error: result.error || 'Invio WhatsApp non riuscito.',
+        error: result.error || 'Impossibile preparare il messaggio WhatsApp.',
+        wa_url: result.wa_url || null,
+        fallback_url: result.fallback_url || null,
         log: result.log || null,
       });
     }
 
     return res.status(200).json({
       ok: true,
-      sent: result.sent,
+      sent: true,
       sent_via: result.sent_via,
-      external_message_id: result.external_message_id,
+      wa_url: result.wa_url,
       fallback_url: result.fallback_url,
-      warning: result.warning || null,
-      error: result.error || null,
+      message_text: result.message_text,
       log: result.log,
     });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.post('/api/admin/whatsapp/send-reminders-batch', requireAdmin, async (_req, res, next) => {
-  try {
-    const store = getStore();
-    const suiteRes = await runAutomationSuite({
-      store,
-      reason: 'manual',
-      onlyJob: 'reminder_tomorrow',
-      force: true,
-    });
-    const jobRes = (suiteRes.results || [])[0] || { sent: 0, failed: 0, skipped: 0, processed: 0 };
-    return res.json({
-      ok: true,
-      active: suiteRes.active,
-      message: suiteRes.message || null,
-      ...jobRes,
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.get('/api/admin/automation', requireAdmin, async (req, res, next) => {
-  try {
-    const store = getStore();
-    const [config, runs] = await Promise.all([
-      loadWhatsAppRuntimeConfig(store),
-      store.listAutomationRuns(30),
-    ]);
-    return res.json({
-      ok: true,
-      settings: sanitizeWhatsAppSettingsForClient(config, getRequestOrigin(req)),
-      runs,
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.post('/api/admin/automation/settings', requireAdmin, async (req, res, next) => {
-  try {
-    const store = getStore();
-    const existing = (await store.getStudioSetting('whatsapp_automation')) || {};
-    const merged = mergeWhatsAppSettingsUpdate(existing, req.body || {});
-    const saved = await store.saveStudioSetting('whatsapp_automation', merged);
-    const resolved = await loadWhatsAppRuntimeConfig(store);
-    return res.json({
-      ok: true,
-      settings: sanitizeWhatsAppSettingsForClient({ ...resolved, updated_at: saved.updated_at }, getRequestOrigin(req)),
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.post('/api/admin/automation/run', requireAdmin, async (req, res, next) => {
-  try {
-    const store = getStore();
-    const body = req.body || {};
-    const onlyJob = String(body.job_name || '').trim();
-    const suiteRes = await runAutomationSuite({
-      store,
-      reason: 'manual',
-      onlyJob,
-      force: true,
-    });
-    const runs = await store.listAutomationRuns(30);
-    return res.json({ ok: true, ...suiteRes, runs });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.post('/api/admin/automation/test-whatsapp', requireAdmin, async (req, res, next) => {
-  try {
-    const store = getStore();
-    const body = req.body || {};
-    const toPhone = String(body.to_phone || '').trim();
-    if (!toPhone) {
-      return sendError(res, 'Inserisci un numero di telefono destinatario per il test.', 422);
-    }
-
-    const config = await loadWhatsAppRuntimeConfig(store);
-    const metaTemplateName = String(body.meta_template_name || '').trim();
-    const messageText = String(body.message_text || '').trim() ||
-      'Messaggio di verifica da *Giulia Beauty Studio* ✨ La connessione WhatsApp Business Cloud API funziona correttamente!';
-
-    const cloudRes = await sendWhatsAppCloudMessage({
-      config,
-      toPhone,
-      messageText,
-      metaTemplateName,
-      metaTemplateLang: String(body.meta_template_lang || 'en_US').trim() || 'en_US',
-      orderedParams: [],
-    });
-
-    const log = await store.createMessageLog({
-      recipientPhone: cloudRes.e164 || toPhone,
-      recipientName: 'Test WhatsApp Business',
-      channel: 'whatsapp',
-      templateCode: metaTemplateName || 'test_connection',
-      messageText: metaTemplateName ? `[Template Meta: ${metaTemplateName}]` : messageText,
-      adminId: req.admin?.id || null,
-      status: cloudRes.sent ? 'sent' : 'failed',
-      externalMessageId: cloudRes.externalMessageId,
-      errorMessage: cloudRes.error,
-      triggerSource: 'test',
-      metaPayloadType: cloudRes.payloadType,
-    });
-
-    return res.status(cloudRes.sent ? 200 : 400).json({
-      ok: cloudRes.sent,
-      sent: cloudRes.sent,
-      mode: cloudRes.mode,
-      external_message_id: cloudRes.externalMessageId,
-      error: cloudRes.error,
-      log,
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
-
-app.all('/api/cron/run-jobs', async (req, res, next) => {
-  try {
-    const store = getStore();
-    const config = await loadWhatsAppRuntimeConfig(store);
-    const expectedSecret = String(config.cron_secret || process.env.CRON_SECRET || '').trim();
-    if (!expectedSecret) {
-      return sendError(res, 'Secret cron non ancora configurato nelle impostazioni WhatsApp.', 503, 'CRON_SECRET_MISSING');
-    }
-
-    const authHeader = String(req.headers.authorization || '').trim();
-    const bearerSecret = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
-    const providedSecret = String(
-      req.query.secret || req.headers['x-cron-secret'] || bearerSecret || req.body?.secret || ''
-    ).trim();
-
-    const bufExpected = Buffer.from(expectedSecret, 'utf8');
-    const bufProvided = Buffer.from(providedSecret, 'utf8');
-    const isMatch =
-      bufExpected.length === bufProvided.length &&
-      bufExpected.length > 0 &&
-      crypto.timingSafeEqual(bufExpected, bufProvided);
-
-    if (!isMatch) {
-      return sendError(res, 'Token di autorizzazione cron non valido.', 401, 'CRON_UNAUTHORIZED');
-    }
-
-    const force = req.query.force === '1' || req.body?.force === true;
-    const onlyJob = String(req.query.job || req.body?.job_name || '').trim();
-    const suiteRes = await runAutomationSuite({
-      store,
-      reason: 'cron',
-      onlyJob,
-      force,
-    });
-    return res.json({ ok: true, ...suiteRes });
   } catch (err) {
     return next(err);
   }
@@ -2785,7 +2534,6 @@ const PORT = Number(process.env.PORT || 3000);
 if (process.env.GBS_NO_LISTEN !== '1') {
   app.listen(PORT, () => {
     console.log(`[Giulia Beauty Studio] Server Node.js (${process.env.DB_MODE === 'local' ? 'LOCAL DEMO' : 'MYSQL'}) attivo su http://localhost:${PORT}`);
-    startAutomationScheduler({ getStore });
   });
 }
 

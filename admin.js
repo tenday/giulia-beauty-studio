@@ -180,11 +180,7 @@ function renderMessageTemplate(code, vars = {}) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function isWhatsAppApiActive() {
-  return Boolean(STATE.whatsappSettings && STATE.whatsappSettings.active);
-}
-
-async function sendWhatsAppViaBusinessOrFallback({
+async function sendWhatsAppSemiautomatic({
   clientId = null,
   appointmentId = null,
   recipientPhone = '',
@@ -193,7 +189,6 @@ async function sendWhatsAppViaBusinessOrFallback({
   vars = {},
   messageText = '',
   triggerSource = 'manual',
-  allowFallback = true,
   silentToast = false,
 }) {
   const res = await apiFetch('admin/whatsapp/send', {
@@ -207,24 +202,15 @@ async function sendWhatsAppViaBusinessOrFallback({
       vars,
       message_text: messageText || undefined,
       trigger_source: triggerSource,
-      allow_fallback: allowFallback,
     }),
   });
 
-  if (res.sent_via === 'cloud_api') {
+  const targetUrl = res.wa_url || res.fallback_url;
+  if (targetUrl) {
     if (!silentToast) {
-      showAgendaToast(`✓ WhatsApp Business inviato a ${recipientName || recipientPhone}`);
+      showAgendaToast(`📲 Apro WhatsApp per ${recipientName || recipientPhone}`);
     }
-  } else if (res.sent_via === 'fallback_wa_me' && res.fallback_url) {
-    if (!silentToast) {
-      showAgendaToast(res.warning || 'Apro WhatsApp manuale (API Cloud non ancora attiva)');
-    }
-    window.open(res.fallback_url, '_blank', 'noopener');
-  } else if (res.sent_via === 'cloud_api_failed') {
-    showAgendaToast(res.error || 'Errore invio WhatsApp Business API', 'error');
-    if (res.fallback_url && confirm(`${res.error || 'Invio automatico fallito.'}\n\nVuoi aprire WhatsApp manualmente con il fallback wa.me?`)) {
-      window.open(res.fallback_url, '_blank', 'noopener');
-    }
+    window.open(targetUrl, '_blank', 'noopener');
   }
 
   await loadMessagesData();
@@ -233,6 +219,8 @@ async function sendWhatsAppViaBusinessOrFallback({
   }
   return res;
 }
+
+const sendWhatsAppViaBusinessOrFallback = sendWhatsAppSemiautomatic;
 
 function getTomorrowReminderTemplatePayload(appt) {
   const dateLabel = formatShortItDate(appt.appointment_date);
@@ -317,10 +305,9 @@ function inferApiLoaderMeta(endpoint, method = 'GET') {
   if (path === 'auth/login') return { label: 'Accesso area studio…', blocking: true, delayMs: 0 };
   if (path === 'auth/logout') return { label: 'Disconnessione…', blocking: true, delayMs: 0 };
   if (path === 'admin/ai-chat') return { label: 'Analisi AI Studio in corso…', blocking: true, delayMs: 0 };
-  if (path.startsWith('admin/whatsapp/') || path === 'admin/automation/test-whatsapp') {
-    return { label: 'Invio tramite WhatsApp Business…', blocking: true, delayMs: 0 };
+  if (path.startsWith('admin/whatsapp/')) {
+    return { label: 'Preparazione messaggio WhatsApp…', blocking: true, delayMs: 0 };
   }
-  if (path === 'admin/automation/run') return { label: 'Esecuzione invii automatici…', blocking: true, delayMs: 0 };
   if (path.includes('/privacy-request')) return { label: 'Generazione link Firma OTP…', blocking: true, delayMs: 0 };
   if (path.startsWith('admin/morpho') || path.includes('/morpho')) {
     return {
@@ -456,7 +443,6 @@ async function refreshAllData() {
     loadTomorrowReminders(),
     loadInventoryData(),
     loadMessagesData(),
-    loadAutomationData(),
     loadGiftCards(),
     loadPromotions(),
     loadCatalogData(),
@@ -523,12 +509,6 @@ async function loadMessagesData() {
   STATE.messageTemplates = data.templates || [];
   STATE.messageLogs = data.logs || [];
   if (data.whatsapp_status) STATE.whatsappSettings = data.whatsapp_status;
-}
-
-async function loadAutomationData() {
-  const data = await apiFetch('admin/automation', { method: 'GET' });
-  STATE.whatsappSettings = data.settings || null;
-  STATE.automationRuns = data.runs || [];
 }
 
 async function loadGiftCards() {
@@ -1012,23 +992,34 @@ async function openRemindersModal() {
   renderSmartAssistBar();
 
   const sendAllBtn = document.getElementById('sendAllRemindersBtn');
-  const unsentCount = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at).length;
+  const unsentAppts = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at);
   if (sendAllBtn) {
-    sendAllBtn.hidden = unsentCount === 0;
+    sendAllBtn.hidden = unsentAppts.length === 0;
     sendAllBtn.disabled = false;
+    sendAllBtn.textContent =
+      unsentAppts.length > 0
+        ? `📲 Invia Prossimo da Inviare (${unsentAppts.length} rimasti)`
+        : '📲 Tutti Inviati ✓';
     sendAllBtn.onclick = async () => {
+      const nextAppt = STATE.tomorrowAppointments.find((a) => !a.reminder_sent_at);
+      if (!nextAppt) return;
       sendAllBtn.disabled = true;
       try {
-        const res = await apiFetch('admin/whatsapp/send-reminders-batch', { method: 'POST', body: JSON.stringify({}) });
-        if (!res.active) {
-          showAgendaToast(res.message || 'Attiva WhatsApp Business API nelle impostazioni per l\'invio multiplo automatico.', 'error');
-        } else {
-          showAgendaToast(`Promemoria elaborati: ${res.sent} inviati, ${res.failed} errori`);
-          await openRemindersModal();
-          await refreshAllData();
-        }
+        const { vars, messageText } = getTomorrowReminderTemplatePayload(nextAppt);
+        await sendWhatsAppSemiautomatic({
+          clientId: nextAppt.client_id || null,
+          appointmentId: nextAppt.id,
+          recipientPhone: nextAppt.client_phone,
+          recipientName: nextAppt.client_name,
+          templateCode: 'reminder_tomorrow',
+          vars,
+          messageText,
+          triggerSource: 'manual',
+        });
+        await openRemindersModal();
+        await refreshAllData();
       } catch (err) {
-        showAgendaToast(err.message || 'Errore invio multiplo', 'error');
+        showAgendaToast(err.message || 'Errore invio promemoria', 'error');
       } finally {
         sendAllBtn.disabled = false;
       }
@@ -1734,7 +1725,7 @@ function syncDuplicateBanner() {
     textEl.innerHTML = `Duplicando <strong>${escapeHtml(appt.client_name || 'Cliente')}</strong> — ${escapeHtml(summary)} (${duration} min). Tocca uno slot in agenda (Esc per annullare).`;
   }
   if (waWrap) {
-    waWrap.hidden = !isWhatsAppApiActive();
+    waWrap.hidden = false;
   }
   banner.hidden = false;
 }
@@ -1771,7 +1762,7 @@ async function startAppointmentDuplicateMode(appt) {
 
   const waCheck = document.getElementById('calDupSendWaCheck');
   if (waCheck) {
-    waCheck.checked = isWhatsAppApiActive();
+    waCheck.checked = false;
   }
 
   if (CAL_UI.duplicateKeyHandler) {
@@ -1810,7 +1801,7 @@ async function executeDuplicateAppointmentAtSlot(targetDate, targetTime) {
   CAL_UI.duplicateSaving = true;
   const clientId = resolveAppointmentClientId(src);
   const opId = STATE.operatorFilter > 0 ? STATE.operatorFilter : Number(src.operator_id) || undefined;
-  const sendWa = isWhatsAppApiActive() && Boolean(document.getElementById('calDupSendWaCheck')?.checked);
+  const sendWa = Boolean(document.getElementById('calDupSendWaCheck')?.checked);
 
   const payload = {
     action: 'create',
@@ -1852,10 +1843,11 @@ async function executeDuplicateAppointmentAtSlot(targetDate, targetTime) {
     }, 1800);
 
     const dateLabel = formatShortItDate(targetDate);
-    if (res?.whatsapp_sent) {
-      showAgendaToast(`Appuntamento duplicato su ${dateLabel} ${targetTime} e conferma WhatsApp inviata ✓`);
+    if (res?.whatsapp_dispatch?.wa_url) {
+      window.open(res.whatsapp_dispatch.wa_url, '_blank', 'noopener');
+      showAgendaToast(`Appuntamento duplicato su ${dateLabel} ${targetTime} e aperto su WhatsApp ✓`);
     } else if (res?.whatsapp_dispatch?.error) {
-      showAgendaToast(`Duplicato su ${dateLabel} ${targetTime} (WhatsApp non inviato: ${res.whatsapp_dispatch.error})`, 'error');
+      showAgendaToast(`Duplicato su ${dateLabel} ${targetTime} (${res.whatsapp_dispatch.error})`, 'error');
     } else {
       showAgendaToast(`Appuntamento duplicato su ${dateLabel} alle ${targetTime} ✓`);
     }
@@ -3755,7 +3747,7 @@ function openAppointmentModal(appt = null, presetDate = null, presetTime = null)
   } else {
     STATE.currentEditingAppt = null;
     if (sendWaWrap) sendWaWrap.hidden = false;
-    if (sendWaCheck) sendWaCheck.checked = isWhatsAppApiActive();
+    if (sendWaCheck) sendWaCheck.checked = false;
     document.getElementById('apptModalTitle').textContent = 'Nuovo Appuntamento';
     document.getElementById('apptIdInput').value = '';
     if (existingClientBar) existingClientBar.hidden = true;
@@ -4404,10 +4396,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await apiFetch('admin/appointments', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('apptModal').classList.remove('open');
       await refreshAllData();
-      if (res?.whatsapp_sent) {
-        showAgendaToast('Appuntamento salvato e conferma WhatsApp Business inviata ✓');
+      if (res?.whatsapp_dispatch?.wa_url) {
+        window.open(res.whatsapp_dispatch.wa_url, '_blank', 'noopener');
+        showAgendaToast('Appuntamento salvato e aperto su WhatsApp ✓');
       } else if (res?.whatsapp_dispatch?.error) {
-        showAgendaToast(`Appuntamento salvato (WhatsApp non inviato: ${res.whatsapp_dispatch.error})`, 'error');
+        showAgendaToast(`Appuntamento salvato (${res.whatsapp_dispatch.error})`, 'error');
       }
     } catch (err) {
       alertEl.hidden = false;
@@ -4568,7 +4561,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const res = await apiFetch(`admin/clients/${clientId}/privacy-request`, {
           method: 'POST',
-          body: JSON.stringify({ auto_send: true }),
+          body: JSON.stringify({ send_whatsapp: true }),
         });
         const req = res.request;
         const dispatch = res.whatsapp_dispatch;
@@ -4578,49 +4571,48 @@ document.addEventListener('DOMContentLoaded', () => {
           link: signUrl,
           otp: req.otp_code,
         };
-        const msg = renderMessageTemplate('privacy_sign', vars);
-        box.hidden = false;
+        const msg = dispatch?.message_text || renderMessageTemplate('privacy_sign', vars);
+        const waNum = formatWaNumber(req.client?.phone || '');
+        const directWaUrl =
+          dispatch?.wa_url ||
+          dispatch?.fallback_url ||
+          (waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`);
+        const hasValidPhone = Boolean(req.client?.phone && waNum.length >= 8 && dispatch?.sent);
 
-        let waBadgeHtml = '';
-        if (dispatch?.sent) {
-          waBadgeHtml = '<div style="margin-top:6px;color:#155733;font-size:0.8rem;"><strong>✓ Modulo e codice OTP inviati automaticamente via WhatsApp Business API!</strong></div>';
+        box.hidden = false;
+        box.className = 'admin-alert admin-alert-ok';
+
+        if (hasValidPhone && directWaUrl) {
+          window.open(directWaUrl, '_blank', 'noopener');
           await loadMessagesData();
-        } else if (dispatch?.error) {
-          waBadgeHtml = `<div style="margin-top:6px;color:#991b1b;font-size:0.78rem;">⚠ Invio automatico non riuscito: ${escapeHtml(dispatch.error)}</div>`;
+          if (STATE.activeView === 'messages') renderMessagesView();
         }
 
+        const waBadgeHtml = hasValidPhone
+          ? '<div style="margin-top:6px;color:#155733;font-size:0.8rem;"><strong>✓ Aperto su WhatsApp e registrato nello storico messaggi!</strong> (Se il browser ha bloccato il popup, usa il pulsante qui sotto)</div>'
+          : `<div style="margin-top:6px;color:#9a5b13;font-size:0.78rem;">⚠ ${escapeHtml(dispatch?.error || 'Numero telefono non valido: puoi copiare link + OTP o aprire il selettore WhatsApp.')}</div>`;
+
         box.innerHTML = `
-          <div><strong>Link firma generato</strong> • Codice OTP SMS/WA: <strong style="font-size:1.05rem;letter-spacing:2px;">${escapeHtml(req.otp_code)}</strong></div>
+          <div><strong>Link firma generato</strong> • Codice OTP: <strong style="font-size:1.05rem;letter-spacing:2px;">${escapeHtml(req.otp_code)}</strong></div>
           <div style="margin-top:6px;word-break:break-all;font-size:0.78rem;"><a href="${escapeHtml(signUrl)}" target="_blank" rel="noopener">${escapeHtml(signUrl)}</a></div>
           ${waBadgeHtml}
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" id="sendPrivacyWaManualBtn" class="btn-outline-sm" style="background:#fff;">${dispatch?.sent ? '🔄 Reinvia Modulo + OTP su WhatsApp' : '📲 Invia Modulo + OTP su WhatsApp'}</button>
+            <a href="${escapeHtml(directWaUrl)}" target="_blank" rel="noopener" id="sendPrivacyWaManualBtn" class="btn-outline-sm" style="background:#fff;text-decoration:none;">📲 Apri / Reinvia su WhatsApp</a>
+            <button type="button" id="copyPrivacyOtpMsgBtn" class="btn-outline-sm" style="background:#fff;">📋 Copia Messaggio + OTP</button>
           </div>
         `;
 
-        const sendPrivacyWaBtn = document.getElementById('sendPrivacyWaManualBtn');
-        if (sendPrivacyWaBtn) {
-          sendPrivacyWaBtn.addEventListener('click', async () => {
-            sendPrivacyWaBtn.disabled = true;
-            try {
-              await sendWhatsAppViaBusinessOrFallback({
-                clientId: req.client.id || clientId,
-                recipientPhone: req.client.phone,
-                recipientName: req.client.full_name,
-                templateCode: 'privacy_sign',
-                vars,
-                messageText: msg,
-                triggerSource: 'auto_privacy',
-              });
-            } catch (err) {
-              showAgendaToast(err.message, 'error');
-            } finally {
-              sendPrivacyWaBtn.disabled = false;
-            }
-          });
-        }
+        document.getElementById('copyPrivacyOtpMsgBtn')?.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(msg);
+            showAgendaToast('Messaggio Privacy + OTP copiato ✓');
+          } catch {
+            showAgendaToast('Copia manuale dagli appunti');
+          }
+        });
       } catch (err) {
         box.hidden = false;
+        box.className = 'admin-alert admin-alert-error';
         box.textContent = `Errore generazione link privacy: ${err.message}`;
       } finally {
         sendPrivacyOtpBtn.disabled = false;
@@ -4652,11 +4644,9 @@ document.addEventListener('DOMContentLoaded', () => {
         triggerSource: 'manual',
       });
       if (statusEl) {
-        statusEl.textContent = res.sent_via === 'cloud_api'
-          ? '✓ Inviato via WhatsApp Business!'
-          : res.sent_via === 'fallback_wa_me'
-            ? '✓ Registrato e aperto su wa.me'
-            : res.error || 'Errore invio';
+        statusEl.textContent = res.wa_url || res.fallback_url
+          ? '✓ Aperto su WhatsApp e salvato nello storico'
+          : res.error || 'Errore invio';
       }
     } catch (err) {
       if (statusEl) statusEl.textContent = err.message;
@@ -4839,13 +4829,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         if (alertBox) {
           alertBox.hidden = false;
-          alertBox.className = `admin-alert ${res.sent_via === 'cloud_api_failed' ? 'admin-alert-error' : 'admin-alert-ok'}`;
+          alertBox.className = `admin-alert ${res.wa_url || res.fallback_url ? 'admin-alert-ok' : 'admin-alert-error'}`;
           alertBox.textContent =
-            res.sent_via === 'cloud_api'
-              ? `✓ Messaggio inviato automaticamente a ${client.full_name} via WhatsApp Business Cloud API!`
-              : res.sent_via === 'fallback_wa_me'
-                ? `✓ Registrato nello storico e aperto wa.me per ${client.full_name}.`
-                : res.error || 'Errore durante l\'invio.';
+            res.wa_url || res.fallback_url
+              ? `✓ Messaggio registrato nello storico e aperto su WhatsApp per ${client.full_name}.`
+              : res.error || 'Errore durante la preparazione del messaggio.';
         }
         renderMessagesView();
       } catch (err) {
@@ -4966,7 +4954,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  initWhatsAppAutomationControls();
   initPaymentSettingsControls();
   initGiftCardGeneratorControls();
   initPromotionsControls();
@@ -5107,22 +5094,23 @@ function renderInsightsView() {
 
   const winbackBatchBtn = document.getElementById('runWinbackBatchBtn');
   if (winbackBatchBtn) {
+    winbackBatchBtn.hidden = inactiveList.length === 0;
     winbackBatchBtn.onclick = async () => {
-      if (!isWhatsAppApiActive()) {
-        showAgendaToast('Attiva prima Meta WhatsApp Business API in Staff & Impostazioni.', 'error');
-        return;
-      }
-      if (!confirm('Vuoi lanciare adesso il job automatico di richiamo su tutte le clienti assenti idonee?')) return;
+      const target = inactiveList[0];
+      if (!target) return;
       winbackBatchBtn.disabled = true;
       try {
-        const res = await apiFetch('admin/automation/run', {
-          method: 'POST',
-          body: JSON.stringify({ job_name: 'winback_inactive' }),
+        await sendWhatsAppSemiautomatic({
+          clientId: target.id,
+          recipientPhone: target.phone,
+          recipientName: target.full_name,
+          templateCode: 'winback_inactive',
+          vars: {
+            nome: target.full_name,
+            giorni_assenza: target.days_since,
+          },
+          triggerSource: 'manual',
         });
-        const jobRes = (res.results || [])[0];
-        STATE.automationRuns = res.runs || STATE.automationRuns;
-        await loadMessagesData();
-        showAgendaToast(`Richiami completati: ${jobRes?.sent || 0} inviati, ${jobRes?.skipped || 0} saltati`);
       } catch (err) {
         showAgendaToast(err.message, 'error');
       } finally {
@@ -5545,31 +5533,20 @@ function renderMessagesView() {
   const submitBtn = document.getElementById('quickMsgSubmitBtn');
   if (!cliSel || !tplSel || !edList || !logsBox) return;
 
-  const waActive = isWhatsAppApiActive();
-  const waCfg = STATE.whatsappSettings || {};
   if (banner) {
-    banner.className = `wa-status-banner ${waActive ? 'is-active' : 'is-fallback'}`;
+    banner.className = 'wa-status-banner is-active';
     banner.innerHTML = `
       <div>
-        <strong>${waActive ? '🟢 WhatsApp Business Cloud API Attiva' : waCfg.configured ? '🟡 WhatsApp Business API Disattivata (Modalità Fallback wa.me)' : '🟡 WhatsApp Business API non ancora configurata (Fallback wa.me)'}</strong>
+        <strong>🟢 WhatsApp Semiautomatico Attivo (<code>wa.me</code>)</strong>
         <div style="font-size:0.78rem;margin-top:2px;">
-          ${waActive
-            ? `Invii automatici attivi da Phone Number ID ${escapeHtml(waCfg.phone_number_id || '')} (${escapeHtml(waCfg.api_version || 'v21.0')}).`
-            : 'Finché non inserisci le credenziali Meta Graph API, i messaggi aprono WhatsApp manualmente e vengono salvati nello storico.'}
+          Tutti gli invii (Promemoria, Privacy OTP, Compleanni, Richiami, Gift Card, Promo e Conferme) aprono WhatsApp già precompilato con il template personalizzato e registrano l'invio nello storico.
         </div>
       </div>
-      <button type="button" class="btn-outline-sm" id="waBannerGoSettingsBtn">⚙ Configura API &amp; Job Automatici</button>
     `;
-    document.getElementById('waBannerGoSettingsBtn')?.addEventListener('click', () => {
-      switchAdminView('settings');
-      document.getElementById('waAutomationPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
   }
 
   if (submitBtn) {
-    submitBtn.textContent = waActive
-      ? '📲 Invia Automaticamente (WA Business)'
-      : '📲 Apri WhatsApp & Registra Invio';
+    submitBtn.textContent = '📲 Apri WhatsApp & Registra Invio';
   }
 
   const prevCli = cliSel.value;
@@ -5600,19 +5577,9 @@ function renderMessagesView() {
           <label>Titolo Template (${escapeHtml(t.code)})</label>
           <input type="text" class="tpl-title-input" value="${escapeHtml(t.title)}" required />
         </div>
-        <div class="admin-field" style="margin-bottom:6px;">
+        <div class="admin-field" style="margin-bottom:8px;">
           <label>Testo Messaggio</label>
           <textarea rows="2" class="tpl-body-input" required>${escapeHtml(t.body_template)}</textarea>
-        </div>
-        <div class="form-row-2" style="margin-bottom:8px;">
-          <div class="admin-field" style="margin:0;">
-            <label>Nome Template Meta Approvato (opzionale)</label>
-            <input type="text" class="tpl-meta-name-input" value="${escapeHtml(t.meta_template_name || '')}" placeholder="Es. promemoria_appuntamento" />
-          </div>
-          <div class="admin-field" style="margin:0;">
-            <label>Lingua Template Meta</label>
-            <input type="text" class="tpl-meta-lang-input" value="${escapeHtml(t.meta_template_lang || 'it')}" placeholder="it" />
-          </div>
         </div>
         <button type="submit" class="btn-outline-sm">💾 Salva Template</button>
       </form>`
@@ -5628,8 +5595,6 @@ function renderMessagesView() {
           code: form.dataset.code,
           title: form.querySelector('.tpl-title-input').value.trim(),
           body_template: form.querySelector('.tpl-body-input').value.trim(),
-          meta_template_name: form.querySelector('.tpl-meta-name-input')?.value.trim() || '',
-          meta_template_lang: form.querySelector('.tpl-meta-lang-input')?.value.trim() || 'it',
         }),
       });
       await loadMessagesData();
@@ -5641,26 +5606,23 @@ function renderMessagesView() {
   const logs = STATE.messageLogs || [];
   const sourceLabels = {
     manual: 'Manuale',
-    auto_booking: 'Auto Prenotazione',
+    auto_booking: 'Conferma Appuntamento',
     auto_privacy: 'Privacy OTP',
     auto_gift_card: 'Gift Card',
-    job_reminder: 'Job Promemoria',
-    job_birthday: 'Job Compleanni',
-    job_winback: 'Job Win-Back',
-    test: 'Test API',
+    job_reminder: 'Promemoria',
+    job_birthday: 'Auguri Compleanno',
+    job_winback: 'Richiamo Assenti',
   };
   logsBox.innerHTML =
     logs.length === 0
       ? '<p class="muted-text">Nessun messaggio registrato nello storico invii.</p>'
       : logs
           .map((l) => {
-            const st = l.status || 'sent';
+            const st = l.status || 'wa_me';
             const stBadge =
-              st === 'sent'
-                ? '<span class="status-badge badge-wa-cloud">✓ API Cloud</span>'
-                : st === 'failed'
-                  ? '<span class="status-badge badge-wa-failed">✕ Fallito</span>'
-                  : '<span class="status-badge badge-wa-fallback">↗ Fallback wa.me</span>';
+              st === 'failed'
+                ? '<span class="status-badge badge-wa-failed">✕ Non valido</span>'
+                : '<span class="status-badge badge-wa-cloud">✓ Inviato (WhatsApp)</span>';
             const srcBadge = l.trigger_source
               ? `<span class="status-badge badge-wa-source">${escapeHtml(sourceLabels[l.trigger_source] || l.trigger_source)}</span>`
               : '';
@@ -5674,8 +5636,7 @@ function renderMessagesView() {
                 <span class="muted-text">${escapeHtml((l.sent_at || '').slice(0, 16).replace('T', ' '))}</span>
               </div>
               <div class="muted-text" style="margin-top:4px;font-size:0.82rem;white-space:pre-line;">${escapeHtml(l.message_text)}</div>
-              ${l.error_message ? `<div style="margin-top:4px;font-size:0.74rem;color:#991b1b;">Errore: ${escapeHtml(l.error_message)}</div>` : ''}
-              ${l.external_message_id ? `<div style="margin-top:2px;font-size:0.7rem;color:var(--ink-muted);">Meta ID: ${escapeHtml(l.external_message_id)}</div>` : ''}
+              ${l.error_message ? `<div style="margin-top:4px;font-size:0.74rem;color:#991b1b;">Nota: ${escapeHtml(l.error_message)}</div>` : ''}
             </div>`;
           })
           .join('');
@@ -5837,262 +5798,7 @@ function renderSettingsView() {
     });
   }
 
-  renderWhatsAppSettingsPanel();
   renderPaymentSettingsPanel();
-}
-
-function initWhatsAppAutomationControls() {
-  const form = document.getElementById('whatsappSettingsForm');
-  if (form) {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const alertEl = document.getElementById('waSettingsAlert');
-      const saveBtn = document.getElementById('saveWaSettingsBtn');
-      if (alertEl) alertEl.hidden = true;
-      if (saveBtn) saveBtn.disabled = true;
-
-      const payload = {
-        enabled: Boolean(document.getElementById('waEnabledCheck')?.checked),
-        phone_number_id: (document.getElementById('waPhoneNumberIdInput')?.value || '').trim(),
-        business_account_id: (document.getElementById('waBusinessAccountIdInput')?.value || '').trim(),
-        api_version: (document.getElementById('waApiVersionInput')?.value || 'v21.0').trim(),
-        fallback_to_wa_me: Boolean(document.getElementById('waFallbackCheck')?.checked),
-        auto_booking_confirmed: Boolean(document.getElementById('waAutoBookingCheck')?.checked),
-        auto_privacy_otp: Boolean(document.getElementById('waAutoPrivacyCheck')?.checked),
-        auto_reminder_tomorrow: Boolean(document.getElementById('waAutoReminderCheck')?.checked),
-        reminder_send_hour: Number(document.getElementById('waReminderHourInput')?.value || 10),
-        auto_birthday_wishes: Boolean(document.getElementById('waAutoBirthdayCheck')?.checked),
-        birthday_send_hour: Number(document.getElementById('waBirthdayHourInput')?.value || 9),
-        auto_winback_inactive: Boolean(document.getElementById('waAutoWinbackCheck')?.checked),
-        winback_send_hour: Number(document.getElementById('waWinbackHourInput')?.value || 11),
-        winback_inactive_days: Number(document.getElementById('waWinbackDaysInput')?.value || 45),
-        winback_cooldown_days: Number(document.getElementById('waWinbackCooldownInput')?.value || 30),
-      };
-      const rawToken = (document.getElementById('waAccessTokenInput')?.value || '').trim();
-      if (rawToken) payload.access_token = rawToken;
-
-      try {
-        const res = await apiFetch('admin/automation/settings', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        STATE.whatsappSettings = res.settings;
-        const tokenInput = document.getElementById('waAccessTokenInput');
-        if (tokenInput) tokenInput.value = '';
-        renderWhatsAppSettingsPanel();
-        renderMessagesView();
-        if (alertEl) {
-          alertEl.hidden = false;
-          alertEl.className = 'admin-alert admin-alert-ok';
-          alertEl.textContent = 'Impostazioni WhatsApp Business & Job salvate ✓';
-        }
-        showAgendaToast('Configurazione WhatsApp Business salvata ✓');
-      } catch (err) {
-        if (alertEl) {
-          alertEl.hidden = false;
-          alertEl.className = 'admin-alert admin-alert-error';
-          alertEl.textContent = err.message;
-        }
-      } finally {
-        if (saveBtn) saveBtn.disabled = false;
-      }
-    });
-  }
-
-  document.getElementById('waClearTokenBtn')?.addEventListener('click', async () => {
-    if (!confirm('Rimuovere il token WhatsApp salvato dal server?')) return;
-    const res = await apiFetch('admin/automation/settings', {
-      method: 'POST',
-      body: JSON.stringify({ clear_access_token: true, enabled: false }),
-    });
-    STATE.whatsappSettings = res.settings;
-    renderWhatsAppSettingsPanel();
-    renderMessagesView();
-    showAgendaToast('Token WhatsApp rimosso');
-  });
-
-  document.getElementById('waRegenCronBtn')?.addEventListener('click', async () => {
-    if (!confirm('Rigenerare il token segreto del Cron Endpoint? Ricordati di aggiornare il Cron Job su cPanel.')) return;
-    const res = await apiFetch('admin/automation/settings', {
-      method: 'POST',
-      body: JSON.stringify({ regenerate_cron_secret: true }),
-    });
-    STATE.whatsappSettings = res.settings;
-    renderWhatsAppSettingsPanel();
-    showAgendaToast('Nuovo token Cron generato ✓');
-  });
-
-  document.getElementById('waCopyCronBtn')?.addEventListener('click', async () => {
-    const input = document.getElementById('waCronUrlInput');
-    if (!input || !input.value) return;
-    try {
-      await navigator.clipboard.writeText(input.value);
-      showAgendaToast('URL Cron copiato negli appunti ✓');
-    } catch {
-      input.select();
-      document.execCommand?.('copy');
-      showAgendaToast('URL Cron selezionato');
-    }
-  });
-
-  document.getElementById('waTestSendBtn')?.addEventListener('click', async () => {
-    const phone = (document.getElementById('waTestPhoneInput')?.value || '').trim();
-    const tpl = (document.getElementById('waTestMetaTplInput')?.value || '').trim();
-    const resText = document.getElementById('waTestResultText');
-    const btn = document.getElementById('waTestSendBtn');
-    if (!phone) {
-      if (resText) resText.textContent = 'Inserisci prima un numero di prova.';
-      return;
-    }
-    if (btn) btn.disabled = true;
-    if (resText) resText.textContent = 'Invio test in corso...';
-    try {
-      const res = await apiFetch('admin/automation/test-whatsapp', {
-        method: 'POST',
-        body: JSON.stringify({
-          to_phone: phone,
-          meta_template_name: tpl || undefined,
-          meta_template_lang: tpl === 'hello_world' ? 'en_US' : 'it',
-        }),
-      });
-      if (resText) {
-        resText.textContent = `✓ Inviato! ID: ${res.external_message_id || 'ok'}`;
-        resText.style.color = '#155733';
-      }
-      await loadMessagesData();
-      renderMessagesView();
-    } catch (err) {
-      if (resText) {
-        resText.textContent = `✕ ${err.message}`;
-        resText.style.color = '#991b1b';
-      }
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  });
-
-  document.getElementById('waRunJobsNowBtn')?.addEventListener('click', async () => {
-    const jobName = document.getElementById('waRunJobSelect')?.value || '';
-    const feedback = document.getElementById('waJobRunFeedback');
-    const btn = document.getElementById('waRunJobsNowBtn');
-    if (btn) btn.disabled = true;
-    try {
-      const res = await apiFetch('admin/automation/run', {
-        method: 'POST',
-        body: JSON.stringify({ job_name: jobName || undefined }),
-      });
-      STATE.automationRuns = res.runs || [];
-      await Promise.all([loadMessagesData(), loadTomorrowReminders()]);
-      renderWhatsAppSettingsPanel();
-      renderMessagesView();
-      renderSmartAssistBar();
-      if (feedback) {
-        feedback.hidden = false;
-        if (!res.active) {
-          feedback.className = 'admin-alert admin-alert-error';
-          feedback.textContent = res.message || 'WhatsApp Business API non attiva.';
-        } else {
-          feedback.className = 'admin-alert admin-alert-ok';
-          const parts = (res.results || []).map((r) => `${r.job_name}: ${r.sent || 0} inviati / ${r.failed || 0} errori`);
-          feedback.textContent = `Esecuzione completata — ${parts.join(' • ')}`;
-        }
-      }
-    } catch (err) {
-      if (feedback) {
-        feedback.hidden = false;
-        feedback.className = 'admin-alert admin-alert-error';
-        feedback.textContent = err.message;
-      }
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  });
-}
-
-function renderWhatsAppSettingsPanel() {
-  const cfg = STATE.whatsappSettings;
-  if (!cfg) return;
-
-  const badge = document.getElementById('waSettingsStatusBadge');
-  if (badge) {
-    badge.className = `status-badge ${cfg.active ? 'badge-wa-cloud' : cfg.configured ? 'badge-pending' : 'badge-wa-fallback'}`;
-    badge.textContent = cfg.active ? 'Attiva via API Cloud' : cfg.configured ? 'Configurata (Spenta)' : 'Non configurata';
-  }
-
-  const setChecked = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.checked = Boolean(val);
-  };
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && val !== undefined && val !== null) el.value = String(val);
-  };
-
-  setChecked('waEnabledCheck', cfg.enabled);
-  setVal('waPhoneNumberIdInput', cfg.phone_number_id || '');
-  setVal('waBusinessAccountIdInput', cfg.business_account_id || '');
-  setVal('waApiVersionInput', cfg.api_version || 'v21.0');
-  setChecked('waFallbackCheck', cfg.fallback_to_wa_me);
-  setChecked('waAutoBookingCheck', cfg.auto_booking_confirmed);
-  setChecked('waAutoPrivacyCheck', cfg.auto_privacy_otp);
-  setChecked('waAutoReminderCheck', cfg.auto_reminder_tomorrow);
-  setVal('waReminderHourInput', cfg.reminder_send_hour ?? 10);
-  setChecked('waAutoBirthdayCheck', cfg.auto_birthday_wishes);
-  setVal('waBirthdayHourInput', cfg.birthday_send_hour ?? 9);
-  setChecked('waAutoWinbackCheck', cfg.auto_winback_inactive);
-  setVal('waWinbackHourInput', cfg.winback_send_hour ?? 11);
-  setVal('waWinbackDaysInput', cfg.winback_inactive_days ?? 45);
-  setVal('waWinbackCooldownInput', cfg.winback_cooldown_days ?? 30);
-  setVal('waCronUrlInput', cfg.cron_endpoint_preview || '');
-
-  const hint = document.getElementById('waTokenStatusHint');
-  const clearBtn = document.getElementById('waClearTokenBtn');
-  if (hint) {
-    hint.textContent = cfg.has_access_token
-      ? `Token salvato (${cfg.access_token_masked})`
-      : 'Nessun Access Token salvato';
-  }
-  if (clearBtn) clearBtn.hidden = !cfg.has_access_token;
-
-  const runsBox = document.getElementById('automationRunsContainer');
-  if (runsBox) {
-    const runs = STATE.automationRuns || [];
-    if (runs.length === 0) {
-      runsBox.innerHTML = '<div style="padding:22px;text-align:center;" class="muted-text">Nessuna esecuzione job ancora registrata.</div>';
-    } else {
-      const jobLabels = {
-        reminder_tomorrow: 'Promemoria Domani',
-        birthday_wishes: 'Auguri Compleanni',
-        winback_inactive: 'Richiamo Assenti',
-      };
-      runsBox.innerHTML = `
-        <table class="admin-table">
-          <thead>
-            <tr>
-              <th>Data / Ora</th>
-              <th>Job</th>
-              <th>Modalità</th>
-              <th>Inviati / Errori / Saltati</th>
-              <th>Dettaglio</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${runs
-              .map(
-                (r) => `<tr>
-                  <td>${escapeHtml(String(r.started_at || r.run_date || '').slice(0, 16).replace('T', ' '))}</td>
-                  <td><strong>${escapeHtml(jobLabels[r.job_name] || r.job_name)}</strong></td>
-                  <td><span class="status-badge badge-wa-source">${escapeHtml(r.trigger_mode)}</span></td>
-                  <td><strong>${Number(r.sent_count || 0)}</strong> ✓ / ${Number(r.failed_count || 0)} ✕ / ${Number(r.skipped_count || 0)} skip</td>
-                  <td class="muted-text">${escapeHtml(r.summary_text || '—')}</td>
-                </tr>`
-              )
-              .join('')}
-          </tbody>
-        </table>
-      `;
-    }
-  }
 }
 
 /* ==========================================================================
