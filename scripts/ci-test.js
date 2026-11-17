@@ -734,13 +734,15 @@ async function runApiSuite() {
     });
     assert.strictEqual(savePayCfgRes.status, 200);
     assert.strictEqual(savePayCfgRes.json.settings.has_secret_key, true);
+    assert.strictEqual(savePayCfgRes.json.settings.allow_online_deposit, false);
     assert.strictEqual(savePayCfgRes.json.settings.stripe_secret_key, undefined);
     assert.strictEqual(savePayCfgRes.json.settings.stripe_webhook_secret, undefined);
 
     const pubPayReadyRes = await req('GET', '/api/public/payment-config');
     assert.strictEqual(pubPayReadyRes.status, 200);
     assert.strictEqual(pubPayReadyRes.json.config.stripe_ready, true);
-    assert.strictEqual(pubPayReadyRes.json.config.deposit_percent, 30);
+    assert.strictEqual(pubPayReadyRes.json.config.allow_online_full, true);
+    assert.strictEqual(pubPayReadyRes.json.config.allow_online_deposit, false);
 
     const stripeSessions = new Map();
     globalThis.__GBS_STRIPE_FETCH__ = async (url, opts) => {
@@ -793,8 +795,8 @@ async function runApiSuite() {
     assert.strictEqual(stripeConnRes.status, 200);
     assert.strictEqual(stripeConnRes.json.ok, true);
 
-    // Online 30% deposit checkout (€100 total -> €30 online)
-    const depositBookRes = await req('POST', '/api/public/book', {
+    // Online partial deposit MUST be rejected (all-or-nothing: full 100% or pay in studio)
+    const blockedStripeDepRes = await req('POST', '/api/public/book', {
       mode: 'booking',
       appointment_date: '2026-12-18',
       start_time: '11:00',
@@ -806,41 +808,44 @@ async function runApiSuite() {
       payment_method: 'stripe_deposit',
       privacy_accepted: true,
     });
-    assert.strictEqual(depositBookRes.status, 201);
-    assert.strictEqual(depositBookRes.json.requires_stripe_redirect, true);
-    assert.strictEqual(depositBookRes.json.charge_amount, 30);
+    assert.strictEqual(blockedStripeDepRes.status, 422);
+    assert.strictEqual(blockedStripeDepRes.json.code, 'DEPOSIT_DISABLED');
 
-    const verifyDepRes1 = await req('POST', '/api/public/stripe/verify-session', {
-      session_id: depositBookRes.json.stripe_session_id,
-      booking_code: depositBookRes.json.booking_code,
+    // Full online Stripe checkout (€100 total -> €100 online)
+    const fullStripeVerifyRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-18',
+      start_time: '11:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-srv-1', name: 'Ricostruzione Gel Luxury', price: 100, duration: 60 }],
+      total_price: 100,
+      client_name: 'Sara Stripe Full',
+      client_phone: '+39 333 9001122',
+      payment_method: 'stripe_full',
+      privacy_accepted: true,
     });
-    assert.strictEqual(verifyDepRes1.status, 200);
-    assert.strictEqual(verifyDepRes1.json.paid, true);
-    assert.strictEqual(verifyDepRes1.json.receipt.payment_status, 'partial');
-    assert.strictEqual(verifyDepRes1.json.receipt.paid_amount, 30);
-    assert.strictEqual(verifyDepRes1.json.receipt.remaining_amount, 70);
-    assert.strictEqual(verifyDepRes1.json.receipt.status, 'confirmed');
+    assert.strictEqual(fullStripeVerifyRes.status, 201);
+    assert.strictEqual(fullStripeVerifyRes.json.requires_stripe_redirect, true);
+    assert.strictEqual(fullStripeVerifyRes.json.charge_amount, 100);
+
+    const verifyFullRes1 = await req('POST', '/api/public/stripe/verify-session', {
+      session_id: fullStripeVerifyRes.json.stripe_session_id,
+      booking_code: fullStripeVerifyRes.json.booking_code,
+    });
+    assert.strictEqual(verifyFullRes1.status, 200);
+    assert.strictEqual(verifyFullRes1.json.paid, true);
+    assert.strictEqual(verifyFullRes1.json.receipt.payment_status, 'paid');
+    assert.strictEqual(verifyFullRes1.json.receipt.paid_amount, 100);
+    assert.strictEqual(verifyFullRes1.json.receipt.remaining_amount, 0);
+    assert.strictEqual(verifyFullRes1.json.receipt.status, 'confirmed');
 
     // Idempotent 2nd verify-session must not double-record
-    const verifyDepRes2 = await req('POST', '/api/public/stripe/verify-session', {
-      session_id: depositBookRes.json.stripe_session_id,
-      booking_code: depositBookRes.json.booking_code,
+    const verifyFullRes2 = await req('POST', '/api/public/stripe/verify-session', {
+      session_id: fullStripeVerifyRes.json.stripe_session_id,
+      booking_code: fullStripeVerifyRes.json.booking_code,
     });
-    assert.strictEqual(verifyDepRes2.status, 200);
-    assert.strictEqual(verifyDepRes2.json.duplicate, true);
-
-    // Admin records remaining €70 in Contanti -> full €100 paid, 2 ledger rows
-    const payBalanceRes = await req('POST', '/api/admin/appointments', {
-      action: 'record_payment',
-      id: depositBookRes.json.appointment_id,
-      payment_method: 'contanti',
-      payment_status: 'paid',
-      paid_amount: 100,
-    });
-    assert.strictEqual(payBalanceRes.status, 200);
-    assert.strictEqual(payBalanceRes.json.appointment.payment_status, 'paid');
-    assert.strictEqual(Number(payBalanceRes.json.appointment.paid_amount), 100);
-    assert.strictEqual(Number(payBalanceRes.json.transaction.amount), 70);
+    assert.strictEqual(verifyFullRes2.status, 200);
+    assert.strictEqual(verifyFullRes2.json.duplicate, true);
 
     // Full online checkout + HMAC-SHA256 webhook verification
     const fullBookRes = await req('POST', '/api/public/book', {
@@ -881,7 +886,7 @@ async function runApiSuite() {
 
     const ledgerRes = await req('GET', '/api/admin/payments');
     assert.strictEqual(ledgerRes.status, 200);
-    assert.strictEqual(ledgerRes.json.transactions.length, 3);
+    assert.strictEqual(ledgerRes.json.transactions.length, 2);
     assert.strictEqual(Number(ledgerRes.json.summary.all_time_net), 180);
 
     // Refund full Stripe booking via Admin API
@@ -1017,8 +1022,8 @@ async function runApiSuite() {
     assert.strictEqual(paypalConnRes.json.mode, 'sandbox');
     assert.strictEqual(paypalConnRes.json.app_id, 'APP-CI-123');
 
-    // PayPal 30% deposit booking (€100 total -> €30 online)
-    const paypalDepBookRes = await req('POST', '/api/public/book', {
+    // PayPal online deposit MUST be rejected (all-or-nothing)
+    const blockedPaypalDepRes = await req('POST', '/api/public/book', {
       mode: 'booking',
       appointment_date: '2026-12-19',
       start_time: '11:00',
@@ -1030,32 +1035,48 @@ async function runApiSuite() {
       payment_method: 'paypal_deposit',
       privacy_accepted: true,
     });
-    assert.strictEqual(paypalDepBookRes.status, 201);
-    assert.strictEqual(paypalDepBookRes.json.requires_payment_redirect, true);
-    assert.strictEqual(paypalDepBookRes.json.requires_stripe_redirect, false);
-    assert.strictEqual(paypalDepBookRes.json.payment_provider, 'paypal');
-    assert.strictEqual(paypalDepBookRes.json.charge_amount, 30);
-    assert(paypalDepBookRes.json.checkout_url.includes('sandbox.paypal.com'));
+    assert.strictEqual(blockedPaypalDepRes.status, 422);
+    assert.strictEqual(blockedPaypalDepRes.json.code, 'DEPOSIT_DISABLED');
 
-    const captureDep1 = await req('POST', '/api/public/paypal/capture-order', {
-      order_id: paypalDepBookRes.json.paypal_order_id,
-      booking_code: paypalDepBookRes.json.booking_code,
+    // PayPal full online booking (€100 total -> €100 online)
+    const paypalFullVerifyRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-19',
+      start_time: '11:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-pp-1', name: 'Biab Rinforzante Luxury', price: 100, duration: 60 }],
+      total_price: 100,
+      client_name: 'Elena PayPal Full',
+      client_phone: '+39 333 9007788',
+      payment_method: 'paypal_full',
+      privacy_accepted: true,
     });
-    assert.strictEqual(captureDep1.status, 200);
-    assert.strictEqual(captureDep1.json.paid, true);
-    assert.strictEqual(captureDep1.json.receipt.payment_status, 'partial');
-    assert.strictEqual(captureDep1.json.receipt.payment_method, 'paypal_online');
-    assert.strictEqual(Number(captureDep1.json.receipt.paid_amount), 30);
-    assert.strictEqual(Number(captureDep1.json.receipt.remaining_amount), 70);
-    assert.strictEqual(captureDep1.json.receipt.status, 'confirmed');
+    assert.strictEqual(paypalFullVerifyRes.status, 201);
+    assert.strictEqual(paypalFullVerifyRes.json.requires_payment_redirect, true);
+    assert.strictEqual(paypalFullVerifyRes.json.requires_stripe_redirect, false);
+    assert.strictEqual(paypalFullVerifyRes.json.payment_provider, 'paypal');
+    assert.strictEqual(paypalFullVerifyRes.json.charge_amount, 100);
+    assert(paypalFullVerifyRes.json.checkout_url.includes('sandbox.paypal.com'));
+
+    const captureFull1 = await req('POST', '/api/public/paypal/capture-order', {
+      order_id: paypalFullVerifyRes.json.paypal_order_id,
+      booking_code: paypalFullVerifyRes.json.booking_code,
+    });
+    assert.strictEqual(captureFull1.status, 200);
+    assert.strictEqual(captureFull1.json.paid, true);
+    assert.strictEqual(captureFull1.json.receipt.payment_status, 'paid');
+    assert.strictEqual(captureFull1.json.receipt.payment_method, 'paypal_online');
+    assert.strictEqual(Number(captureFull1.json.receipt.paid_amount), 100);
+    assert.strictEqual(Number(captureFull1.json.receipt.remaining_amount), 0);
+    assert.strictEqual(captureFull1.json.receipt.status, 'confirmed');
 
     // Idempotent second capture does not double-book transaction
-    const captureDep2 = await req('POST', '/api/public/paypal/capture-order', {
-      order_id: paypalDepBookRes.json.paypal_order_id,
-      booking_code: paypalDepBookRes.json.booking_code,
+    const captureFull2 = await req('POST', '/api/public/paypal/capture-order', {
+      order_id: paypalFullVerifyRes.json.paypal_order_id,
+      booking_code: paypalFullVerifyRes.json.booking_code,
     });
-    assert.strictEqual(captureDep2.status, 200);
-    assert.strictEqual(captureDep2.json.duplicate, true);
+    assert.strictEqual(captureFull2.status, 200);
+    assert.strictEqual(captureFull2.json.duplicate, true);
 
     // Full PayPal checkout + Webhook signature validation
     const fullPaypalBook = await req('POST', '/api/public/book', {
@@ -1399,6 +1420,8 @@ function checkGdprDefaults() {
   assert(adminJs.includes('function initPaymentSettingsControls(') && adminJs.includes('pay-contanti'), 'admin.js deve gestire impostazioni Stripe e cassa rapida');
   assert(adminJs.includes("paypal_online: 'PayPal Online'") && adminJs.includes('admin/payments/test-paypal'), 'admin.js deve gestire impostazioni e test PayPal');
   assert(appJs.includes('function handleStripeReturnFromQuery(') && appJs.includes('paypal_success') && appJs.includes('paypal_full'), 'app.js deve gestire opzioni e rientro Stripe + PayPal Checkout');
+  assert(!agendaHtml.includes('id="stripeAllowDepositCheck"') && !agendaHtml.includes('id="stripeDepositPercentInput"'), 'agenda.html non deve esporre opzioni acconto online');
+  assert(!appJs.includes('stripe_deposit') && !appJs.includes('paypal_deposit'), 'app.js non deve proporre acconti parziali online (o tutto o in studio)');
   assert(agendaHtml.includes('id="apptQuickNewServiceToggleBtn"') && agendaHtml.includes('id="catalogServiceForm"'), 'agenda.html deve contenere gestione listino configurabile e quick-add in modale');
   assert(adminJs.includes('function initCatalogControls(') && adminJs.includes('function renderCatalogView('), 'admin.js deve gestire CRUD listino configurabile');
   assert(appJs.includes('function loadPublicCatalog(') && appJs.includes('function renderPublicCategoryPills('), 'app.js deve caricare il listino dinamico e i filtri categoria');

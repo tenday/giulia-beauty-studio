@@ -7891,19 +7891,16 @@ function renderPaymentSettingsPanel() {
   if (s) {
     const enabledCheck = document.getElementById('stripeEnabledCheck');
     const modeSel = document.getElementById('stripeModeSelect');
-    const depInput = document.getElementById('stripeDepositPercentInput');
     const pkInput = document.getElementById('stripePublishableKeyInput');
     const skHint = document.getElementById('stripeSecretKeyHint');
     const whHint = document.getElementById('stripeWebhookSecretHint');
     const allowStudio = document.getElementById('stripeAllowStudioCheck');
     const allowFull = document.getElementById('stripeAllowFullCheck');
-    const allowDep = document.getElementById('stripeAllowDepositCheck');
     const autoConfirm = document.getElementById('stripeAutoConfirmCheck');
     const whUrlInput = document.getElementById('stripeWebhookUrlInput');
 
     if (enabledCheck) enabledCheck.checked = Boolean(s.stripe_enabled);
     if (modeSel) modeSel.value = s.stripe_mode === 'live' ? 'live' : 'test';
-    if (depInput) depInput.value = Number(s.deposit_percent || 30);
     if (pkInput) pkInput.value = s.stripe_publishable_key || '';
     if (skHint) {
       skHint.textContent = s.has_secret_key
@@ -7917,7 +7914,6 @@ function renderPaymentSettingsPanel() {
     }
     if (allowStudio) allowStudio.checked = s.allow_pay_in_studio !== false;
     if (allowFull) allowFull.checked = s.allow_online_full !== false;
-    if (allowDep) allowDep.checked = s.allow_online_deposit !== false;
     if (autoConfirm) autoConfirm.checked = s.auto_confirm_on_paid !== false;
     if (whUrlInput) whUrlInput.value = STATE.paymentWebhookUrl || `${window.location.origin}/api/webhooks/stripe`;
   }
@@ -8109,11 +8105,10 @@ function initPaymentSettingsControls() {
       const payload = {
         stripe_enabled: Boolean(document.getElementById('stripeEnabledCheck')?.checked),
         stripe_mode: document.getElementById('stripeModeSelect')?.value || 'test',
-        deposit_percent: Number(document.getElementById('stripeDepositPercentInput')?.value || 30),
         stripe_publishable_key: (document.getElementById('stripePublishableKeyInput')?.value || '').trim(),
         allow_pay_in_studio: Boolean(document.getElementById('stripeAllowStudioCheck')?.checked),
         allow_online_full: Boolean(document.getElementById('stripeAllowFullCheck')?.checked),
-        allow_online_deposit: Boolean(document.getElementById('stripeAllowDepositCheck')?.checked),
+        allow_online_deposit: false,
         auto_confirm_on_paid: Boolean(document.getElementById('stripeAutoConfirmCheck')?.checked),
       };
       const rawSk = (document.getElementById('stripeSecretKeyInput')?.value || '').trim();

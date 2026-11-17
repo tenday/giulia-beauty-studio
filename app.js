@@ -58,8 +58,6 @@ let publicPaymentConfig = {
   stripe_mode: 'test',
   allow_pay_in_studio: true,
   allow_online_full: false,
-  allow_online_deposit: false,
-  deposit_percent: 30,
 };
 
 function escapePublicHtml(str) {
@@ -1398,14 +1396,9 @@ function getSelectedBagTotalEuro() {
   return selectedBag.reduce((acc, item) => acc + Number(item?.price || 0), 0);
 }
 
-function computeClientOnlineCharge(totalEuro, scope = 'full') {
+function computeClientOnlineCharge(totalEuro) {
   const total = Math.round((Number(totalEuro || 0) + Number.EPSILON) * 100) / 100;
-  if (total <= 0) return 0;
-  if (scope === 'deposit') {
-    const pct = Math.min(90, Math.max(10, Number(publicPaymentConfig.deposit_percent || 30)));
-    return Math.min(total, Math.max(1, Math.round(((total * pct) / 100 + Number.EPSILON) * 100) / 100));
-  }
-  return total;
+  return total > 0 ? total : 0;
 }
 
 function formatEurPublic(amount) {
@@ -1434,8 +1427,6 @@ function renderPaymentMethodsGrid() {
   const total = getSelectedBagTotalEuro();
   const cfg = publicPaymentConfig || {};
   const hasOnlineProvider = Boolean(cfg.stripe_ready || cfg.paypal_ready);
-  const pct = Number(cfg.deposit_percent || 30);
-  const dep = computeClientOnlineCharge(total, 'deposit');
   const cards = [];
 
   if (hasOnlineProvider) {
@@ -1447,41 +1438,21 @@ function renderPaymentMethodsGrid() {
         pill: 'Nessun addebito ora',
       });
     }
-    if (cfg.stripe_ready) {
-      if (cfg.allow_online_full) {
-        cards.push({
-          pay: 'stripe_full',
-          title: cfg.paypal_ready ? 'Carta / Apple Pay (100%)' : 'Paga Online (100%)',
-          desc: total > 0 ? `Saldo immediato ${formatEurPublic(total)}` : 'Carta, Apple Pay, Google Pay',
-          pill: 'Stripe Sicuro',
-        });
-      }
-      if (cfg.allow_online_deposit) {
-        cards.push({
-          pay: 'stripe_deposit',
-          title: cfg.paypal_ready ? `Acconto ${pct}% Carta` : `Acconto ${pct}% Online`,
-          desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% online`,
-          pill: 'Stripe Acconto',
-        });
-      }
+    if (cfg.stripe_ready && cfg.allow_online_full !== false) {
+      cards.push({
+        pay: 'stripe_full',
+        title: cfg.paypal_ready ? 'Carta / Apple Pay (100%)' : 'Paga Online (100%)',
+        desc: total > 0 ? `Saldo completo ${formatEurPublic(total)}` : 'Carta, Apple Pay, Google Pay',
+        pill: 'Stripe Sicuro',
+      });
     }
-    if (cfg.paypal_ready) {
-      if (cfg.allow_online_full) {
-        cards.push({
-          pay: 'paypal_full',
-          title: 'PayPal (100%)',
-          desc: total > 0 ? `Paga ora ${formatEurPublic(total)} con PayPal` : 'Conto PayPal o Paga in 3 rate',
-          pill: 'PayPal Checkout',
-        });
-      }
-      if (cfg.allow_online_deposit) {
-        cards.push({
-          pay: 'paypal_deposit',
-          title: `Acconto ${pct}% PayPal`,
-          desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% su PayPal`,
-          pill: 'PayPal Acconto',
-        });
-      }
+    if (cfg.paypal_ready && cfg.allow_online_full !== false) {
+      cards.push({
+        pay: 'paypal_full',
+        title: 'PayPal (100%)',
+        desc: total > 0 ? `Saldo completo ${formatEurPublic(total)} con PayPal` : 'Conto PayPal o Paga in 3 rate',
+        pill: 'PayPal Checkout',
+      });
     }
   }
 
@@ -1525,11 +1496,9 @@ function updatePaymentChoiceUi() {
   const hintEl = document.getElementById('paymentOnlineHint');
   const confirmBtn = document.getElementById('confirmOrderBtn');
   const total = getSelectedBagTotalEuro();
-  const pct = Number(publicPaymentConfig.deposit_percent || 30);
 
-  const isPaypal = selectedPaymentMethod === 'paypal_full' || selectedPaymentMethod === 'paypal_deposit';
+  const isPaypal = selectedPaymentMethod === 'paypal_full';
   const isFull = selectedPaymentMethod === 'stripe_full' || selectedPaymentMethod === 'paypal_full';
-  const isDeposit = selectedPaymentMethod === 'stripe_deposit' || selectedPaymentMethod === 'paypal_deposit';
   const providerName = isPaypal ? 'PayPal' : 'Stripe';
   const fullMethodDesc = isPaypal ? 'con il tuo conto PayPal o in 3 rate' : 'con Carta, Apple Pay o Google Pay';
 
@@ -1538,26 +1507,12 @@ function updatePaymentChoiceUi() {
       hintEl.hidden = false;
       hintEl.innerHTML =
         total > 0
-          ? `🔒 Checkout sicuro ${providerName}: pagherai <strong>${formatEurPublic(total)}</strong> ora ${fullMethodDesc}.`
+          ? `🔒 Checkout sicuro ${providerName}: pagherai l'intero importo di <strong>${formatEurPublic(total)}</strong> ora ${fullMethodDesc}.`
           : `🔒 Checkout sicuro ${providerName} ${fullMethodDesc}.`;
     }
     if (confirmBtn) {
       confirmBtn.textContent =
         total > 0 ? `Paga Ora con ${providerName} (${formatEurPublic(total)})` : `Procedi su ${providerName}`;
-    }
-  } else if (isDeposit) {
-    const dep = computeClientOnlineCharge(total, 'deposit');
-    const rem = Math.max(0, Math.round((total - dep) * 100) / 100);
-    if (hintEl) {
-      hintEl.hidden = false;
-      hintEl.innerHTML =
-        total > 0
-          ? `🔒 Versi un acconto del ${pct}% (<strong>${formatEurPublic(dep)}</strong>) online su ${providerName}. Resteranno <strong>${formatEurPublic(rem)}</strong> da saldare in studio.`
-          : `🔒 Versi un acconto del ${pct}% online tramite ${providerName} Checkout.`;
-    }
-    if (confirmBtn) {
-      confirmBtn.textContent =
-        total > 0 ? `Paga Acconto ${formatEurPublic(dep)} (${providerName})` : `Paga Acconto ${pct}% (${providerName})`;
     }
   } else {
     if (hintEl) {

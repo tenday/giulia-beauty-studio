@@ -1016,7 +1016,7 @@
             <div class="insights-section-head" style="margin-bottom:10px;">
               <div>
                 <h3>💳 Pagamenti Online (Stripe Checkout)</h3>
-                <p class="muted-text" style="margin:0;">Abilita Carte, Apple Pay e Google Pay sul sito vetrina (saldo 100% o acconto %).</p>
+                <p class="muted-text" style="margin:0;">Abilita Carte, Apple Pay e Google Pay sul sito vetrina (solo saldo completo 100% online oppure in studio).</p>
               </div>
               <span class="status-badge badge-pending" id="stripeSettingsStatusBadge">Solo In Studio</span>
             </div>
@@ -1027,18 +1027,12 @@
                 <span>Abilita pagamenti online Stripe Checkout sulla Vetrina</span>
               </label>
 
-              <div class="form-row-2">
-                <div class="form-group">
-                  <label for="stripeModeSelect">Ambiente Stripe</label>
-                  <select id="stripeModeSelect" class="form-control">
-                    <option value="test">Test / Sandbox (sk_test_ / pk_test_)</option>
-                    <option value="live">Live / Produzione (sk_live_ / pk_live_)</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="stripeDepositPercentInput">Acconto Online (%)</label>
-                  <input type="number" id="stripeDepositPercentInput" class="form-control" min="10" max="90" value="30" />
-                </div>
+              <div class="form-group">
+                <label for="stripeModeSelect">Ambiente Stripe</label>
+                <select id="stripeModeSelect" class="form-control">
+                  <option value="test">Test / Sandbox (sk_test_ / pk_test_)</option>
+                  <option value="live">Live / Produzione (sk_live_ / pk_live_)</option>
+                </select>
               </div>
 
               <div class="form-group">
@@ -1071,11 +1065,7 @@
                 </label>
                 <label class="inline-check-label">
                   <input type="checkbox" id="stripeAllowFullCheck" checked />
-                  <span>Consenti saldo completo (100%) online</span>
-                </label>
-                <label class="inline-check-label">
-                  <input type="checkbox" id="stripeAllowDepositCheck" checked />
-                  <span>Consenti acconto percentuale online</span>
+                  <span>Consenti pagamento completo (100%) online</span>
                 </label>
                 <label class="inline-check-label">
                   <input type="checkbox" id="stripeAutoConfirmCheck" checked />
@@ -1152,7 +1142,7 @@
                 <small class="muted-text">Eventi consigliati su PayPal: <code>PAYMENT.CAPTURE.COMPLETED</code>, <code>PAYMENT.CAPTURE.REFUNDED</code></small>
               </div>
 
-              <small class="muted-text">Nota: la percentuale acconto, "Salda in Studio", saldo 100% e conferma automatica sono condivise con il riquadro Pagamenti.</small>
+              <small class="muted-text">Nota: le opzioni "Salda in Studio", pagamento completo 100% online e conferma automatica sono condivise con il riquadro Stripe.</small>
 
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
                 <button type="submit" class="btn-primary-admin" id="savePaypalSettingsBtn">💾 Salva Impostazioni PayPal</button>
@@ -1965,6 +1955,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=33"></script>
+  <script src="admin.js?v=34"></script>
 </body>
 </html>

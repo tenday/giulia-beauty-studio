@@ -146,7 +146,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
   paypal_webhook_id: '',
   allow_pay_in_studio: true,
   allow_online_full: true,
-  allow_online_deposit: true,
+  allow_online_deposit: false,
   deposit_percent: 30,
   auto_confirm_on_paid: true,
   currency: 'eur',

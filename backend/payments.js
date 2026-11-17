@@ -119,7 +119,8 @@ function normalizePaymentSettings(raw = {}) {
     paypal_webhook_id: String(merged.paypal_webhook_id || '').trim(),
     allow_pay_in_studio: merged.allow_pay_in_studio !== false,
     allow_online_full: merged.allow_online_full !== false,
-    allow_online_deposit: merged.allow_online_deposit !== false,
+    // Online checkout is all-or-nothing (full 100% or pay in studio); no online partial deposits.
+    allow_online_deposit: false,
     deposit_percent: clampInt(merged.deposit_percent, 10, 90, DEFAULT_PAYMENT_SETTINGS.deposit_percent),
     auto_confirm_on_paid: merged.auto_confirm_on_paid !== false,
     currency: 'eur',
@@ -129,7 +130,7 @@ function normalizePaymentSettings(raw = {}) {
 function resolveStripeConfig(rawSettings = {}) {
   const s = normalizePaymentSettings(rawSettings);
   const configured = Boolean(s.stripe_secret_key);
-  const ready = Boolean(s.stripe_enabled && configured && (s.allow_online_full || s.allow_online_deposit));
+  const ready = Boolean(s.stripe_enabled && configured && s.allow_online_full);
   return {
     ...s,
     configured,
@@ -140,7 +141,7 @@ function resolveStripeConfig(rawSettings = {}) {
 function resolvePayPalConfig(rawSettings = {}) {
   const s = normalizePaymentSettings(rawSettings);
   const configured = Boolean(s.paypal_client_id && s.paypal_client_secret);
-  const ready = Boolean(s.paypal_enabled && configured && (s.allow_online_full || s.allow_online_deposit));
+  const ready = Boolean(s.paypal_enabled && configured && s.allow_online_full);
   const apiBase = s.paypal_mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
   return {
     ...s,
@@ -232,7 +233,7 @@ function mergePaymentSettingsUpdate(currentRaw = {}, patch = {}) {
 
   if (patch.allow_pay_in_studio !== undefined) next.allow_pay_in_studio = Boolean(patch.allow_pay_in_studio);
   if (patch.allow_online_full !== undefined) next.allow_online_full = Boolean(patch.allow_online_full);
-  if (patch.allow_online_deposit !== undefined) next.allow_online_deposit = Boolean(patch.allow_online_deposit);
+  next.allow_online_deposit = false;
   if (patch.deposit_percent !== undefined) {
     next.deposit_percent = clampInt(patch.deposit_percent, 10, 90, current.deposit_percent);
   }
@@ -259,21 +260,14 @@ function getPublicPaymentConfig(rawSettings = {}) {
     online_ready: anyOnlineReady,
     allow_pay_in_studio: s.allow_pay_in_studio,
     allow_online_full: anyOnlineReady && s.allow_online_full,
-    allow_online_deposit: anyOnlineReady && s.allow_online_deposit,
-    deposit_percent: s.deposit_percent,
+    allow_online_deposit: false,
     currency: s.currency,
   };
 }
 
-function computeOnlineChargeAmount(totalPrice, payScope = 'full', depositPercent = 30) {
+function computeOnlineChargeAmount(totalPrice) {
   const total = roundMoney(totalPrice);
-  if (total <= 0) return 0;
-  if (payScope === 'deposit') {
-    const pct = clampInt(depositPercent, 10, 90, 30);
-    const deposit = roundMoney((total * pct) / 100);
-    return Math.min(total, Math.max(1, deposit));
-  }
-  return total;
+  return total > 0 ? total : 0;
 }
 
 function derivePaymentStatus({ totalPrice, paidAmount, requestedStatus }) {

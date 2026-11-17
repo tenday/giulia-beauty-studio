@@ -662,13 +662,18 @@ app.post('/api/public/book', async (req, res, next) => {
     const nowStr = formatRomeNow();
 
     const isStripeFull = paymentMethod === 'stripe_full';
-    const isStripeDeposit = paymentMethod === 'stripe_deposit';
     const isPaypalFull = paymentMethod === 'paypal_full';
-    const isPaypalDeposit = paymentMethod === 'paypal_deposit';
-    const wantsStripeCheckout = isStripeFull || isStripeDeposit;
-    const wantsPaypalCheckout = isPaypalFull || isPaypalDeposit;
-    const isDepositChoice = isStripeDeposit || isPaypalDeposit;
-    const payScope = isDepositChoice ? 'deposit' : 'full';
+    if (paymentMethod === 'stripe_deposit' || paymentMethod === 'paypal_deposit') {
+      return sendError(
+        res,
+        'Il pagamento online è disponibile solo per il saldo completo (100%) oppure in studio.',
+        422,
+        'DEPOSIT_DISABLED'
+      );
+    }
+    const wantsStripeCheckout = isStripeFull;
+    const wantsPaypalCheckout = isPaypalFull;
+    const payScope = 'full';
 
     let stripeCfg = null;
     let paypalCfg = null;
@@ -683,11 +688,7 @@ app.post('/api/public/book', async (req, res, next) => {
       const unavailCode = wantsStripeCheckout ? 'STRIPE_UNAVAILABLE' : 'PAYPAL_UNAVAILABLE';
       const minCode = wantsStripeCheckout ? 'STRIPE_MIN_AMOUNT' : 'PAYPAL_MIN_AMOUNT';
 
-      if (
-        !providerCfg.ready ||
-        (!isDepositChoice && !providerCfg.allow_online_full) ||
-        (isDepositChoice && !providerCfg.allow_online_deposit)
-      ) {
+      if (!providerCfg.ready || !providerCfg.allow_online_full) {
         return sendError(
           res,
           `Il pagamento online con ${providerLabel} non è attualmente disponibile. Seleziona Salda in Studio.`,
@@ -695,7 +696,7 @@ app.post('/api/public/book', async (req, res, next) => {
           unavailCode
         );
       }
-      chargeAmount = computeOnlineChargeAmount(totalPrice, payScope, providerCfg.deposit_percent);
+      chargeAmount = computeOnlineChargeAmount(totalPrice, payScope);
       if (chargeAmount < 0.5) {
         return sendError(
           res,
