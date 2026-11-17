@@ -933,7 +933,7 @@ async function executeAiTool(name, args = {}, ctx = {}) {
       if (currentPaid <= 0) return { ok: false, error: 'Nessun importo incassato da rimborsare.' };
       const reqAmt = args.amount !== undefined ? roundMoney(args.amount) : currentPaid;
       const refundAmt = Math.min(currentPaid, Math.max(0.01, reqAmt));
-      const notes = String(args.notes || '').trim() || 'Rimborso registrato via Assistente AI';
+      const notes = String(args.notes || '').trim() || 'Rimborso registrato via giul IA';
       let stripeRefund = null;
       let paypalRefund = null;
       if (args.call_online_provider !== false && appt.stripe_payment_intent) {
@@ -998,7 +998,7 @@ async function executeAiTool(name, args = {}, ctx = {}) {
       paidAmount: targetPaid,
       direction: 'payment',
       paymentNotes: args.notes ? String(args.notes).trim() : null,
-      transactionNotes: `Incasso registrato via Assistente AI (${PAYMENT_METHOD_LABELS[method] || method})`,
+      transactionNotes: `Incasso registrato via giul IA (${PAYMENT_METHOD_LABELS[method] || method})`,
       statusOverride,
       adminId: adminId || null,
       nowStr,
@@ -1288,7 +1288,7 @@ async function executeAiTool(name, args = {}, ctx = {}) {
         productId: Number(prod.id),
         movementType: mvType,
         quantity: qty,
-        notes: String(args.notes || '').trim() || 'Registrato via Assistente AI',
+        notes: String(args.notes || '').trim() || 'Registrato via giul IA',
       });
       markAction(`Movimento magazzino (${mvType} ${qty}pz): ${prod.name}`, 'inventory');
       return { ok: true, product_name: prod.name, movement_type: mvType, quantity: qty, result: res };
@@ -1451,7 +1451,7 @@ async function executeAiTool(name, args = {}, ctx = {}) {
         clientId: null,
         message: String(args.message || '').trim(),
         expiresAt: defaultGiftCardExpiry(todayIso),
-        notes: 'Creata via Assistente AI',
+        notes: 'Creata via giul IA',
       });
       markAction(`Emessa Gift Card ${gc.code} per ${rec}`, 'giftcards');
       return { ok: true, gift_card: gc };
@@ -1563,7 +1563,7 @@ async function runStudioAiAgent({
     .map((s) => `${s.name} (${Number(s.price).toFixed(0)}€, ${s.duration_minutes}m)`);
 
   const systemPrompt = [
-    "Sei l'Assistente AI operativa completa di Giulia Beauty Studio.",
+    "Sei giul IA, l'assistente AI operativa completa di Giulia Beauty Studio.",
     'Puoi SIA rispondere a qualsiasi analisi SIA eseguire direttamente tutte le operazioni del gestionale usando gli strumenti (tools) forniti: appuntamenti, disponibilità, pagamenti/rimborsi, clienti CRM, tessere/pacchetti, link privacy OTP, operatori/ferie, magazzino, promozioni, listino, gift card, WhatsApp e navigazione schermate.',
     '',
     `CONTESTO LIVE: Oggi è ${todayIso}, domani è ${tomorrowIso}. Scheda aperta: ${activeView}.`,

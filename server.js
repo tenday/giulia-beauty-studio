@@ -2256,7 +2256,7 @@ app.post('/api/admin/ai-chat', requireAdmin, async (req, res, next) => {
   try {
     const question = String(req.body?.question || '').trim();
     if (!question) {
-      return sendError(res, "Scrivi una domanda per l'Assistente AI.", 400);
+      return sendError(res, 'Scrivi una domanda per giul IA.', 400);
     }
 
     const store = getStore();
