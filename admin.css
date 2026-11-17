@@ -1358,6 +1358,61 @@ body {
   background: #9e2138;
 }
 
+.gbs-wa-ready-banner[hidden] {
+  display: none !important;
+}
+
+.gbs-wa-ready-banner {
+  position: fixed;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 2500;
+  width: min(520px, calc(100vw - 24px));
+}
+
+.gbs-wa-ready-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fffaf9;
+  border: 1.5px solid #b5586b;
+  box-shadow: 0 20px 50px rgba(42, 10, 15, 0.34);
+  color: #3d1218;
+}
+
+.gbs-wa-ready-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gbs-wa-ready-info strong {
+  font-size: 0.9rem;
+}
+
+.gbs-wa-ready-info span {
+  font-size: 0.78rem;
+  color: #6b3c44;
+  line-height: 1.35;
+}
+
+.gbs-wa-ready-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gbs-wa-ready-open-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .cal-event-card.status-pending {
   background: #fff4df;
   border-left-color: #c9861d;

@@ -154,10 +154,136 @@ function getDaysUntilBirthday(birthDateIso) {
 }
 
 function formatWaNumber(phone) {
-  const clean = String(phone || '').replace(/[^\d]/g, '');
+  let clean = String(phone || '').replace(/[^\d]/g, '');
   if (!clean) return '';
+  if (clean.startsWith('00')) clean = clean.slice(2);
   return clean.startsWith('39') ? clean : `39${clean}`;
 }
+
+function isIosInAppOrStandalone() {
+  const ua = navigator.userAgent || '';
+  const isInApp = /FBAN|FBAV|Instagram|Line|TikTok|BytedanceWebview|Snapchat/i.test(ua);
+  const isStandalone =
+    window.navigator.standalone === true ||
+    (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+  return isInApp || isStandalone;
+}
+
+function preopenWhatsAppWindow() {
+  if (isIosInAppOrStandalone()) return null;
+  try {
+    const win = window.open('', '_blank');
+    if (win) {
+      try {
+        win.document.title = 'Apertura WhatsApp…';
+        win.document.body.innerHTML =
+          '<div style="font-family:-apple-system,BlinkMacSystemFont,Montserrat,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fdf8f7;color:#4a1d24;text-align:center;padding:24px;"><div><p style="font-size:1.1rem;font-weight:600;margin:0 0 8px;">📲 Apertura WhatsApp in corso…</p><p style="font-size:0.9rem;opacity:0.75;margin:0;">Attendi un istante</p></div></div>';
+      } catch (_) {}
+      return win;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function closePreopenedWhatsAppWindow(win) {
+  if (!win) return;
+  try {
+    if (!win.closed) win.close();
+  } catch (_) {}
+}
+
+function hideWhatsAppReadyBanner() {
+  const banner = document.getElementById('gbsWaReadyBanner');
+  if (banner) {
+    banner.hidden = true;
+    banner.innerHTML = '';
+  }
+}
+
+function showWhatsAppReadyBanner(targetUrl, { recipientName = '', recipientPhone = '' } = {}) {
+  const banner = document.getElementById('gbsWaReadyBanner');
+  if (!banner || !targetUrl) return;
+  let previewMsg = '';
+  try {
+    previewMsg = new URL(targetUrl).searchParams.get('text') || '';
+  } catch (_) {}
+  const labelTarget = recipientName || recipientPhone || 'la cliente';
+  banner.innerHTML = `
+    <div class="gbs-wa-ready-card">
+      <div class="gbs-wa-ready-info">
+        <strong>📲 WhatsApp pronto per ${escapeHtml(labelTarget)}</strong>
+        <span>Il browser ha bloccato l’apertura automatica: tocca il pulsante qui sotto per aprire WhatsApp.</span>
+      </div>
+      <div class="gbs-wa-ready-actions">
+        <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener" class="btn-primary-admin gbs-wa-ready-open-link">📲 Apri WhatsApp Ora</a>
+        ${previewMsg ? '<button type="button" class="btn-outline-sm gbs-wa-ready-copy-btn">📋 Copia Testo</button>' : ''}
+        <button type="button" class="btn-ghost-admin gbs-wa-ready-close-btn" aria-label="Chiudi">✕</button>
+      </div>
+    </div>
+  `;
+  banner.hidden = false;
+
+  const openLink = banner.querySelector('.gbs-wa-ready-open-link');
+  openLink?.addEventListener('click', (e) => {
+    if (isIosInAppOrStandalone()) {
+      e.preventDefault();
+      window.location.assign(targetUrl);
+    }
+    setTimeout(hideWhatsAppReadyBanner, 600);
+  });
+  banner.querySelector('.gbs-wa-ready-copy-btn')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(previewMsg);
+      showAgendaToast('Messaggio WhatsApp copiato negli appunti ✓');
+    } catch {
+      showAgendaToast('Copia manuale non disponibile su questo browser', 'error');
+    }
+  });
+  banner.querySelector('.gbs-wa-ready-close-btn')?.addEventListener('click', hideWhatsAppReadyBanner);
+}
+
+function openWhatsAppTargetUrl(targetUrl, { preOpenedWindow = null, recipientName = '', recipientPhone = '' } = {}) {
+  if (!targetUrl) {
+    closePreopenedWhatsAppWindow(preOpenedWindow);
+    return false;
+  }
+  if (preOpenedWindow && !preOpenedWindow.closed) {
+    try {
+      preOpenedWindow.opener = null;
+      preOpenedWindow.location.replace(targetUrl);
+      hideWhatsAppReadyBanner();
+      return true;
+    } catch (_) {
+      closePreopenedWhatsAppWindow(preOpenedWindow);
+    }
+  }
+  if (!isIosInAppOrStandalone()) {
+    let win = null;
+    try {
+      win = window.open(targetUrl, '_blank');
+    } catch (_) {
+      win = null;
+    }
+    if (win) {
+      try {
+        win.opener = null;
+      } catch (_) {}
+      hideWhatsAppReadyBanner();
+      return true;
+    }
+  }
+  showWhatsAppReadyBanner(targetUrl, { recipientName, recipientPhone });
+  return false;
+}
+
+document.addEventListener('click', (e) => {
+  const waAnchor = e.target.closest('a[href^="https://wa.me/"]');
+  if (!waAnchor) return;
+  if (isIosInAppOrStandalone()) {
+    e.preventDefault();
+    window.location.assign(waAnchor.href);
+  }
+});
 
 function renderMessageTemplate(code, vars = {}) {
   const found = (STATE.messageTemplates || []).find((t) => t.code === code);
@@ -194,27 +320,45 @@ async function sendWhatsAppSemiautomatic({
   messageText = '',
   triggerSource = 'manual',
   silentToast = false,
+  preOpenedWindow,
 }) {
-  const res = await apiFetch('admin/whatsapp/send', {
-    method: 'POST',
-    body: JSON.stringify({
-      client_id: clientId || undefined,
-      appointment_id: appointmentId || undefined,
-      recipient_phone: recipientPhone || '',
-      recipient_name: recipientName || '',
-      template_code: templateCode || undefined,
-      vars,
-      message_text: messageText || undefined,
-      trigger_source: triggerSource,
-    }),
-  });
+  const preWin = preOpenedWindow !== undefined ? preOpenedWindow : preopenWhatsAppWindow();
+  let res;
+  try {
+    res = await apiFetch('admin/whatsapp/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        client_id: clientId || undefined,
+        appointment_id: appointmentId || undefined,
+        recipient_phone: recipientPhone || '',
+        recipient_name: recipientName || '',
+        template_code: templateCode || undefined,
+        vars,
+        message_text: messageText || undefined,
+        trigger_source: triggerSource,
+      }),
+    });
+  } catch (err) {
+    closePreopenedWhatsAppWindow(preWin);
+    throw err;
+  }
 
   const targetUrl = res.wa_url || res.fallback_url;
   if (targetUrl) {
+    const opened = openWhatsAppTargetUrl(targetUrl, {
+      preOpenedWindow: preWin,
+      recipientName,
+      recipientPhone,
+    });
     if (!silentToast) {
-      showAgendaToast(`📲 Apro WhatsApp per ${recipientName || recipientPhone}`);
+      showAgendaToast(
+        opened
+          ? `📲 Apro WhatsApp per ${recipientName || recipientPhone}`
+          : `📲 WhatsApp pronto: tocca "Apri WhatsApp Ora"`
+      );
     }
-    window.open(targetUrl, '_blank', 'noopener');
+  } else {
+    closePreopenedWhatsAppWindow(preWin);
   }
 
   await loadMessagesData();
@@ -1827,6 +1971,8 @@ async function executeDuplicateAppointmentAtSlot(targetDate, targetTime) {
     send_whatsapp: sendWa,
   };
 
+  const preWaWin = sendWa ? preopenWhatsAppWindow() : null;
+
   try {
     const res = await apiFetch('admin/appointments', {
       method: 'POST',
@@ -1849,14 +1995,26 @@ async function executeDuplicateAppointmentAtSlot(targetDate, targetTime) {
 
     const dateLabel = formatShortItDate(targetDate);
     if (res?.whatsapp_dispatch?.wa_url) {
-      window.open(res.whatsapp_dispatch.wa_url, '_blank', 'noopener');
-      showAgendaToast(`Appuntamento duplicato su ${dateLabel} ${targetTime} e aperto su WhatsApp ✓`);
-    } else if (res?.whatsapp_dispatch?.error) {
-      showAgendaToast(`Duplicato su ${dateLabel} ${targetTime} (${res.whatsapp_dispatch.error})`, 'error');
+      const opened = openWhatsAppTargetUrl(res.whatsapp_dispatch.wa_url, {
+        preOpenedWindow: preWaWin,
+        recipientName: src.client_name || '',
+        recipientPhone: src.client_phone || '',
+      });
+      showAgendaToast(
+        opened
+          ? `Appuntamento duplicato su ${dateLabel} ${targetTime} e aperto su WhatsApp ✓`
+          : `Appuntamento duplicato su ${dateLabel} ${targetTime} ✓ Tocca "Apri WhatsApp Ora"`
+      );
     } else {
-      showAgendaToast(`Appuntamento duplicato su ${dateLabel} alle ${targetTime} ✓`);
+      closePreopenedWhatsAppWindow(preWaWin);
+      if (res?.whatsapp_dispatch?.error) {
+        showAgendaToast(`Duplicato su ${dateLabel} ${targetTime} (${res.whatsapp_dispatch.error})`, 'error');
+      } else {
+        showAgendaToast(`Appuntamento duplicato su ${dateLabel} alle ${targetTime} ✓`);
+      }
     }
   } catch (err) {
+    closePreopenedWhatsAppWindow(preWaWin);
     CAL_UI.duplicateSaving = false;
     showAgendaToast(err.message || 'Errore durante la duplicazione', 'error');
   }
@@ -4189,12 +4347,12 @@ async function openClientModal(clientId = null) {
     exportBtn.hidden = false;
     waBtn.hidden = false;
 
-    const cleanPhone = String(c.phone || '').replace(/[^\d]/g, '');
-    waBtn.href = `https://wa.me/${cleanPhone.startsWith('39') ? cleanPhone : '39' + cleanPhone}`;
+    const waClean = formatWaNumber(c.phone || '');
+    waBtn.href = waClean ? `https://wa.me/${waClean}` : 'https://wa.me/';
     waBtn.onclick = (e) => {
       e.preventDefault();
       if (!quickWaBox) {
-        window.open(waBtn.href, '_blank', 'noopener');
+        openWhatsAppTargetUrl(waBtn.href, { recipientName: c.full_name, recipientPhone: c.phone });
         return;
       }
       const tplSel = document.getElementById('clientQuickWaTemplate');
@@ -4505,17 +4663,32 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    const shouldOpenWaOnSave = Boolean(payload.send_whatsapp && payload.status === 'confirmed');
+    const preWaWin = shouldOpenWaOnSave ? preopenWhatsAppWindow() : null;
+
     try {
       const res = await apiFetch('admin/appointments', { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('apptModal').classList.remove('open');
       await refreshAllData();
       if (res?.whatsapp_dispatch?.wa_url) {
-        window.open(res.whatsapp_dispatch.wa_url, '_blank', 'noopener');
-        showAgendaToast('Appuntamento salvato e aperto su WhatsApp ✓');
-      } else if (res?.whatsapp_dispatch?.error) {
-        showAgendaToast(`Appuntamento salvato (${res.whatsapp_dispatch.error})`, 'error');
+        const opened = openWhatsAppTargetUrl(res.whatsapp_dispatch.wa_url, {
+          preOpenedWindow: preWaWin,
+          recipientName: payload.client_name || document.getElementById('apptExistingClientName')?.textContent || '',
+          recipientPhone: payload.client_phone || '',
+        });
+        showAgendaToast(
+          opened
+            ? 'Appuntamento salvato e aperto su WhatsApp ✓'
+            : 'Appuntamento salvato ✓ Tocca "Apri WhatsApp Ora"'
+        );
+      } else {
+        closePreopenedWhatsAppWindow(preWaWin);
+        if (res?.whatsapp_dispatch?.error) {
+          showAgendaToast(`Appuntamento salvato (${res.whatsapp_dispatch.error})`, 'error');
+        }
       }
     } catch (err) {
+      closePreopenedWhatsAppWindow(preWaWin);
       alertEl.hidden = false;
       alertEl.textContent = err.message;
     }
@@ -4670,6 +4843,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const clientId = Number(document.getElementById('clientIdInput').value);
       const box = document.getElementById('privacyOtpResultBox');
       if (!clientId || !box) return;
+      const preWaWin = preopenWhatsAppWindow();
       sendPrivacyOtpBtn.disabled = true;
       try {
         const res = await apiFetch(`admin/clients/${clientId}/privacy-request`, {
@@ -4695,14 +4869,23 @@ document.addEventListener('DOMContentLoaded', () => {
         box.hidden = false;
         box.className = 'admin-alert admin-alert-ok';
 
+        let openedPopup = false;
         if (hasValidPhone && directWaUrl) {
-          window.open(directWaUrl, '_blank', 'noopener');
+          openedPopup = openWhatsAppTargetUrl(directWaUrl, {
+            preOpenedWindow: preWaWin,
+            recipientName: req.client?.full_name || '',
+            recipientPhone: req.client?.phone || '',
+          });
           await loadMessagesData();
           if (STATE.activeView === 'messages') renderMessagesView();
+        } else {
+          closePreopenedWhatsAppWindow(preWaWin);
         }
 
         const waBadgeHtml = hasValidPhone
-          ? '<div style="margin-top:6px;color:#155733;font-size:0.8rem;"><strong>✓ Aperto su WhatsApp e registrato nello storico messaggi!</strong> (Se il browser ha bloccato il popup, usa il pulsante qui sotto)</div>'
+          ? openedPopup
+            ? '<div style="margin-top:6px;color:#155733;font-size:0.8rem;"><strong>✓ Aperto su WhatsApp e registrato nello storico messaggi!</strong> (Se il browser ha bloccato il popup, usa il pulsante qui sotto)</div>'
+            : '<div style="margin-top:6px;color:#155733;font-size:0.8rem;"><strong>✓ Messaggio preparato e registrato nello storico!</strong> Tocca <strong>Apri / Reinvia su WhatsApp</strong> qui sotto per aprire WhatsApp su iPhone/iPad.</div>'
           : `<div style="margin-top:6px;color:#9a5b13;font-size:0.78rem;">⚠ ${escapeHtml(dispatch?.error || 'Numero telefono non valido: puoi copiare link + OTP o aprire il selettore WhatsApp.')}</div>`;
 
         box.innerHTML = `
@@ -4724,6 +4907,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         });
       } catch (err) {
+        closePreopenedWhatsAppWindow(preWaWin);
         box.hidden = false;
         box.className = 'admin-alert admin-alert-error';
         box.textContent = `Errore generazione link privacy: ${err.message}`;
@@ -6647,12 +6831,16 @@ function buildGiftCardWhatsappUrl(card) {
     : `https://wa.me/?text=${encodeURIComponent(messageText)}`;
 }
 
-async function sendGiftCardViaWhatsapp(card) {
+async function sendGiftCardViaWhatsapp(card, { preOpenedWindow } = {}) {
+  const preWin = preOpenedWindow !== undefined ? preOpenedWindow : preopenWhatsAppWindow();
   const { vars, messageText } = buildGiftCardTemplatePayload(card);
   const phone = String(card.recipient_phone || '').trim();
   if (!phone || formatWaNumber(phone).length < 8) {
     showAgendaToast('Numero destinatario non indicato: apro selettore WhatsApp');
-    window.open(buildGiftCardWhatsappUrl(card), '_blank', 'noopener');
+    openWhatsAppTargetUrl(buildGiftCardWhatsappUrl(card), {
+      preOpenedWindow: preWin,
+      recipientName: card.recipient_name || '',
+    });
     return;
   }
   await sendWhatsAppViaBusinessOrFallback({
@@ -6663,6 +6851,7 @@ async function sendGiftCardViaWhatsapp(card) {
     vars,
     messageText,
     triggerSource: 'auto_gift_card',
+    preOpenedWindow: preWin,
   });
 }
 

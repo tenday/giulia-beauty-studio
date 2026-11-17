@@ -505,6 +505,37 @@ function buildWhatsAppUrl() {
   return `https://wa.me/${STUDIO_WHATSAPP}?text=${encodeURIComponent(msg)}`;
 }
 
+function isIosInAppOrStandalone() {
+  const ua = navigator.userAgent || '';
+  const isInApp = /FBAN|FBAV|Instagram|Line|TikTok|BytedanceWebview|Snapchat/i.test(ua);
+  const isStandalone =
+    window.navigator.standalone === true ||
+    (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+  return isInApp || isStandalone;
+}
+
+function openWhatsAppUrl(url) {
+  if (!url) return false;
+  if (isIosInAppOrStandalone()) {
+    window.location.assign(url);
+    return true;
+  }
+  let win = null;
+  try {
+    win = window.open(url, '_blank');
+  } catch (_) {
+    win = null;
+  }
+  if (win) {
+    try {
+      win.opener = null;
+    } catch (_) {}
+    return true;
+  }
+  window.location.assign(url);
+  return true;
+}
+
 function renderGroupedFreeSlots(slotsGrid, freeSlots) {
   const groups = [
     { label: 'Mattina', items: freeSlots.filter((t) => t < '13:00') },
@@ -1342,7 +1373,17 @@ function initApp() {
     if (!validateCheckoutLegalConsent()) {
       return;
     }
-    window.open(buildWhatsAppUrl(), '_blank', 'noopener');
+    openWhatsAppUrl(buildWhatsAppUrl());
+  });
+
+  // Ensure wa.me links also work inside iOS/iPadOS in-app browsers (Instagram/Facebook) and standalone PWA
+  document.addEventListener('click', (e) => {
+    const waAnchor = e.target.closest('a[href^="https://wa.me/"]');
+    if (!waAnchor) return;
+    if (isIosInAppOrStandalone()) {
+      e.preventDefault();
+      window.location.assign(waAnchor.href);
+    }
   });
 
   // Initial Render
