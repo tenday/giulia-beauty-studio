@@ -777,7 +777,7 @@ async function callGeminiChat({ apiKey, model, systemPrompt, history = [], quest
   const historyBlock =
     history.length > 0
       ? `\nCRONOLOGIA RECENTE:\n${history
-          .map((m) => `${m.role === 'user' ? 'GIULIA' : 'giul IA'}: ${m.content}`)
+          .map((m) => `${m.role === 'user' ? 'GIULIA' : 'giulIA'}: ${m.content}`)
           .join('\n')}\n`
       : '';
   const prompt = `${systemPrompt}${historyBlock}\nDOMANDA DI GIULIA: ${question}`;
@@ -834,7 +834,7 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
     };
 
     const systemPrompt = [
-      "Sei giul IA, l'assistente AI manageriale e operativa di Giulia Beauty Studio (centro estetico).",
+      "Sei giulIA, l'assistente AI manageriale e operativa di Giulia Beauty Studio (centro estetico).",
       'Rispondi in italiano chiaro, pratico, elegante e conciso usando ESCLUSIVAMENTE i dati reali JSON forniti qui sotto (non inventare mai nomi, numeri, prezzi o orari).',
       "Quando opportuno usa elenchi puntati leggibili o brevi bozze pronte (es. messaggi WhatsApp cortesi per clienti).",
       '',

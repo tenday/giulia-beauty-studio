@@ -5088,10 +5088,10 @@ function updateAiStatusLabels(engineUsed = '') {
   const isExternal = STATE.geminiEnabled || (engineUsed && engineUsed !== 'local-analytics-ai');
   const badgeText =
     STATE.aiProvider === 'openai_compatible' || String(engineUsed).startsWith('ai (')
-      ? '✨ giul IA (Connessa) • Dati Reali'
+      ? '✨ giulIA (Connessa) • Dati Reali'
       : isExternal
-      ? '✨ giul IA Attiva + Dati Reali'
-      : '✨ giul IA Locale • Dati Studio';
+      ? '✨ giulIA Attiva + Dati Reali'
+      : '✨ giulIA Locale • Dati Studio';
   const widgetText =
     STATE.aiProvider === 'openai_compatible' || String(engineUsed).startsWith('ai (')
       ? 'Online AI • Dati reali Studio'
@@ -5497,11 +5497,11 @@ function resetAiConversationThreads() {
   STATE.aiChatHistory = [];
   const tabBox = document.getElementById('aiChatMessages');
   if (tabBox) {
-    tabBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono giul IA: analizzo automaticamente agenda, operatori, clienti, LTV, magazzino e riordini reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.</div>`;
+    tabBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono giulIA: analizzo automaticamente agenda, operatori, clienti, LTV, magazzino e riordini reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.</div>`;
   }
   const floatBox = document.getElementById('aiWidgetMessages');
   if (floatBox) {
-    floatBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono giul IA, sempre pronta in qualsiasi sezione: puoi farmi domande oppure chiedermi di agire al posto tuo (es. "Crea appuntamento", "Segna pagato", "Nuova cliente", "Emetti Gift Card", "Scarica prodotto").</div>`;
+    floatBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono giulIA, sempre pronta in qualsiasi sezione: puoi farmi domande oppure chiedermi di agire al posto tuo (es. "Crea appuntamento", "Segna pagato", "Nuova cliente", "Emetti Gift Card", "Scarica prodotto").</div>`;
   }
 }
 
