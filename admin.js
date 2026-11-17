@@ -5078,7 +5078,7 @@ document.addEventListener('DOMContentLoaded', () => {
    AI INSIGHTS, INACTIVE CLIENTS & REPORTS RENDERER
    ========================================================================== */
 function formatAiTextToSafeHtml(rawText) {
-  let safe = escapeHtml(rawText || '');
+  let safe = escapeHtml(String(rawText || '').trim());
   safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   safe = safe.replace(/\*(.+?)\*/g, '<em>$1</em>');
   return safe;
@@ -5409,13 +5409,6 @@ function initFloatingAiWidget() {
   resetBtn?.addEventListener('click', () => {
     resetAiConversationThreads();
     input?.focus();
-  });
-
-  document.querySelectorAll('.ai-widget-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const q = chip.dataset.question;
-      if (q) sendAiQuestion(q);
-    });
   });
 
   form?.addEventListener('submit', (e) => {

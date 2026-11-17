@@ -2192,40 +2192,6 @@ body {
   height: 14px;
 }
 
-.ai-widget-chips {
-  display: flex;
-  gap: 6px;
-  padding: 9px 12px;
-  background: #fdf6f5;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.ai-widget-chips::-webkit-scrollbar {
-  display: none;
-}
-
-.ai-widget-chip {
-  flex: 0 0 auto;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(168, 108, 114, 0.28);
-  background: #ffffff;
-  color: var(--ink);
-  font-family: var(--font-sans);
-  font-size: 0.69rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.14s ease, border-color 0.14s ease;
-}
-
-.ai-widget-chip:hover {
-  background: var(--bg-soft);
-  border-color: var(--rose);
-}
-
 .ai-widget-messages {
   flex: 1;
   overflow-y: auto;
