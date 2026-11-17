@@ -21,6 +21,7 @@ const PAYMENT_METHOD_LABELS = {
   bonifico: 'Bonifico',
   gift_card: 'Gift Card',
   stripe_online: 'Stripe Online',
+  paypal_online: 'PayPal Online',
   carta: 'Carta / Digitale',
 };
 
@@ -64,10 +65,15 @@ function normalizePaymentMethod(val, fallback = 'studio') {
 }
 
 function normalizePaymentSettings(raw = {}) {
-  const envEnabled =
+  const envStripeEnabled =
     process.env.STRIPE_ENABLED === 'true' ||
     process.env.STRIPE_ENABLED === '1' ||
     Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_ENABLED !== 'false');
+
+  const envPayPalEnabled =
+    process.env.PAYPAL_ENABLED === 'true' ||
+    process.env.PAYPAL_ENABLED === '1' ||
+    Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET && process.env.PAYPAL_ENABLED !== 'false');
 
   const merged = {
     ...DEFAULT_PAYMENT_SETTINGS,
@@ -83,8 +89,21 @@ function normalizePaymentSettings(raw = {}) {
   if (!merged.stripe_webhook_secret && process.env.STRIPE_WEBHOOK_SECRET) {
     merged.stripe_webhook_secret = String(process.env.STRIPE_WEBHOOK_SECRET).trim();
   }
-  if (raw && raw.stripe_enabled === undefined && envEnabled) {
+  if (raw && raw.stripe_enabled === undefined && envStripeEnabled) {
     merged.stripe_enabled = true;
+  }
+
+  if (!merged.paypal_client_id && process.env.PAYPAL_CLIENT_ID) {
+    merged.paypal_client_id = String(process.env.PAYPAL_CLIENT_ID).trim();
+  }
+  if (!merged.paypal_client_secret && process.env.PAYPAL_CLIENT_SECRET) {
+    merged.paypal_client_secret = String(process.env.PAYPAL_CLIENT_SECRET).trim();
+  }
+  if (!merged.paypal_webhook_id && process.env.PAYPAL_WEBHOOK_ID) {
+    merged.paypal_webhook_id = String(process.env.PAYPAL_WEBHOOK_ID).trim();
+  }
+  if (raw && raw.paypal_enabled === undefined && envPayPalEnabled) {
+    merged.paypal_enabled = true;
   }
 
   return {
@@ -93,6 +112,11 @@ function normalizePaymentSettings(raw = {}) {
     stripe_publishable_key: String(merged.stripe_publishable_key || '').trim(),
     stripe_secret_key: String(merged.stripe_secret_key || '').trim(),
     stripe_webhook_secret: String(merged.stripe_webhook_secret || '').trim(),
+    paypal_enabled: Boolean(merged.paypal_enabled),
+    paypal_mode: String(merged.paypal_mode || process.env.PAYPAL_MODE || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox',
+    paypal_client_id: String(merged.paypal_client_id || '').trim(),
+    paypal_client_secret: String(merged.paypal_client_secret || '').trim(),
+    paypal_webhook_id: String(merged.paypal_webhook_id || '').trim(),
     allow_pay_in_studio: merged.allow_pay_in_studio !== false,
     allow_online_full: merged.allow_online_full !== false,
     allow_online_deposit: merged.allow_online_deposit !== false,
@@ -113,8 +137,22 @@ function resolveStripeConfig(rawSettings = {}) {
   };
 }
 
+function resolvePayPalConfig(rawSettings = {}) {
+  const s = normalizePaymentSettings(rawSettings);
+  const configured = Boolean(s.paypal_client_id && s.paypal_client_secret);
+  const ready = Boolean(s.paypal_enabled && configured && (s.allow_online_full || s.allow_online_deposit));
+  const apiBase = s.paypal_mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+  return {
+    ...s,
+    configured,
+    ready,
+    apiBase,
+  };
+}
+
 function sanitizePaymentSettingsForClient(rawSettings = {}) {
   const s = resolveStripeConfig(rawSettings);
+  const pp = resolvePayPalConfig(rawSettings);
   return {
     stripe_enabled: s.stripe_enabled,
     stripe_configured: s.configured,
@@ -125,6 +163,14 @@ function sanitizePaymentSettingsForClient(rawSettings = {}) {
     stripe_secret_key_masked: maskSecret(s.stripe_secret_key),
     has_webhook_secret: Boolean(s.stripe_webhook_secret),
     stripe_webhook_secret_masked: maskSecret(s.stripe_webhook_secret),
+    paypal_enabled: pp.paypal_enabled,
+    paypal_configured: pp.configured,
+    paypal_ready: pp.ready,
+    paypal_mode: pp.paypal_mode,
+    paypal_client_id: pp.paypal_client_id,
+    has_paypal_client_secret: Boolean(pp.paypal_client_secret),
+    paypal_client_secret_masked: maskSecret(pp.paypal_client_secret),
+    paypal_webhook_id: pp.paypal_webhook_id,
     allow_pay_in_studio: s.allow_pay_in_studio,
     allow_online_full: s.allow_online_full,
     allow_online_deposit: s.allow_online_deposit,
@@ -164,6 +210,26 @@ function mergePaymentSettingsUpdate(currentRaw = {}, patch = {}) {
     }
   }
 
+  if (patch.paypal_enabled !== undefined) next.paypal_enabled = Boolean(patch.paypal_enabled);
+  if (patch.paypal_mode !== undefined) {
+    next.paypal_mode = String(patch.paypal_mode).toLowerCase() === 'live' ? 'live' : 'sandbox';
+  }
+  if (patch.paypal_client_id !== undefined) {
+    next.paypal_client_id = String(patch.paypal_client_id || '').trim();
+  }
+  if (patch.paypal_webhook_id !== undefined) {
+    next.paypal_webhook_id = String(patch.paypal_webhook_id || '').trim();
+  }
+
+  if (patch.clear_paypal_secret === true) {
+    next.paypal_client_secret = '';
+  } else if (typeof patch.paypal_client_secret === 'string') {
+    const trimmed = patch.paypal_client_secret.trim();
+    if (trimmed && !isMaskedPlaceholder(trimmed)) {
+      next.paypal_client_secret = trimmed;
+    }
+  }
+
   if (patch.allow_pay_in_studio !== undefined) next.allow_pay_in_studio = Boolean(patch.allow_pay_in_studio);
   if (patch.allow_online_full !== undefined) next.allow_online_full = Boolean(patch.allow_online_full);
   if (patch.allow_online_deposit !== undefined) next.allow_online_deposit = Boolean(patch.allow_online_deposit);
@@ -179,14 +245,21 @@ function mergePaymentSettingsUpdate(currentRaw = {}, patch = {}) {
 
 function getPublicPaymentConfig(rawSettings = {}) {
   const s = resolveStripeConfig(rawSettings);
+  const pp = resolvePayPalConfig(rawSettings);
+  const anyOnlineReady = s.ready || pp.ready;
   return {
     stripe_ready: s.ready,
     stripe_enabled: s.stripe_enabled,
     stripe_mode: s.stripe_mode,
     publishable_key: s.stripe_publishable_key,
+    paypal_ready: pp.ready,
+    paypal_enabled: pp.paypal_enabled,
+    paypal_mode: pp.paypal_mode,
+    paypal_client_id: pp.paypal_client_id,
+    online_ready: anyOnlineReady,
     allow_pay_in_studio: s.allow_pay_in_studio,
-    allow_online_full: s.ready && s.allow_online_full,
-    allow_online_deposit: s.ready && s.allow_online_deposit,
+    allow_online_full: anyOnlineReady && s.allow_online_full,
+    allow_online_deposit: anyOnlineReady && s.allow_online_deposit,
     deposit_percent: s.deposit_percent,
     currency: s.currency,
   };
@@ -437,6 +510,265 @@ function verifyStripeWebhookSignature(rawBody, sigHeader, webhookSecret, toleran
   return { valid: true, timestamp };
 }
 
+/* ============================================================================
+   PAYPAL CHECKOUT REST API V2 CONNECTOR
+   ============================================================================ */
+async function getPayPalAccessToken(config) {
+  if (!config || !config.paypal_client_id || !config.paypal_client_secret) {
+    const err = new Error('Credenziali PayPal (Client ID e Client Secret) non configurate.');
+    err.status = 400;
+    throw err;
+  }
+  const fetchFn = globalThis.__GBS_PAYPAL_FETCH__ || fetch;
+  const apiBase = config.apiBase || (config.paypal_mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com');
+  const authBasic = Buffer.from(`${config.paypal_client_id}:${config.paypal_client_secret}`, 'utf8').toString('base64');
+
+  const res = await fetchFn(`${apiBase}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${authBasic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: 'grant_type=client_credentials',
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok || !data?.access_token) {
+    const msg =
+      data?.error_description ||
+      data?.message ||
+      `Autenticazione PayPal fallita (HTTP ${res.status}). Verifica Client ID e Secret.`;
+    const err = new Error(msg);
+    err.status = res.status >= 400 && res.status < 500 ? 400 : 502;
+    err.httpStatus = res.status;
+    throw err;
+  }
+
+  return {
+    accessToken: data.access_token,
+    appId: data.app_id || null,
+    scope: data.scope || '',
+    apiBase,
+  };
+}
+
+async function paypalRequest(config, method, endpointPath, bodyObj = null) {
+  const { accessToken, apiBase } = await getPayPalAccessToken(config);
+  const fetchFn = globalThis.__GBS_PAYPAL_FETCH__ || fetch;
+  const upperMethod = String(method || 'GET').toUpperCase();
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/json',
+  };
+  const fetchOpts = { method: upperMethod, headers };
+
+  if (bodyObj !== null && upperMethod !== 'GET') {
+    headers['Content-Type'] = 'application/json';
+    fetchOpts.body = JSON.stringify(bodyObj);
+  }
+
+  const res = await fetchFn(`${apiBase}${endpointPath}`, fetchOpts);
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const issue = data?.details?.[0]?.issue || '';
+    const detailDesc = data?.details?.[0]?.description || '';
+    const msg = detailDesc || data?.message || `Errore API PayPal (HTTP ${res.status}).`;
+    const err = new Error(msg);
+    err.status = res.status >= 400 && res.status < 500 ? 400 : 502;
+    err.httpStatus = res.status;
+    err.paypalIssue = issue;
+    err.paypalName = data?.name || '';
+    throw err;
+  }
+
+  return data;
+}
+
+async function verifyPayPalConnection({ config }) {
+  const tokenRes = await getPayPalAccessToken(config);
+  return {
+    ok: true,
+    mode: config.paypal_mode || 'sandbox',
+    app_id: tokenRes.appId,
+    scope: tokenRes.scope,
+  };
+}
+
+function parsePayPalOrderSummary(order) {
+  const pu = Array.isArray(order?.purchase_units) ? order.purchase_units[0] : null;
+  const capture = Array.isArray(pu?.payments?.captures) ? pu.payments.captures[0] : null;
+  const amountVal =
+    capture?.amount?.value !== undefined
+      ? capture.amount.value
+      : pu?.amount?.value !== undefined
+      ? pu.amount.value
+      : 0;
+  return {
+    orderId: order?.id || null,
+    status: order?.status || '',
+    captureId: capture?.id || null,
+    captureStatus: capture?.status || '',
+    amountEur: roundMoney(amountVal),
+    bookingCode: String(pu?.reference_id || pu?.custom_id || '').trim(),
+  };
+}
+
+async function createPayPalOrder({
+  config,
+  appointment,
+  items = [],
+  chargeAmount,
+  payScope = 'full',
+  returnUrl,
+  cancelUrl,
+}) {
+  const amt = roundMoney(chargeAmount);
+  if (amt < 0.5) {
+    const err = new Error("L'importo minimo per il pagamento online con PayPal è € 0,50.");
+    err.status = 400;
+    throw err;
+  }
+
+  const serviceSummary = (items || [])
+    .map((it) => `${it.title}${Number(it.quantity || 1) > 1 ? ` x${it.quantity}` : ''}`)
+    .join(', ')
+    .slice(0, 120);
+
+  const desc =
+    payScope === 'deposit'
+      ? `Acconto ${config.deposit_percent}% (${appointment.booking_code}) - ${serviceSummary || 'Giulia Beauty'}`
+      : `Saldo ${appointment.booking_code} - ${serviceSummary || 'Giulia Beauty'}`;
+
+  const payload = {
+    intent: 'CAPTURE',
+    purchase_units: [
+      {
+        reference_id: appointment.booking_code,
+        custom_id: String(appointment.id),
+        description: desc.slice(0, 127),
+        amount: {
+          currency_code: 'EUR',
+          value: amt.toFixed(2),
+        },
+      },
+    ],
+    payment_source: {
+      paypal: {
+        experience_context: {
+          brand_name: 'Giulia Beauty Studio',
+          locale: 'it-IT',
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'PAY_NOW',
+          return_url: returnUrl,
+          cancel_url: cancelUrl,
+        },
+      },
+    },
+  };
+
+  const order = await paypalRequest(config, 'POST', '/v2/checkout/orders', payload);
+  const approveLink = (order?.links || []).find((l) => l.rel === 'payer-action' || l.rel === 'approve');
+  return {
+    id: order?.id || null,
+    status: order?.status || '',
+    approveUrl: approveLink?.href || null,
+    raw: order,
+  };
+}
+
+async function getPayPalOrder({ config, orderId }) {
+  if (!orderId) {
+    const err = new Error('PayPal Order ID mancante.');
+    err.status = 400;
+    throw err;
+  }
+  const order = await paypalRequest(config, 'GET', `/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+  return parsePayPalOrderSummary(order);
+}
+
+async function capturePayPalOrder({ config, orderId }) {
+  if (!orderId) {
+    const err = new Error('PayPal Order ID mancante.');
+    err.status = 400;
+    throw err;
+  }
+  try {
+    const captured = await paypalRequest(config, 'POST', `/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {});
+    return parsePayPalOrderSummary(captured);
+  } catch (err) {
+    if (err.paypalIssue === 'ORDER_ALREADY_CAPTURED' || err.httpStatus === 422) {
+      const existing = await getPayPalOrder({ config, orderId });
+      if (existing.status === 'COMPLETED' || existing.captureStatus === 'COMPLETED') {
+        return existing;
+      }
+    }
+    throw err;
+  }
+}
+
+async function createPayPalRefund({ config, captureId, amountEur = null, note = '' }) {
+  if (!captureId) {
+    const err = new Error('Capture ID PayPal mancante per il rimborso.');
+    err.status = 400;
+    throw err;
+  }
+  const payload = {};
+  if (amountEur !== null && amountEur !== undefined && Number(amountEur) > 0) {
+    payload.amount = {
+      currency_code: 'EUR',
+      value: roundMoney(amountEur).toFixed(2),
+    };
+  }
+  if (note) {
+    payload.note_to_payer = String(note).slice(0, 250);
+  }
+  return paypalRequest(config, 'POST', `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, payload);
+}
+
+async function verifyPayPalWebhookSignature({ config, headers = {}, webhookEvent }) {
+  const webhookId = String(config?.paypal_webhook_id || '').trim();
+  if (!webhookId) {
+    return { valid: false, reason: 'Webhook ID PayPal non configurato nelle Impostazioni.' };
+  }
+  const transmissionId = headers['paypal-transmission-id'];
+  const transmissionTime = headers['paypal-transmission-time'];
+  const certUrl = headers['paypal-cert-url'];
+  const authAlgo = headers['paypal-auth-algo'];
+  const transmissionSig = headers['paypal-transmission-sig'];
+
+  if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) {
+    return { valid: false, reason: 'Header di firma webhook PayPal mancanti.' };
+  }
+
+  const verifyRes = await paypalRequest(config, 'POST', '/v1/notifications/verify-webhook-signature', {
+    auth_algo: authAlgo,
+    cert_url: certUrl,
+    transmission_id: transmissionId,
+    transmission_sig: transmissionSig,
+    transmission_time: transmissionTime,
+    webhook_id: webhookId,
+    webhook_event: webhookEvent,
+  });
+
+  if (verifyRes?.verification_status !== 'SUCCESS') {
+    return { valid: false, reason: 'Verifica firma webhook PayPal fallita.' };
+  }
+  return { valid: true };
+}
+
 module.exports = {
   PAYMENT_STATUS_VALUES,
   PAYMENT_STATUS_LABELS,
@@ -447,6 +779,7 @@ module.exports = {
   normalizePaymentMethod,
   normalizePaymentSettings,
   resolveStripeConfig,
+  resolvePayPalConfig,
   sanitizePaymentSettingsForClient,
   mergePaymentSettingsUpdate,
   getPublicPaymentConfig,
@@ -457,4 +790,10 @@ module.exports = {
   retrieveStripeCheckoutSession,
   createStripeRefund,
   verifyStripeWebhookSignature,
+  verifyPayPalConnection,
+  createPayPalOrder,
+  getPayPalOrder,
+  capturePayPalOrder,
+  createPayPalRefund,
+  verifyPayPalWebhookSignature,
 };

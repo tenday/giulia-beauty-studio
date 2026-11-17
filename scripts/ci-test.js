@@ -717,6 +717,7 @@ async function runApiSuite() {
     const initPubPayRes = await req('GET', '/api/public/payment-config');
     assert.strictEqual(initPubPayRes.status, 200);
     assert.strictEqual(initPubPayRes.json.config.stripe_ready, false);
+    assert.strictEqual(initPubPayRes.json.config.paypal_ready, false);
 
     const stripeWebhookSecret = 'whsec_ci_secret_test_987654';
     const savePayCfgRes = await req('POST', '/api/admin/payments/settings', {
@@ -915,6 +916,240 @@ async function runApiSuite() {
     assert.strictEqual(cancelRes.status, 200);
     assert.strictEqual(cancelRes.json.receipt.status, 'cancelled');
 
+    // 13B. PayPal Checkout REST v2 Regression Suite (Sandbox mock)
+    const paypalWebhookId = 'WH_PAYPAL_CI_789';
+    const savePaypalCfgRes = await req('POST', '/api/admin/payments/settings', {
+      paypal_enabled: true,
+      paypal_mode: 'sandbox',
+      paypal_client_id: 'AZ_ci_paypal_client_id_123',
+      paypal_client_secret: 'EL_ci_paypal_secret_456',
+      paypal_webhook_id: paypalWebhookId,
+    });
+    assert.strictEqual(savePaypalCfgRes.status, 200);
+    assert.strictEqual(savePaypalCfgRes.json.settings.has_paypal_client_secret, true);
+    assert.strictEqual(savePaypalCfgRes.json.settings.paypal_client_secret, undefined);
+    assert.strictEqual(savePaypalCfgRes.json.settings.paypal_ready, true);
+    assert(savePaypalCfgRes.json.paypal_webhook_url.endsWith('/api/webhooks/paypal'));
+
+    const pubPaypalReadyRes = await req('GET', '/api/public/payment-config');
+    assert.strictEqual(pubPaypalReadyRes.status, 200);
+    assert.strictEqual(pubPaypalReadyRes.json.config.paypal_ready, true);
+    assert.strictEqual(pubPaypalReadyRes.json.config.paypal_mode, 'sandbox');
+    assert.strictEqual(pubPaypalReadyRes.json.config.paypal_client_id, 'AZ_ci_paypal_client_id_123');
+    assert.strictEqual(pubPaypalReadyRes.json.config.paypal_client_secret, undefined);
+    assert.strictEqual(pubPaypalReadyRes.json.config.online_ready, true);
+
+    const paypalOrders = new Map();
+    globalThis.__GBS_PAYPAL_FETCH__ = async (url, opts) => {
+      const target = String(url);
+      const method = String(opts?.method || 'GET').toUpperCase();
+      if (target.endsWith('/v1/oauth2/token') && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            access_token: 'pp_ci_token_1',
+            app_id: 'APP-CI-123',
+            scope: 'https://uri.paypal.com/services/payments/payment/authcapture',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (target.endsWith('/v2/checkout/orders') && method === 'POST') {
+        const bodyObj = JSON.parse(String(opts.body || '{}'));
+        const pu = bodyObj.purchase_units?.[0] || {};
+        const oid = `PP_ORD_${paypalOrders.size + 1}`;
+        const ordObj = {
+          id: oid,
+          status: 'CREATED',
+          purchase_units: [{ reference_id: pu.reference_id, custom_id: pu.custom_id, amount: pu.amount }],
+          links: [{ rel: 'payer-action', href: `https://www.sandbox.paypal.com/checkoutnow?token=${oid}` }],
+        };
+        paypalOrders.set(oid, ordObj);
+        return new Response(JSON.stringify(ordObj), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target.includes('/v2/checkout/orders/') && target.endsWith('/capture') && method === 'POST') {
+        const oid = target.split('/v2/checkout/orders/')[1].replace('/capture', '');
+        const ord = paypalOrders.get(oid);
+        if (!ord) {
+          return new Response(JSON.stringify({ message: 'Order not found' }), { status: 404 });
+        }
+        const pu = ord.purchase_units[0];
+        const capId = `PP_CAP_${oid}`;
+        const capturedOrd = {
+          ...ord,
+          status: 'COMPLETED',
+          purchase_units: [
+            {
+              ...pu,
+              payments: {
+                captures: [{ id: capId, status: 'COMPLETED', amount: pu.amount }],
+              },
+            },
+          ],
+        };
+        paypalOrders.set(oid, capturedOrd);
+        return new Response(JSON.stringify(capturedOrd), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target.includes('/v2/checkout/orders/') && method === 'GET') {
+        const oid = target.split('/v2/checkout/orders/')[1].split('?')[0];
+        const ord = paypalOrders.get(oid);
+        return new Response(JSON.stringify(ord || { message: 'Not found' }), { status: ord ? 200 : 404 });
+      }
+      if (target.includes('/v2/payments/captures/') && target.endsWith('/refund') && method === 'POST') {
+        return new Response(JSON.stringify({ id: 'PP_REFUND_1', status: 'COMPLETED' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target.endsWith('/v1/notifications/verify-webhook-signature') && method === 'POST') {
+        const verifyBody = JSON.parse(String(opts.body || '{}'));
+        const okSig = verifyBody.transmission_sig === 'GOOD_PP_SIG';
+        return new Response(
+          JSON.stringify({ verification_status: okSig ? 'SUCCESS' : 'FAILURE' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(JSON.stringify({ message: `Unexpected PayPal route: ${target}` }), { status: 400 });
+    };
+
+    const paypalConnRes = await req('POST', '/api/admin/payments/test-paypal', {});
+    assert.strictEqual(paypalConnRes.status, 200);
+    assert.strictEqual(paypalConnRes.json.ok, true);
+    assert.strictEqual(paypalConnRes.json.mode, 'sandbox');
+    assert.strictEqual(paypalConnRes.json.app_id, 'APP-CI-123');
+
+    // PayPal 30% deposit booking (€100 total -> €30 online)
+    const paypalDepBookRes = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-19',
+      start_time: '11:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-pp-1', name: 'Biab Rinforzante Luxury', price: 100, duration: 60 }],
+      total_price: 100,
+      client_name: 'Elena PayPal Acconto',
+      client_phone: '+39 333 9007788',
+      payment_method: 'paypal_deposit',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(paypalDepBookRes.status, 201);
+    assert.strictEqual(paypalDepBookRes.json.requires_payment_redirect, true);
+    assert.strictEqual(paypalDepBookRes.json.requires_stripe_redirect, false);
+    assert.strictEqual(paypalDepBookRes.json.payment_provider, 'paypal');
+    assert.strictEqual(paypalDepBookRes.json.charge_amount, 30);
+    assert(paypalDepBookRes.json.checkout_url.includes('sandbox.paypal.com'));
+
+    const captureDep1 = await req('POST', '/api/public/paypal/capture-order', {
+      order_id: paypalDepBookRes.json.paypal_order_id,
+      booking_code: paypalDepBookRes.json.booking_code,
+    });
+    assert.strictEqual(captureDep1.status, 200);
+    assert.strictEqual(captureDep1.json.paid, true);
+    assert.strictEqual(captureDep1.json.receipt.payment_status, 'partial');
+    assert.strictEqual(captureDep1.json.receipt.payment_method, 'paypal_online');
+    assert.strictEqual(Number(captureDep1.json.receipt.paid_amount), 30);
+    assert.strictEqual(Number(captureDep1.json.receipt.remaining_amount), 70);
+    assert.strictEqual(captureDep1.json.receipt.status, 'confirmed');
+
+    // Idempotent second capture does not double-book transaction
+    const captureDep2 = await req('POST', '/api/public/paypal/capture-order', {
+      order_id: paypalDepBookRes.json.paypal_order_id,
+      booking_code: paypalDepBookRes.json.booking_code,
+    });
+    assert.strictEqual(captureDep2.status, 200);
+    assert.strictEqual(captureDep2.json.duplicate, true);
+
+    // Full PayPal checkout + Webhook signature validation
+    const fullPaypalBook = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-19',
+      start_time: '15:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-pp-2', name: 'Laminazione Ciglia + Sopracciglia', price: 90, duration: 60 }],
+      total_price: 90,
+      client_name: 'Francesca PayPal Full',
+      client_phone: '+39 333 9008899',
+      payment_method: 'paypal_full',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(fullPaypalBook.status, 201);
+    assert.strictEqual(fullPaypalBook.json.charge_amount, 90);
+
+    const ppWhEvent = {
+      id: 'WH-EVT-PP-1',
+      event_type: 'PAYMENT.CAPTURE.COMPLETED',
+      resource: {
+        id: 'PP_CAP_WH_99',
+        status: 'COMPLETED',
+        amount: { currency_code: 'EUR', value: '90.00' },
+        supplementary_data: { related_ids: { order_id: fullPaypalBook.json.paypal_order_id } },
+      },
+    };
+    const badPpWhRes = await fetch(`${baseUrl}/api/webhooks/paypal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Paypal-Transmission-Id': 'tx-1',
+        'Paypal-Transmission-Time': '2026-12-19T12:00:00Z',
+        'Paypal-Cert-Url': 'https://api-m.sandbox.paypal.com/cert.pem',
+        'Paypal-Auth-Algo': 'SHA256withRSA',
+        'Paypal-Transmission-Sig': 'BAD_SIG',
+      },
+      body: JSON.stringify(ppWhEvent),
+    });
+    assert.strictEqual(badPpWhRes.status, 400);
+
+    const goodPpWhRes = await fetch(`${baseUrl}/api/webhooks/paypal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Paypal-Transmission-Id': 'tx-1',
+        'Paypal-Transmission-Time': '2026-12-19T12:00:00Z',
+        'Paypal-Cert-Url': 'https://api-m.sandbox.paypal.com/cert.pem',
+        'Paypal-Auth-Algo': 'SHA256withRSA',
+        'Paypal-Transmission-Sig': 'GOOD_PP_SIG',
+      },
+      body: JSON.stringify(ppWhEvent),
+    });
+    assert.strictEqual(goodPpWhRes.status, 200);
+
+    const ppApptsRes = await req('GET', '/api/admin/appointments?date=2026-12-19');
+    const paidFullPpAppt = ppApptsRes.json.appointments.find((a) => a.id === fullPaypalBook.json.appointment_id);
+    assert.strictEqual(paidFullPpAppt.payment_status, 'paid');
+    assert.strictEqual(paidFullPpAppt.payment_method, 'paypal_online');
+    assert.strictEqual(paidFullPpAppt.status, 'confirmed');
+    assert.strictEqual(paidFullPpAppt.paypal_capture_id, 'PP_CAP_WH_99');
+
+    // Refund PayPal booking via Admin API
+    const ppRefundRes = await req('POST', '/api/admin/payments/refund', {
+      appointment_id: fullPaypalBook.json.appointment_id,
+      amount: 90,
+      call_paypal: true,
+    });
+    assert.strictEqual(ppRefundRes.status, 200);
+    assert.strictEqual(ppRefundRes.json.paypal_refund_id, 'PP_REFUND_1');
+    assert.strictEqual(ppRefundRes.json.appointment.payment_status, 'refunded');
+    assert.strictEqual(Number(ppRefundRes.json.appointment.paid_amount), 0);
+
+    // Cancel unpaid pending PayPal booking frees slot
+    const cancelPaypalBook = await req('POST', '/api/public/book', {
+      mode: 'booking',
+      appointment_date: '2026-12-19',
+      start_time: '17:00',
+      duration_minutes: 60,
+      services: [{ id: 'ci-pp-3', name: 'Manicure Deluxe', price: 35, duration: 60 }],
+      total_price: 35,
+      client_name: 'Marta PayPal Annulla',
+      client_phone: '+39 333 9001199',
+      payment_method: 'paypal_full',
+      privacy_accepted: true,
+    });
+    assert.strictEqual(cancelPaypalBook.status, 201);
+    const cancelPpRes = await req('POST', '/api/public/payment-cancel-pending', {
+      booking_code: cancelPaypalBook.json.booking_code,
+      order_id: cancelPaypalBook.json.paypal_order_id,
+    });
+    assert.strictEqual(cancelPpRes.status, 200);
+    assert.strictEqual(cancelPpRes.json.receipt.status, 'cancelled');
+
     // 14. Configurable Service Catalog Regression Suite
     const pubCatInitial = await req('GET', '/api/public/catalog');
     assert.strictEqual(pubCatInitial.status, 200);
@@ -987,6 +1222,7 @@ async function runApiSuite() {
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_STRIPE_FETCH__;
+    delete globalThis.__GBS_PAYPAL_FETCH__;
     await new Promise((r) => server.close(r));
     if (fs.existsSync(TMP_DB_PATH)) fs.unlinkSync(TMP_DB_PATH);
   }
@@ -1027,8 +1263,10 @@ function checkGdprDefaults() {
   assert(adminJs.includes('promo-sync-agenda-btn'), 'admin.js deve includere il pulsante Applica Agenda per le promo');
   assert(appJs.includes('function reconcileStorefrontBagPromotions('), 'app.js deve riconciliare le promo attive nel carrello vetrina');
   assert(agendaHtml.includes('id="stripeSettingsForm"') && agendaHtml.includes('id="apptCassaBox"'), 'agenda.html deve contenere pannello Stripe e box Cassa');
+  assert(agendaHtml.includes('id="paypalSettingsForm"') && agendaHtml.includes('value="paypal_online"'), 'agenda.html deve contenere pannello PayPal e opzione paypal_online');
   assert(adminJs.includes('function initPaymentSettingsControls(') && adminJs.includes('pay-contanti'), 'admin.js deve gestire impostazioni Stripe e cassa rapida');
-  assert(appJs.includes('function handleStripeReturnFromQuery('), 'app.js deve gestire il rientro da Stripe Checkout');
+  assert(adminJs.includes("paypal_online: 'PayPal Online'") && adminJs.includes('admin/payments/test-paypal'), 'admin.js deve gestire impostazioni e test PayPal');
+  assert(appJs.includes('function handleStripeReturnFromQuery(') && appJs.includes('paypal_success') && appJs.includes('paypal_full'), 'app.js deve gestire opzioni e rientro Stripe + PayPal Checkout');
   assert(agendaHtml.includes('id="apptQuickNewServiceToggleBtn"') && agendaHtml.includes('id="catalogServiceForm"'), 'agenda.html deve contenere gestione listino configurabile e quick-add in modale');
   assert(adminJs.includes('function initCatalogControls(') && adminJs.includes('function renderCatalogView('), 'admin.js deve gestire CRUD listino configurabile');
   assert(appJs.includes('function loadPublicCatalog(') && appJs.includes('function renderPublicCategoryPills('), 'app.js deve caricare il listino dinamico e i filtri categoria');

@@ -1062,8 +1062,70 @@
           <div class="settings-card">
             <div class="insights-section-head" style="margin-bottom:10px;">
               <div>
+                <h3>🅿️ Pagamenti Online (PayPal Checkout)</h3>
+                <p class="muted-text" style="margin:0;">Accetta pagamenti via PayPal / Paga in 3 rate sulla vetrina utilizzando le credenziali REST API v2.</p>
+              </div>
+              <span class="status-badge badge-pending" id="paypalSettingsStatusBadge">Solo In Studio</span>
+            </div>
+
+            <form id="paypalSettingsForm" class="admin-form-stack">
+              <label class="inline-check-label">
+                <input type="checkbox" id="paypalEnabledCheck" />
+                <span>Abilita pagamenti online PayPal Checkout sulla Vetrina</span>
+              </label>
+
+              <div class="form-group">
+                <label for="paypalModeSelect">Ambiente PayPal</label>
+                <select id="paypalModeSelect" class="form-control">
+                  <option value="sandbox">Sandbox / Test (developer.paypal.com)</option>
+                  <option value="live">Live / Produzione (PayPal Business)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="paypalClientIdInput">Client ID PayPal (REST App)</label>
+                <input type="text" id="paypalClientIdInput" class="form-control" placeholder="A..." autocomplete="off" />
+              </div>
+
+              <div class="form-group">
+                <label for="paypalClientSecretInput">Client Secret PayPal</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="password" id="paypalClientSecretInput" class="form-control" placeholder="Inserisci nuovo Client Secret (lascia vuoto per mantenere)" autocomplete="new-password" />
+                  <button type="button" class="btn-outline-sm" id="paypalClearSecretBtn" title="Rimuovi Client Secret PayPal salvato">Rimuovi</button>
+                </div>
+                <small class="muted-text" id="paypalSecretHint">Nessun Client Secret PayPal salvato</small>
+              </div>
+
+              <div class="form-group">
+                <label for="paypalWebhookIdInput">Webhook ID PayPal (opzionale ma consigliato)</label>
+                <input type="text" id="paypalWebhookIdInput" class="form-control" placeholder="Es. 8PT597110X687430L (da PayPal Developer)" autocomplete="off" />
+              </div>
+
+              <div class="form-group">
+                <label for="paypalWebhookUrlInput">Endpoint Webhook da copiare su PayPal Developer</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="text" id="paypalWebhookUrlInput" class="form-control" readonly />
+                  <button type="button" class="btn-outline-sm" id="copyPaypalWebhookUrlBtn">Copia URL</button>
+                </div>
+                <small class="muted-text">Eventi consigliati su PayPal: <code>PAYMENT.CAPTURE.COMPLETED</code>, <code>PAYMENT.CAPTURE.REFUNDED</code></small>
+              </div>
+
+              <small class="muted-text">Nota: la percentuale acconto, "Salda in Studio", saldo 100% e conferma automatica sono condivise con il riquadro Pagamenti.</small>
+
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                <button type="submit" class="btn-primary-admin" id="savePaypalSettingsBtn">💾 Salva Impostazioni PayPal</button>
+                <button type="button" class="btn-outline-sm" id="testPaypalConnBtn">🧪 Verifica Connessione PayPal</button>
+              </div>
+              <div id="paypalSettingsAlert" class="admin-alert" hidden></div>
+              <div id="paypalTestFeedback" class="admin-alert" hidden></div>
+            </form>
+          </div>
+
+          <div class="settings-card" style="grid-column: 1 / -1;">
+            <div class="insights-section-head" style="margin-bottom:10px;">
+              <div>
                 <h3>🧾 Riepilogo Incassi &amp; Cassa</h3>
-                <p class="muted-text" style="margin:0;">Monitoraggio netto tra Studio (Contanti, POS, Satispay) e pagamenti online Stripe.</p>
+                <p class="muted-text" style="margin:0;">Monitoraggio netto tra Studio (Contanti, POS, Satispay) e pagamenti online Stripe / PayPal.</p>
               </div>
               <button type="button" class="btn-outline-sm" id="refreshPaymentsLedgerBtn">↻ Aggiorna</button>
             </div>
@@ -1095,6 +1157,7 @@
                 <option value="pos">POS / Carta Studio</option>
                 <option value="satispay">Satispay</option>
                 <option value="stripe_online">Stripe Online</option>
+                <option value="paypal_online">PayPal Online</option>
                 <option value="bonifico">Bonifico</option>
                 <option value="gift_card">Gift Card</option>
               </select>
@@ -1310,6 +1373,7 @@
                 <option value="bonifico">Bonifico</option>
                 <option value="gift_card">Gift Card / Buono</option>
                 <option value="stripe_online">Stripe Online</option>
+                <option value="paypal_online">PayPal Online</option>
                 <option value="carta">Carta / Digitale</option>
               </select>
             </div>
@@ -1812,6 +1876,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=22"></script>
+  <script src="admin.js?v=23"></script>
 </body>
 </html>

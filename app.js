@@ -1249,8 +1249,11 @@ function initApp() {
         savedToDb = true;
         refreshAvailableSlots(bookingDate);
 
-        if (data.requires_stripe_redirect && data.checkout_url) {
-          confirmBtn.textContent = 'Reindirizzamento a Stripe…';
+        if ((data.requires_payment_redirect || data.requires_stripe_redirect) && data.checkout_url) {
+          confirmBtn.textContent =
+            data.payment_provider === 'paypal'
+              ? 'Reindirizzamento a PayPal…'
+              : 'Reindirizzamento a Stripe…';
           window.location.assign(data.checkout_url);
           return;
         }
@@ -1389,9 +1392,12 @@ function renderPaymentMethodsGrid() {
 
   const total = getSelectedBagTotalEuro();
   const cfg = publicPaymentConfig || {};
+  const hasOnlineProvider = Boolean(cfg.stripe_ready || cfg.paypal_ready);
+  const pct = Number(cfg.deposit_percent || 30);
+  const dep = computeClientOnlineCharge(total, 'deposit');
   const cards = [];
 
-  if (cfg.stripe_ready) {
+  if (hasOnlineProvider) {
     if (cfg.allow_pay_in_studio !== false) {
       cards.push({
         pay: 'studio',
@@ -1400,23 +1406,41 @@ function renderPaymentMethodsGrid() {
         pill: 'Nessun addebito ora',
       });
     }
-    if (cfg.allow_online_full) {
-      cards.push({
-        pay: 'stripe_full',
-        title: 'Paga Online (100%)',
-        desc: total > 0 ? `Saldo immediato ${formatEurPublic(total)}` : 'Carta, Apple Pay, Google Pay',
-        pill: 'Carta / Apple Pay',
-      });
+    if (cfg.stripe_ready) {
+      if (cfg.allow_online_full) {
+        cards.push({
+          pay: 'stripe_full',
+          title: cfg.paypal_ready ? 'Carta / Apple Pay (100%)' : 'Paga Online (100%)',
+          desc: total > 0 ? `Saldo immediato ${formatEurPublic(total)}` : 'Carta, Apple Pay, Google Pay',
+          pill: 'Stripe Sicuro',
+        });
+      }
+      if (cfg.allow_online_deposit) {
+        cards.push({
+          pay: 'stripe_deposit',
+          title: cfg.paypal_ready ? `Acconto ${pct}% Carta` : `Acconto ${pct}% Online`,
+          desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% online`,
+          pill: 'Stripe Acconto',
+        });
+      }
     }
-    if (cfg.allow_online_deposit) {
-      const pct = Number(cfg.deposit_percent || 30);
-      const dep = computeClientOnlineCharge(total, 'deposit');
-      cards.push({
-        pay: 'stripe_deposit',
-        title: `Acconto ${pct}% Online`,
-        desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% online`,
-        pill: 'Stripe Sicuro',
-      });
+    if (cfg.paypal_ready) {
+      if (cfg.allow_online_full) {
+        cards.push({
+          pay: 'paypal_full',
+          title: 'PayPal (100%)',
+          desc: total > 0 ? `Paga ora ${formatEurPublic(total)} con PayPal` : 'Conto PayPal o Paga in 3 rate',
+          pill: 'PayPal Checkout',
+        });
+      }
+      if (cfg.allow_online_deposit) {
+        cards.push({
+          pay: 'paypal_deposit',
+          title: `Acconto ${pct}% PayPal`,
+          desc: total > 0 ? `Paga ora ${formatEurPublic(dep)} • resto in studio` : `Blocca slot col ${pct}% su PayPal`,
+          pill: 'PayPal Acconto',
+        });
+      }
     }
   }
 
@@ -1462,31 +1486,37 @@ function updatePaymentChoiceUi() {
   const total = getSelectedBagTotalEuro();
   const pct = Number(publicPaymentConfig.deposit_percent || 30);
 
-  if (selectedPaymentMethod === 'stripe_full') {
+  const isPaypal = selectedPaymentMethod === 'paypal_full' || selectedPaymentMethod === 'paypal_deposit';
+  const isFull = selectedPaymentMethod === 'stripe_full' || selectedPaymentMethod === 'paypal_full';
+  const isDeposit = selectedPaymentMethod === 'stripe_deposit' || selectedPaymentMethod === 'paypal_deposit';
+  const providerName = isPaypal ? 'PayPal' : 'Stripe';
+  const fullMethodDesc = isPaypal ? 'con il tuo conto PayPal o in 3 rate' : 'con Carta, Apple Pay o Google Pay';
+
+  if (isFull) {
     if (hintEl) {
       hintEl.hidden = false;
       hintEl.innerHTML =
         total > 0
-          ? `🔒 Checkout sicuro Stripe: pagherai <strong>${formatEurPublic(total)}</strong> ora con Carta, Apple Pay o Google Pay.`
-          : '🔒 Checkout sicuro Stripe con Carta, Apple Pay o Google Pay.';
+          ? `🔒 Checkout sicuro ${providerName}: pagherai <strong>${formatEurPublic(total)}</strong> ora ${fullMethodDesc}.`
+          : `🔒 Checkout sicuro ${providerName} ${fullMethodDesc}.`;
     }
     if (confirmBtn) {
       confirmBtn.textContent =
-        total > 0 ? `Paga Ora Online (${formatEurPublic(total)})` : 'Procedi al Pagamento Online';
+        total > 0 ? `Paga Ora con ${providerName} (${formatEurPublic(total)})` : `Procedi su ${providerName}`;
     }
-  } else if (selectedPaymentMethod === 'stripe_deposit') {
+  } else if (isDeposit) {
     const dep = computeClientOnlineCharge(total, 'deposit');
     const rem = Math.max(0, Math.round((total - dep) * 100) / 100);
     if (hintEl) {
       hintEl.hidden = false;
       hintEl.innerHTML =
         total > 0
-          ? `🔒 Versi un acconto del ${pct}% (<strong>${formatEurPublic(dep)}</strong>) online su Stripe. Resteranno <strong>${formatEurPublic(rem)}</strong> da saldare in studio.`
-          : `🔒 Versi un acconto del ${pct}% online tramite Stripe Checkout.`;
+          ? `🔒 Versi un acconto del ${pct}% (<strong>${formatEurPublic(dep)}</strong>) online su ${providerName}. Resteranno <strong>${formatEurPublic(rem)}</strong> da saldare in studio.`
+          : `🔒 Versi un acconto del ${pct}% online tramite ${providerName} Checkout.`;
     }
     if (confirmBtn) {
       confirmBtn.textContent =
-        total > 0 ? `Paga Acconto ${formatEurPublic(dep)} e Prenota` : `Paga Acconto ${pct}% e Prenota`;
+        total > 0 ? `Paga Acconto ${formatEurPublic(dep)} (${providerName})` : `Paga Acconto ${pct}% (${providerName})`;
     }
   } else {
     if (hintEl) {
@@ -1503,6 +1533,7 @@ async function handleStripeReturnFromQuery() {
   const params = new URLSearchParams(window.location.search || '');
   const payState = params.get('payment');
   const sessionId = params.get('session_id') || '';
+  const paypalToken = params.get('token') || params.get('order_id') || '';
   const code = params.get('code') || '';
   if (!payState) return;
 
@@ -1514,23 +1545,34 @@ async function handleStripeReturnFromQuery() {
     window.history.replaceState({}, '', window.location.pathname || '/');
   }
 
-  if (payState === 'success' && sessionId) {
+  const isStripeSuccess = payState === 'success' && sessionId;
+  const isPaypalSuccess = payState === 'paypal_success' && paypalToken;
+
+  if (isStripeSuccess || isPaypalSuccess) {
+    const providerLabel = isPaypalSuccess ? 'PayPal' : 'Stripe';
+    const endpoint = isPaypalSuccess
+      ? `${API_BASE}/public/paypal/capture-order`
+      : `${API_BASE}/public/stripe/verify-session`;
+    const reqPayload = isPaypalSuccess
+      ? { order_id: paypalToken, booking_code: code }
+      : { session_id: sessionId, booking_code: code };
+
     try {
       const res = await publicFetchWithLoader(
-        `${API_BASE}/public/stripe/verify-session`,
+        endpoint,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, booking_code: code }),
+          body: JSON.stringify(reqPayload),
         },
-        { label: 'Verifica pagamento Stripe in corso…', blocking: true, delayMs: 0 }
+        { label: `Verifica pagamento ${providerLabel} in corso…`, blocking: true, delayMs: 0 }
       );
       const data = await res.json();
       if (!res.ok || !data.receipt) {
         receiptContent.innerHTML = `
           <h3 class="modal-title">Verifica Pagamento</h3>
           <p style="margin:10px 0 18px;font-size:0.9rem;color:var(--ink-secondary);">${escapePublicHtml(
-            data?.error || 'Non è stato possibile verificare la ricevuta Stripe.'
+            data?.error || `Non è stato possibile verificare la ricevuta ${providerLabel}.`
           )}</p>
           <button type="button" class="btn-primary-luxury" id="closeStripeReceiptBtn">Chiudi</button>
         `;
@@ -1543,6 +1585,7 @@ async function handleStripeReturnFromQuery() {
             ? `Acconto Versato (${formatEurPublic(r.paid_amount)})`
             : 'Pagamento Completato'
           : 'Pagamento In Elaborazione';
+        const receiptProvider = r.payment_method === 'paypal_online' ? 'PayPal' : providerLabel;
         receiptContent.innerHTML = `
           <div style="font-size: 2rem; color: var(--rose-deep); margin-bottom: 6px;">♡</div>
           <span class="stripe-receipt-badge ${badgeClass}">${escapePublicHtml(badgeText)}</span>
@@ -1566,7 +1609,7 @@ async function handleStripeReturnFromQuery() {
               <strong>${formatEurPublic(r.total_price)}</strong>
             </li>
             <li style="display:flex;justify-content:space-between;padding:5px 0;color:#166534;">
-              <span>Pagato Online (Stripe)</span>
+              <span>Pagato Online (${escapePublicHtml(receiptProvider)})</span>
               <strong>${formatEurPublic(r.paid_amount)}</strong>
             </li>
             ${
@@ -1593,11 +1636,12 @@ async function handleStripeReturnFromQuery() {
     return;
   }
 
-  if (payState === 'cancelled' && code) {
+  if ((payState === 'cancelled' || payState === 'paypal_cancelled') && code) {
+    const providerName = payState === 'paypal_cancelled' ? 'PayPal' : 'Stripe';
     receiptContent.innerHTML = `
       <span class="stripe-receipt-badge cancelled">Pagamento Online Interrotto</span>
       <h3 id="confirmModalTitle" style="font-family: var(--font-serif); font-size: 1.9rem; color: var(--ink-primary); margin: 8px 0;">
-        Checkout Stripe annullato
+        Checkout ${providerName} annullato
       </h3>
       <p style="font-size: 0.88rem; color: var(--ink-secondary); margin-bottom: 16px;">
         La prenotazione <strong>${escapePublicHtml(code)}</strong> non è ancora stata pagata.
@@ -1614,11 +1658,17 @@ async function handleStripeReturnFromQuery() {
     `;
     confirmModal.classList.add('open');
 
+    const cancelBody = JSON.stringify({
+      booking_code: code,
+      session_id: sessionId || undefined,
+      order_id: paypalToken || undefined,
+    });
+
     document.getElementById('fallbackStudioPayBtn')?.addEventListener('click', async () => {
       const r = await fetch(`${API_BASE}/public/payment-fallback-studio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_code: code, session_id: sessionId }),
+        body: cancelBody,
       });
       const resJson = await r.json();
       if (r.ok && resJson.receipt) {
@@ -1647,7 +1697,7 @@ async function handleStripeReturnFromQuery() {
       await fetch(`${API_BASE}/public/payment-cancel-pending`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_code: code, session_id: sessionId }),
+        body: cancelBody,
       });
       confirmModal.classList.remove('open');
       const d = document.getElementById('bookingDateInput')?.value;

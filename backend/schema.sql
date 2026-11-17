@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS `appointments` (
   `paid_at` DATETIME NULL DEFAULT NULL,
   `stripe_session_id` VARCHAR(160) NULL DEFAULT NULL,
   `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL,
+  `paypal_order_id` VARCHAR(120) NULL DEFAULT NULL,
+  `paypal_capture_id` VARCHAR(120) NULL DEFAULT NULL,
   `status` ENUM('pending', 'confirmed', 'completed', 'cancelled') NOT NULL DEFAULT 'confirmed',
   `notes` TEXT NULL,
   `reminder_sent_at` DATETIME NULL DEFAULT NULL,
@@ -347,6 +349,8 @@ CREATE TABLE IF NOT EXISTS `payment_transactions` (
   `status` VARCHAR(30) NOT NULL DEFAULT 'succeeded',
   `stripe_session_id` VARCHAR(160) NULL DEFAULT NULL,
   `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL,
+  `paypal_order_id` VARCHAR(120) NULL DEFAULT NULL,
+  `paypal_capture_id` VARCHAR(120) NULL DEFAULT NULL,
   `notes` VARCHAR(300) NULL DEFAULT NULL,
   `created_by_admin_id` INT UNSIGNED NULL DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -355,6 +359,7 @@ CREATE TABLE IF NOT EXISTS `payment_transactions` (
   KEY `idx_pt_client` (`client_id`),
   KEY `idx_pt_created` (`created_at`),
   KEY `idx_pt_stripe_session` (`stripe_session_id`),
+  KEY `idx_pt_paypal_order` (`paypal_order_id`),
   CONSTRAINT `fk_pt_appt` FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -26,6 +26,7 @@ const {
   normalizePaymentStatus,
   normalizePaymentMethod,
   resolveStripeConfig,
+  resolvePayPalConfig,
   sanitizePaymentSettingsForClient,
   mergePaymentSettingsUpdate,
   getPublicPaymentConfig,
@@ -36,6 +37,11 @@ const {
   retrieveStripeCheckoutSession,
   createStripeRefund,
   verifyStripeWebhookSignature,
+  verifyPayPalConnection,
+  createPayPalOrder,
+  capturePayPalOrder,
+  createPayPalRefund,
+  verifyPayPalWebhookSignature,
 } = require('./backend/payments');
 const {
   dispatchWhatsAppMessage,
@@ -656,39 +662,55 @@ app.post('/api/public/book', async (req, res, next) => {
 
     const isStripeFull = paymentMethod === 'stripe_full';
     const isStripeDeposit = paymentMethod === 'stripe_deposit';
+    const isPaypalFull = paymentMethod === 'paypal_full';
+    const isPaypalDeposit = paymentMethod === 'paypal_deposit';
     const wantsStripeCheckout = isStripeFull || isStripeDeposit;
+    const wantsPaypalCheckout = isPaypalFull || isPaypalDeposit;
+    const isDepositChoice = isStripeDeposit || isPaypalDeposit;
+    const payScope = isDepositChoice ? 'deposit' : 'full';
 
     let stripeCfg = null;
+    let paypalCfg = null;
     let chargeAmount = 0;
-    const payScope = isStripeDeposit ? 'deposit' : 'full';
-    if (wantsStripeCheckout) {
+
+    if (wantsStripeCheckout || wantsPaypalCheckout) {
       const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
-      stripeCfg = resolveStripeConfig(rawPaySettings);
+      const providerCfg = wantsStripeCheckout
+        ? resolveStripeConfig(rawPaySettings)
+        : resolvePayPalConfig(rawPaySettings);
+      const providerLabel = wantsStripeCheckout ? 'Stripe' : 'PayPal';
+      const unavailCode = wantsStripeCheckout ? 'STRIPE_UNAVAILABLE' : 'PAYPAL_UNAVAILABLE';
+      const minCode = wantsStripeCheckout ? 'STRIPE_MIN_AMOUNT' : 'PAYPAL_MIN_AMOUNT';
+
       if (
-        !stripeCfg.ready ||
-        (isStripeFull && !stripeCfg.allow_online_full) ||
-        (isStripeDeposit && !stripeCfg.allow_online_deposit)
+        !providerCfg.ready ||
+        (!isDepositChoice && !providerCfg.allow_online_full) ||
+        (isDepositChoice && !providerCfg.allow_online_deposit)
       ) {
         return sendError(
           res,
-          'Il pagamento online con Stripe non è attualmente disponibile. Seleziona Salda in Studio.',
+          `Il pagamento online con ${providerLabel} non è attualmente disponibile. Seleziona Salda in Studio.`,
           422,
-          'STRIPE_UNAVAILABLE'
+          unavailCode
         );
       }
-      chargeAmount = computeOnlineChargeAmount(totalPrice, payScope, stripeCfg.deposit_percent);
+      chargeAmount = computeOnlineChargeAmount(totalPrice, payScope, providerCfg.deposit_percent);
       if (chargeAmount < 0.5) {
         return sendError(
           res,
-          "L'importo minimo per pagare online con Stripe è € 0,50.",
+          `L'importo minimo per pagare online con ${providerLabel} è € 0,50.`,
           422,
-          'STRIPE_MIN_AMOUNT'
+          minCode
         );
       }
+      if (wantsStripeCheckout) stripeCfg = providerCfg;
+      else paypalCfg = providerCfg;
     }
 
     const storedPaymentMethod = wantsStripeCheckout
       ? 'stripe_online'
+      : wantsPaypalCheckout
+      ? 'paypal_online'
       : normalizePaymentMethod(paymentMethod, 'studio');
 
     const created = await store.createPublicBooking({
@@ -750,6 +772,8 @@ app.post('/api/public/book', async (req, res, next) => {
           privacy_version: privacyVersion,
           whatsapp_sent: false,
           requires_stripe_redirect: true,
+          requires_payment_redirect: true,
+          payment_provider: 'stripe',
           checkout_url: session.url,
           stripe_session_id: session.id,
           pay_scope: payScope,
@@ -770,6 +794,66 @@ app.post('/api/public/book', async (req, res, next) => {
       }
     }
 
+    if (wantsPaypalCheckout) {
+      const origin = getRequestOrigin(req);
+      const codeParam = encodeURIComponent(created.bookingCode);
+      const returnUrl = `${origin}/?payment=paypal_success&code=${codeParam}`;
+      const cancelUrl = `${origin}/?payment=paypal_cancelled&code=${codeParam}`;
+      try {
+        const order = await createPayPalOrder({
+          config: paypalCfg,
+          appointment: {
+            id: created.appointmentId,
+            booking_code: created.bookingCode,
+            appointment_date: appointmentDate,
+            start_time: startTime,
+            total_price: totalPrice,
+            client_email: clientEmail,
+          },
+          items: normalizedServices.map((s) => ({
+            title: s?.name || 'Trattamento',
+            quantity: 1,
+          })),
+          chargeAmount,
+          payScope,
+          returnUrl,
+          cancelUrl,
+        });
+        if (!order?.id || !order?.approveUrl) {
+          throw new Error('Link di approvazione PayPal non disponibile nella risposta API.');
+        }
+        await store.updateAppointmentPayPalOrder(created.appointmentId, order.id);
+        return res.status(201).json({
+          ok: true,
+          booking_code: created.bookingCode,
+          appointment_id: created.appointmentId,
+          client_id: created.clientId,
+          privacy_accepted_at: nowStr,
+          privacy_version: privacyVersion,
+          whatsapp_sent: false,
+          requires_stripe_redirect: false,
+          requires_payment_redirect: true,
+          payment_provider: 'paypal',
+          checkout_url: order.approveUrl,
+          paypal_order_id: order.id,
+          pay_scope: payScope,
+          charge_amount: chargeAmount,
+          total_price: totalPrice,
+        });
+      } catch (paypalErr) {
+        await store.cancelUnpaidPendingAppointment(
+          created.appointmentId,
+          `Ordine PayPal non avviato: ${paypalErr?.message || 'errore'}`
+        );
+        return sendError(
+          res,
+          paypalErr?.message || 'Impossibile avviare il checkout PayPal in questo momento. Riprova o scegli Salda in Studio.',
+          paypalErr?.status || 502,
+          'PAYPAL_ORDER_FAILED'
+        );
+      }
+    }
+
     return res.status(201).json({
       ok: true,
       booking_code: created.bookingCode,
@@ -779,6 +863,8 @@ app.post('/api/public/book', async (req, res, next) => {
       privacy_version: privacyVersion,
       whatsapp_sent: false,
       requires_stripe_redirect: false,
+      requires_payment_redirect: false,
+      payment_provider: 'studio',
     });
   } catch (err) {
     return next(err);
@@ -847,6 +933,64 @@ async function applyStripePaidSession(store, session, stripeCfg, bookingCodeHint
   return { found: true, paid: true, ...payRes };
 }
 
+async function applyPayPalPaidCapture(store, summary, paypalCfg, bookingCodeHint = '') {
+  const code = String(summary?.bookingCode || bookingCodeHint || '').trim();
+  const orderId = String(summary?.orderId || '').trim();
+  const captureId = String(summary?.captureId || '').trim();
+  const apptIdHint = Number.parseInt(String(summary?.appointmentIdHint || '0'), 10) || 0;
+
+  let appt = code ? await store.getAppointmentByCode(code) : null;
+  if (!appt && orderId) {
+    appt = await store.getAppointmentByPayPalOrder(orderId);
+  }
+  if (!appt && captureId) {
+    appt = await store.getAppointmentByPayPalCapture(captureId);
+  }
+  if (!appt && apptIdHint > 0) {
+    appt = await store.getAppointmentById(apptIdHint);
+  }
+  if (!appt) return { found: false, paid: false, appointment: null };
+
+  const statusUpper = String(summary?.status || '').toUpperCase();
+  const capStatusUpper = String(summary?.captureStatus || '').toUpperCase();
+  const isPaid = statusUpper === 'COMPLETED' || capStatusUpper === 'COMPLETED';
+  if (!isPaid) {
+    return { found: true, paid: false, appointment: appt };
+  }
+
+  const paidEur =
+    Number(summary?.amountEur || 0) > 0
+      ? roundMoney(summary.amountEur)
+      : roundMoney(appt.total_price);
+
+  const totalEur = roundMoney(appt.total_price);
+  const nextPaymentStatus = totalEur > 0 && paidEur < totalEur - 0.01 ? 'partial' : 'paid';
+  const payScope = nextPaymentStatus === 'partial' ? 'deposit' : 'full';
+  const nextApptStatus =
+    paypalCfg.auto_confirm_on_paid && appt.status === 'pending' ? 'confirmed' : appt.status;
+
+  const payRes = await store.recordAppointmentPayment({
+    appointmentId: appt.id,
+    paymentStatus: nextPaymentStatus,
+    paymentMethod: 'paypal_online',
+    paidAmount: paidEur,
+    transactionAmount: paidEur,
+    direction: 'payment',
+    paypalOrderId: orderId || appt.paypal_order_id || null,
+    paypalCaptureId: captureId || appt.paypal_capture_id || null,
+    paymentNotes:
+      payScope === 'deposit'
+        ? `Acconto online PayPal (${paidEur.toFixed(2)} €)`
+        : `Saldo completo online PayPal (${paidEur.toFixed(2)} €)`,
+    transactionNotes:
+      payScope === 'deposit' ? 'Acconto online via PayPal Checkout' : 'Saldo online via PayPal Checkout',
+    statusOverride: nextApptStatus,
+    nowStr: formatRomeNow(),
+  });
+
+  return { found: true, paid: true, ...payRes };
+}
+
 function formatPublicPaymentReceipt(appt, chargeAmountFallback = null) {
   if (!appt) return null;
   const total = roundMoney(appt.total_price);
@@ -906,11 +1050,70 @@ app.post('/api/public/stripe/verify-session', async (req, res, next) => {
   }
 });
 
+app.post('/api/public/paypal/capture-order', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const orderId = String(body.order_id || body.token || '').trim();
+    const bookingCode = String(body.booking_code || '').trim();
+    if (!orderId) {
+      return sendError(res, 'Parametro order_id PayPal mancante.', 422);
+    }
+
+    const store = getStore();
+    const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
+    const paypalCfg = resolvePayPalConfig(rawPaySettings);
+    if (!paypalCfg.configured) {
+      return sendError(res, 'Configurazione PayPal non attiva.', 400);
+    }
+
+    let existingAppt = bookingCode ? await store.getAppointmentByCode(bookingCode) : null;
+    if (!existingAppt) {
+      existingAppt = await store.getAppointmentByPayPalOrder(orderId);
+    }
+    if (existingAppt && existingAppt.paypal_order_id && existingAppt.paypal_order_id !== orderId) {
+      return sendError(res, 'Ordine PayPal non corrispondente al codice prenotazione.', 403);
+    }
+    if (
+      existingAppt &&
+      existingAppt.paypal_order_id === orderId &&
+      existingAppt.paypal_capture_id &&
+      ['paid', 'partial'].includes(existingAppt.payment_status)
+    ) {
+      return res.json({
+        ok: true,
+        paid: true,
+        duplicate: true,
+        receipt: formatPublicPaymentReceipt(existingAppt),
+      });
+    }
+
+    const captured = await capturePayPalOrder({ config: paypalCfg, orderId });
+    if (bookingCode && captured.bookingCode && bookingCode !== captured.bookingCode) {
+      return sendError(res, 'Ordine PayPal non corrispondente al codice prenotazione.', 403);
+    }
+
+    const applied = await applyPayPalPaidCapture(store, captured, paypalCfg, bookingCode);
+    if (!applied.found) {
+      return sendError(res, "Prenotazione associata all'ordine PayPal non trovata.", 404);
+    }
+
+    return res.json({
+      ok: true,
+      paid: Boolean(applied.paid),
+      duplicate: Boolean(applied.duplicate),
+      receipt: formatPublicPaymentReceipt(applied.appointment),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 app.post('/api/public/payment-fallback-studio', async (req, res, next) => {
   try {
     const body = req.body || {};
     const bookingCode = String(body.booking_code || '').trim();
     const sessionId = String(body.session_id || '').trim();
+    const orderId = String(body.order_id || body.token || '').trim();
     if (!bookingCode) return sendError(res, 'Codice prenotazione mancante.', 422);
 
     const store = getStore();
@@ -918,6 +1121,9 @@ app.post('/api/public/payment-fallback-studio', async (req, res, next) => {
     if (!appt) return sendError(res, 'Prenotazione non trovata.', 404);
     if (sessionId && appt.stripe_session_id && appt.stripe_session_id !== sessionId) {
       return sendError(res, 'Sessione non corrispondente alla prenotazione.', 403);
+    }
+    if (orderId && appt.paypal_order_id && appt.paypal_order_id !== orderId) {
+      return sendError(res, 'Ordine PayPal non corrispondente alla prenotazione.', 403);
     }
     if ((appt.payment_status || 'unpaid') !== 'unpaid') {
       return res.json({ ok: true, already_paid: true, receipt: formatPublicPaymentReceipt(appt) });
@@ -935,6 +1141,7 @@ app.post('/api/public/payment-cancel-pending', async (req, res, next) => {
     const body = req.body || {};
     const bookingCode = String(body.booking_code || '').trim();
     const sessionId = String(body.session_id || '').trim();
+    const orderId = String(body.order_id || body.token || '').trim();
     if (!bookingCode) return sendError(res, 'Codice prenotazione mancante.', 422);
 
     const store = getStore();
@@ -942,6 +1149,9 @@ app.post('/api/public/payment-cancel-pending', async (req, res, next) => {
     if (!appt) return sendError(res, 'Prenotazione non trovata.', 404);
     if (sessionId && appt.stripe_session_id && appt.stripe_session_id !== sessionId) {
       return sendError(res, 'Sessione non corrispondente alla prenotazione.', 403);
+    }
+    if (orderId && appt.paypal_order_id && appt.paypal_order_id !== orderId) {
+      return sendError(res, 'Ordine PayPal non corrispondente alla prenotazione.', 403);
     }
 
     const cancelled = await store.cancelUnpaidPendingAppointment(appt.id);
@@ -1004,6 +1214,86 @@ app.post('/api/webhooks/stripe', async (req, res, next) => {
             nowStr: formatRomeNow(),
           });
         }
+      }
+    }
+
+    return res.json({ ok: true, received: true, event_type: eventType });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/webhooks/paypal', async (req, res, next) => {
+  try {
+    const store = getStore();
+    const rawPaySettings = (await store.getStudioSetting('payment_settings')) || {};
+    const paypalCfg = resolvePayPalConfig(rawPaySettings);
+    if (!paypalCfg.configured) {
+      return sendError(res, 'Configurazione PayPal non attiva.', 400, 'PAYPAL_NOT_CONFIGURED');
+    }
+
+    const event = req.body && typeof req.body === 'object' ? req.body : {};
+    const sigCheck = await verifyPayPalWebhookSignature({
+      config: paypalCfg,
+      headers: req.headers,
+      webhookEvent: event,
+    });
+    if (!sigCheck.valid) {
+      return sendError(res, sigCheck.reason || 'Firma Webhook PayPal non valida.', 400, 'PAYPAL_SIGNATURE_INVALID');
+    }
+
+    const eventType = String(event?.event_type || '').trim();
+    const resource = event?.resource || {};
+
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
+      const orderId = String(resource?.supplementary_data?.related_ids?.order_id || resource?.order_id || '').trim();
+      const captureId = String(resource?.id || '').trim();
+      const customRaw = String(resource?.custom_id || '').trim();
+      const invoiceCode = String(resource?.invoice_id || '').trim();
+      const bookingCodeHint = invoiceCode || (/^GBS-/i.test(customRaw) ? customRaw : '');
+      const apptIdHint = /^\d+$/.test(customRaw) ? Number.parseInt(customRaw, 10) : 0;
+
+      await applyPayPalPaidCapture(
+        store,
+        {
+          orderId,
+          captureId,
+          status: resource?.status || 'COMPLETED',
+          captureStatus: resource?.status || 'COMPLETED',
+          amountEur: roundMoney(resource?.amount?.value || 0),
+          bookingCode: bookingCodeHint,
+          appointmentIdHint: apptIdHint,
+        },
+        paypalCfg,
+        bookingCodeHint
+      );
+    } else if (eventType === 'PAYMENT.CAPTURE.REFUNDED' || eventType === 'PAYMENT.CAPTURE.REVERSED') {
+      const upLink = (Array.isArray(resource?.links) ? resource.links : []).find((l) => l.rel === 'up');
+      const capFromLink = upLink?.href ? (upLink.href.match(/\/captures\/([^/?]+)/) || [])[1] || '' : '';
+      const captureId = String(resource?.capture_id || capFromLink || '').trim();
+      const orderId = String(resource?.supplementary_data?.related_ids?.order_id || resource?.order_id || '').trim();
+      const customRaw = String(resource?.custom_id || '').trim();
+
+      let match = captureId ? await store.getAppointmentByPayPalCapture(captureId) : null;
+      if (!match && orderId) match = await store.getAppointmentByPayPalOrder(orderId);
+      if (!match && /^GBS-/i.test(customRaw)) match = await store.getAppointmentByCode(customRaw);
+      if (!match && /^\d+$/.test(customRaw)) match = await store.getAppointmentById(Number.parseInt(customRaw, 10));
+
+      if (match && match.payment_status !== 'refunded' && roundMoney(match.paid_amount) > 0) {
+        const refundedEur = roundMoney(resource?.amount?.value || 0);
+        const alreadyPaid = roundMoney(match.paid_amount);
+        const txRefund = refundedEur > 0 ? Math.min(alreadyPaid, refundedEur) : alreadyPaid;
+        await store.recordAppointmentPayment({
+          appointmentId: match.id,
+          paymentMethod: 'paypal_online',
+          transactionAmount: txRefund,
+          direction: 'refund',
+          paypalOrderId: match.paypal_order_id || orderId || null,
+          paypalCaptureId: match.paypal_capture_id || captureId || null,
+          paymentNotes: `Rimborso registrato da webhook PayPal (€ ${txRefund.toFixed(2)})`,
+          transactionNotes: `Rimborso PayPal webhook (${resource?.id || eventType})`,
+          nowStr: formatRomeNow(),
+        });
       }
     }
 
@@ -2289,6 +2579,7 @@ app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
       ok: true,
       settings: sanitizePaymentSettingsForClient(rawSettings || {}),
       webhook_url: `${origin}/api/webhooks/stripe`,
+      paypal_webhook_url: `${origin}/api/webhooks/paypal`,
       summary,
       transactions,
     });
@@ -2308,6 +2599,7 @@ app.post('/api/admin/payments/settings', requireAdmin, async (req, res, next) =>
       ok: true,
       settings: sanitizePaymentSettingsForClient(saved.setting_value || merged),
       webhook_url: `${origin}/api/webhooks/stripe`,
+      paypal_webhook_url: `${origin}/api/webhooks/paypal`,
     });
   } catch (err) {
     return next(err);
@@ -2331,6 +2623,23 @@ app.post('/api/admin/payments/test-stripe', requireAdmin, async (req, res, next)
   }
 });
 
+app.post('/api/admin/payments/test-paypal', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const rawSettings = (await store.getStudioSetting('payment_settings')) || {};
+    const body = req.body || {};
+    const tempMerged = mergePaymentSettingsUpdate(rawSettings, body);
+    const config = resolvePayPalConfig(tempMerged);
+    if (!config.configured) {
+      return sendError(res, 'Inserisci prima Client ID e Client Secret PayPal.', 422);
+    }
+    const result = await verifyPayPalConnection({ config });
+    return res.json({ ok: true, ...result, mode: config.paypal_mode });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
   try {
     const store = getStore();
@@ -2349,6 +2658,7 @@ app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
     const refundAmt = Math.min(currentPaid, Math.max(0.01, reqAmt));
     const notes = String(body.notes || '').trim() || 'Rimborso registrato dallo studio';
     let stripeRefund = null;
+    let paypalRefund = null;
 
     if (body.call_stripe !== false && appt.stripe_payment_intent) {
       const rawSettings = (await store.getStudioSetting('payment_settings')) || {};
@@ -2361,16 +2671,37 @@ app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
         paymentIntentId: appt.stripe_payment_intent,
         amountEur: refundAmt,
       });
+    } else if (body.call_paypal !== false && appt.paypal_capture_id) {
+      const rawSettings = (await store.getStudioSetting('payment_settings')) || {};
+      const paypalCfg = resolvePayPalConfig(rawSettings);
+      if (!paypalCfg.configured) {
+        return sendError(res, 'Credenziali PayPal non configurate: impossibile emettere rimborso su PayPal.', 422);
+      }
+      paypalRefund = await createPayPalRefund({
+        config: paypalCfg,
+        captureId: appt.paypal_capture_id,
+        amountEur: refundAmt,
+        note: notes,
+      });
     }
+
+    const isStripeRefund = Boolean(appt.stripe_payment_intent && body.call_stripe !== false);
+    const isPaypalRefund = Boolean(appt.paypal_capture_id && body.call_paypal !== false && !isStripeRefund);
 
     const recorded = await store.recordAppointmentPayment({
       appointmentId,
-      paymentMethod: appt.stripe_payment_intent && body.call_stripe !== false ? 'stripe_online' : appt.payment_method,
+      paymentMethod: isStripeRefund ? 'stripe_online' : isPaypalRefund ? 'paypal_online' : appt.payment_method,
       transactionAmount: refundAmt,
       direction: 'refund',
       stripePaymentIntent: appt.stripe_payment_intent || null,
+      paypalOrderId: appt.paypal_order_id || null,
+      paypalCaptureId: appt.paypal_capture_id || null,
       paymentNotes: notes,
-      transactionNotes: stripeRefund ? `Rimborso Stripe (${stripeRefund.id})` : notes,
+      transactionNotes: stripeRefund
+        ? `Rimborso Stripe (${stripeRefund.id})`
+        : paypalRefund
+        ? `Rimborso PayPal (${paypalRefund.id || 'completed'})`
+        : notes,
       adminId: req.admin?.id || null,
       nowStr: formatRomeNow(),
     });
@@ -2380,6 +2711,7 @@ app.post('/api/admin/payments/refund', requireAdmin, async (req, res, next) => {
       appointment: recorded.appointment,
       transaction: recorded.transaction,
       stripe_refund_id: stripeRefund?.id || null,
+      paypal_refund_id: paypalRefund?.id || null,
     });
   } catch (err) {
     return next(err);

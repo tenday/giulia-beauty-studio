@@ -601,6 +601,8 @@ async function createPublicBooking({
     paid_at: null,
     stripe_session_id: null,
     stripe_payment_intent: null,
+    paypal_order_id: null,
+    paypal_capture_id: null,
     status: 'pending',
     notes: notes || null,
     reminder_sent_at: null,
@@ -665,6 +667,8 @@ async function listAppointments({ startDate, endDate, status, clientId, operator
         paid_at: a.paid_at || null,
         stripe_session_id: a.stripe_session_id || null,
         stripe_payment_intent: a.stripe_payment_intent || null,
+        paypal_order_id: a.paypal_order_id || null,
+        paypal_capture_id: a.paypal_capture_id || null,
         client_name: c.full_name || '',
         client_phone: c.phone || '',
         client_email: c.email || null,
@@ -827,6 +831,8 @@ async function createAdminAppointment({
     paid_at: effectivePaidAt,
     stripe_session_id: null,
     stripe_payment_intent: null,
+    paypal_order_id: null,
+    paypal_capture_id: null,
     status,
     notes: notes || null,
     reminder_sent_at: null,
@@ -849,6 +855,8 @@ async function createAdminAppointment({
       status: 'succeeded',
       stripe_session_id: null,
       stripe_payment_intent: null,
+      paypal_order_id: null,
+      paypal_capture_id: null,
       notes: paymentNotes || 'Incasso registrato alla creazione appuntamento',
       created_by_admin_id: adminId || null,
       created_at: effectivePaidAt,
@@ -1971,6 +1979,8 @@ function hydrateLocalAppointment(db, appt) {
     paid_at: appt.paid_at || null,
     stripe_session_id: appt.stripe_session_id || null,
     stripe_payment_intent: appt.stripe_payment_intent || null,
+    paypal_order_id: appt.paypal_order_id || null,
+    paypal_capture_id: appt.paypal_capture_id || null,
     client_name: c.full_name || '',
     client_phone: c.phone || '',
     client_email: c.email || null,
@@ -2012,12 +2022,38 @@ async function updateAppointmentStripeSession(id, sessionId) {
   }
 }
 
+async function getAppointmentByPayPalOrder(orderId) {
+  const db = readDb();
+  const oid = String(orderId || '').trim();
+  const appt = db.appointments.find((a) => String(a.paypal_order_id || '') === oid);
+  return hydrateLocalAppointment(db, appt);
+}
+
+async function getAppointmentByPayPalCapture(captureId) {
+  const db = readDb();
+  const cid = String(captureId || '').trim();
+  const appt = db.appointments.find((a) => String(a.paypal_capture_id || '') === cid);
+  return hydrateLocalAppointment(db, appt);
+}
+
+async function updateAppointmentPayPalOrder(id, orderId) {
+  const db = readDb();
+  const appt = db.appointments.find((a) => Number(a.id) === Number(id));
+  if (appt) {
+    appt.paypal_order_id = String(orderId || '').trim() || null;
+    appt.payment_method = 'paypal_online';
+    appt.updated_at = formatRomeNow();
+    writeDb(db);
+  }
+}
+
 async function fallbackAppointmentToStudioPayment(id) {
   const db = readDb();
   const appt = db.appointments.find((a) => Number(a.id) === Number(id));
   if (appt && (appt.payment_status || 'unpaid') === 'unpaid') {
     appt.payment_method = 'studio';
     appt.stripe_session_id = null;
+    appt.paypal_order_id = null;
     appt.updated_at = formatRomeNow();
     writeDb(db);
   }
@@ -2078,6 +2114,8 @@ async function recordAppointmentPayment({
   direction = 'payment',
   stripeSessionId = null,
   stripePaymentIntent = null,
+  paypalOrderId = null,
+  paypalCaptureId = null,
   paymentNotes = null,
   transactionNotes = null,
   statusOverride = null,
@@ -2086,9 +2124,14 @@ async function recordAppointmentPayment({
 }) {
   const db = readDb();
 
-  if (stripeSessionId && direction === 'payment') {
+  if (direction === 'payment' && (stripeSessionId || paypalOrderId || paypalCaptureId)) {
     const dup = (db.payment_transactions || []).find(
-      (pt) => pt.stripe_session_id === stripeSessionId && pt.direction === 'payment' && pt.status === 'succeeded'
+      (pt) =>
+        pt.direction === 'payment' &&
+        pt.status === 'succeeded' &&
+        ((stripeSessionId && pt.stripe_session_id === stripeSessionId) ||
+          (paypalCaptureId && pt.paypal_capture_id === paypalCaptureId) ||
+          (paypalOrderId && pt.paypal_order_id === paypalOrderId))
     );
     if (dup) {
       const apptExisting = await getAppointmentById(appointmentId);
@@ -2145,6 +2188,8 @@ async function recordAppointmentPayment({
   const nextApptStatus = statusOverride || appt.status;
   const nextSession = stripeSessionId || appt.stripe_session_id || null;
   const nextIntent = stripePaymentIntent || appt.stripe_payment_intent || null;
+  const nextPaypalOrder = paypalOrderId || appt.paypal_order_id || null;
+  const nextPaypalCapture = paypalCaptureId || appt.paypal_capture_id || null;
 
   appt.payment_method = nextMethod;
   appt.payment_status = nextPayStatus;
@@ -2153,6 +2198,8 @@ async function recordAppointmentPayment({
   appt.paid_at = nextPaidAt;
   appt.stripe_session_id = nextSession;
   appt.stripe_payment_intent = nextIntent;
+  appt.paypal_order_id = nextPaypalOrder;
+  appt.paypal_capture_id = nextPaypalCapture;
   appt.status = nextApptStatus;
   appt.updated_at = nowStr;
 
@@ -2170,6 +2217,8 @@ async function recordAppointmentPayment({
       status: 'succeeded',
       stripe_session_id: stripeSessionId || null,
       stripe_payment_intent: stripePaymentIntent || null,
+      paypal_order_id: paypalOrderId || null,
+      paypal_capture_id: paypalCaptureId || null,
       notes: transactionNotes || nextNotes || null,
       created_by_admin_id: adminId || null,
       created_at: nowStr,
@@ -2428,6 +2477,9 @@ module.exports = {
   getAppointmentByCode,
   getAppointmentByStripeSession,
   updateAppointmentStripeSession,
+  getAppointmentByPayPalOrder,
+  getAppointmentByPayPalCapture,
+  updateAppointmentPayPalOrder,
   fallbackAppointmentToStudioPayment,
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,

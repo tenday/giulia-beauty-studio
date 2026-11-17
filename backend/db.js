@@ -177,6 +177,30 @@ async function ensureSchemaMigrations(targetPool = getPool()) {
     'stripe_payment_intent',
     'ALTER TABLE `appointments` ADD COLUMN `stripe_payment_intent` VARCHAR(160) NULL DEFAULT NULL AFTER `stripe_session_id`'
   );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'paypal_order_id',
+    'ALTER TABLE `appointments` ADD COLUMN `paypal_order_id` VARCHAR(120) NULL DEFAULT NULL AFTER `stripe_payment_intent`'
+  );
+  await ensureColumn(
+    targetPool,
+    'appointments',
+    'paypal_capture_id',
+    'ALTER TABLE `appointments` ADD COLUMN `paypal_capture_id` VARCHAR(120) NULL DEFAULT NULL AFTER `paypal_order_id`'
+  );
+  await ensureColumn(
+    targetPool,
+    'payment_transactions',
+    'paypal_order_id',
+    'ALTER TABLE `payment_transactions` ADD COLUMN `paypal_order_id` VARCHAR(120) NULL DEFAULT NULL AFTER `stripe_payment_intent`'
+  );
+  await ensureColumn(
+    targetPool,
+    'payment_transactions',
+    'paypal_capture_id',
+    'ALTER TABLE `payment_transactions` ADD COLUMN `paypal_capture_id` VARCHAR(120) NULL DEFAULT NULL AFTER `paypal_order_id`'
+  );
   migrationsChecked = true;
 }
 

@@ -46,6 +46,7 @@ const STATE = {
   catalogActive: [],
   paymentSettings: null,
   paymentWebhookUrl: '',
+  paymentPaypalWebhookUrl: '',
   paymentSummary: null,
   paymentTransactions: [],
   paymentMethodFilter: '',
@@ -89,6 +90,7 @@ const PAYMENT_METHOD_LABELS = {
   bonifico: 'Bonifico',
   gift_card: 'Gift Card',
   stripe_online: 'Stripe Online',
+  paypal_online: 'PayPal Online',
   carta: 'Carta',
 };
 
@@ -7194,6 +7196,7 @@ async function loadPaymentsData(methodFilter = STATE.paymentMethodFilter) {
     });
     STATE.paymentSettings = data.settings || null;
     STATE.paymentWebhookUrl = data.webhook_url || '';
+    STATE.paymentPaypalWebhookUrl = data.paypal_webhook_url || '';
     STATE.paymentSummary = data.summary || null;
     STATE.paymentTransactions = data.transactions || [];
   } catch (err) {
@@ -7304,6 +7307,40 @@ function renderPaymentSettingsPanel() {
     if (whUrlInput) whUrlInput.value = STATE.paymentWebhookUrl || `${window.location.origin}/api/webhooks/stripe`;
   }
 
+  const ppBadgeEl = document.getElementById('paypalSettingsStatusBadge');
+  if (ppBadgeEl && s) {
+    if (s.paypal_ready) {
+      ppBadgeEl.className = 'status-badge badge-confirmed';
+      ppBadgeEl.textContent = s.paypal_mode === 'live' ? 'PayPal LIVE ✓' : 'PayPal SANDBOX ✓';
+    } else if (s.paypal_enabled) {
+      ppBadgeEl.className = 'status-badge badge-pending';
+      ppBadgeEl.textContent = 'Mancano Chiavi PayPal';
+    } else {
+      ppBadgeEl.className = 'status-badge badge-pending';
+      ppBadgeEl.textContent = 'Solo In Studio';
+    }
+  }
+
+  if (s) {
+    const ppEnabled = document.getElementById('paypalEnabledCheck');
+    const ppMode = document.getElementById('paypalModeSelect');
+    const ppCid = document.getElementById('paypalClientIdInput');
+    const ppSecHint = document.getElementById('paypalSecretHint');
+    const ppWhId = document.getElementById('paypalWebhookIdInput');
+    const ppWhUrl = document.getElementById('paypalWebhookUrlInput');
+
+    if (ppEnabled) ppEnabled.checked = Boolean(s.paypal_enabled);
+    if (ppMode) ppMode.value = s.paypal_mode === 'live' ? 'live' : 'sandbox';
+    if (ppCid) ppCid.value = s.paypal_client_id || '';
+    if (ppSecHint) {
+      ppSecHint.textContent = s.has_paypal_client_secret
+        ? `Client Secret salvato (${s.paypal_client_secret_masked})`
+        : 'Nessun Client Secret PayPal salvato';
+    }
+    if (ppWhId) ppWhId.value = s.paypal_webhook_id || '';
+    if (ppWhUrl) ppWhUrl.value = STATE.paymentPaypalWebhookUrl || `${window.location.origin}/api/webhooks/paypal`;
+  }
+
   const elToday = document.getElementById('paySumToday');
   const elWeek = document.getElementById('paySumWeek');
   const elMonth = document.getElementById('paySumMonth');
@@ -7409,14 +7446,18 @@ function initPaymentSettingsControls() {
     const id = Number(document.getElementById('apptIdInput')?.value || 0);
     const paid = Number(document.getElementById('apptPaidAmountInput')?.value || 0);
     if (!id || paid <= 0) return;
-    if (!confirm(`Registrare il rimborso di € ${formatPromoEuroAmount(paid)} per questo appuntamento?`)) return;
+    const isStripe = Boolean(STATE.currentEditingAppt?.stripe_payment_intent);
+    const isPaypal = Boolean(STATE.currentEditingAppt?.paypal_capture_id);
+    const providerHint = isStripe ? ' (su Stripe)' : isPaypal ? ' (su PayPal)' : '';
+    if (!confirm(`Registrare il rimborso${providerHint} di € ${formatPromoEuroAmount(paid)} per questo appuntamento?`)) return;
     try {
       await apiFetch('admin/payments/refund', {
         method: 'POST',
         body: JSON.stringify({
           appointment_id: id,
           amount: paid,
-          call_stripe: Boolean(STATE.currentEditingAppt?.stripe_payment_intent),
+          call_stripe: isStripe,
+          call_paypal: isPaypal,
         }),
       });
       document.getElementById('apptModal')?.classList.remove('open');
@@ -7426,6 +7467,19 @@ function initPaymentSettingsControls() {
       showAgendaToast(err.message || 'Errore registrazione rimborso', 'error');
     }
   });
+
+  const copyWebhookUrlInput = async (inputId, successMsg) => {
+    const el = document.getElementById(inputId);
+    const val = el?.value || '';
+    if (!val) return;
+    try {
+      await navigator.clipboard.writeText(val);
+      showAgendaToast(successMsg);
+    } catch {
+      el?.select();
+      showAgendaToast("Seleziona e copia l'URL manualmente");
+    }
+  };
 
   // Stripe Settings Form
   const form = document.getElementById('stripeSettingsForm');
@@ -7459,6 +7513,7 @@ function initPaymentSettingsControls() {
         });
         STATE.paymentSettings = res.settings;
         STATE.paymentWebhookUrl = res.webhook_url || STATE.paymentWebhookUrl;
+        STATE.paymentPaypalWebhookUrl = res.paypal_webhook_url || STATE.paymentPaypalWebhookUrl;
         const skIn = document.getElementById('stripeSecretKeyInput');
         const whIn = document.getElementById('stripeWebhookSecretInput');
         if (skIn) skIn.value = '';
@@ -7504,16 +7559,8 @@ function initPaymentSettingsControls() {
     showAgendaToast('Webhook Secret rimosso');
   });
 
-  document.getElementById('copyStripeWebhookUrlBtn')?.addEventListener('click', async () => {
-    const val = document.getElementById('stripeWebhookUrlInput')?.value || '';
-    if (!val) return;
-    try {
-      await navigator.clipboard.writeText(val);
-      showAgendaToast('URL Webhook Stripe copiato ✓');
-    } catch {
-      document.getElementById('stripeWebhookUrlInput')?.select();
-      showAgendaToast('Seleziona e copia l\'URL manualmente');
-    }
+  document.getElementById('copyStripeWebhookUrlBtn')?.addEventListener('click', () => {
+    copyWebhookUrlInput('stripeWebhookUrlInput', 'URL Webhook Stripe copiato ✓');
   });
 
   document.getElementById('testStripeConnBtn')?.addEventListener('click', async () => {
@@ -7538,6 +7585,102 @@ function initPaymentSettingsControls() {
         fb.hidden = false;
         fb.className = 'admin-alert admin-alert-error';
         fb.textContent = err.message || 'Verifica Stripe fallita';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // PayPal Settings Form
+  const paypalForm = document.getElementById('paypalSettingsForm');
+  if (paypalForm) {
+    paypalForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const alertEl = document.getElementById('paypalSettingsAlert');
+      const saveBtn = document.getElementById('savePaypalSettingsBtn');
+      if (alertEl) alertEl.hidden = true;
+      if (saveBtn) saveBtn.disabled = true;
+
+      const payload = {
+        paypal_enabled: Boolean(document.getElementById('paypalEnabledCheck')?.checked),
+        paypal_mode: document.getElementById('paypalModeSelect')?.value === 'live' ? 'live' : 'sandbox',
+        paypal_client_id: (document.getElementById('paypalClientIdInput')?.value || '').trim(),
+        paypal_webhook_id: (document.getElementById('paypalWebhookIdInput')?.value || '').trim(),
+      };
+      const rawSecret = (document.getElementById('paypalClientSecretInput')?.value || '').trim();
+      if (rawSecret) payload.paypal_client_secret = rawSecret;
+
+      try {
+        const res = await apiFetch('admin/payments/settings', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        STATE.paymentSettings = res.settings;
+        STATE.paymentWebhookUrl = res.webhook_url || STATE.paymentWebhookUrl;
+        STATE.paymentPaypalWebhookUrl = res.paypal_webhook_url || STATE.paymentPaypalWebhookUrl;
+        const secIn = document.getElementById('paypalClientSecretInput');
+        if (secIn) secIn.value = '';
+        renderPaymentSettingsPanel();
+        if (alertEl) {
+          alertEl.hidden = false;
+          alertEl.className = 'admin-alert admin-alert-ok';
+          alertEl.textContent = 'Impostazioni PayPal Checkout salvate ✓';
+        }
+        showAgendaToast('Impostazioni PayPal salvate ✓');
+      } catch (err) {
+        if (alertEl) {
+          alertEl.hidden = false;
+          alertEl.className = 'admin-alert admin-alert-error';
+          alertEl.textContent = err.message;
+        }
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    });
+  }
+
+  document.getElementById('paypalClearSecretBtn')?.addEventListener('click', async () => {
+    if (!confirm('Rimuovere il Client Secret PayPal salvato?')) return;
+    const res = await apiFetch('admin/payments/settings', {
+      method: 'POST',
+      body: JSON.stringify({ clear_paypal_secret: true, paypal_enabled: false }),
+    });
+    STATE.paymentSettings = res.settings;
+    renderPaymentSettingsPanel();
+    showAgendaToast('Client Secret PayPal rimosso');
+  });
+
+  document.getElementById('copyPaypalWebhookUrlBtn')?.addEventListener('click', () => {
+    copyWebhookUrlInput('paypalWebhookUrlInput', 'URL Webhook PayPal copiato ✓');
+  });
+
+  document.getElementById('testPaypalConnBtn')?.addEventListener('click', async () => {
+    const fb = document.getElementById('paypalTestFeedback');
+    const btn = document.getElementById('testPaypalConnBtn');
+    if (fb) fb.hidden = true;
+    if (btn) btn.disabled = true;
+    try {
+      const payload = {
+        paypal_mode: document.getElementById('paypalModeSelect')?.value === 'live' ? 'live' : 'sandbox',
+      };
+      const rawCid = (document.getElementById('paypalClientIdInput')?.value || '').trim();
+      const rawSec = (document.getElementById('paypalClientSecretInput')?.value || '').trim();
+      if (rawCid) payload.paypal_client_id = rawCid;
+      if (rawSec) payload.paypal_client_secret = rawSec;
+      const res = await apiFetch('admin/payments/test-paypal', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (fb) {
+        fb.hidden = false;
+        fb.className = 'admin-alert admin-alert-ok';
+        fb.textContent = `✓ Connessione PayPal verificata (${res.mode || 'sandbox'})${res.app_id ? ` • App ID: ${res.app_id}` : ''}`;
+      }
+    } catch (err) {
+      if (fb) {
+        fb.hidden = false;
+        fb.className = 'admin-alert admin-alert-error';
+        fb.textContent = err.message || 'Verifica PayPal fallita';
       }
     } finally {
       if (btn) btn.disabled = false;

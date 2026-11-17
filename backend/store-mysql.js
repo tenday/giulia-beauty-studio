@@ -597,7 +597,7 @@ async function listAppointments({ startDate, endDate, status, clientId, operator
         TIME_FORMAT(a.start_time, '%H:%i') AS start_time,
         a.duration_minutes, a.services_json, a.services_summary, a.total_price,
         a.mode, a.payment_method, a.payment_status, a.paid_amount, a.payment_notes, a.paid_at,
-        a.stripe_session_id, a.stripe_payment_intent, a.status, a.notes, a.reminder_sent_at,
+        a.stripe_session_id, a.stripe_payment_intent, a.paypal_order_id, a.paypal_capture_id, a.status, a.notes, a.reminder_sent_at,
         a.privacy_accepted, a.privacy_accepted_at, a.created_at,
         c.full_name AS client_name, c.phone AS client_phone, c.email AS client_email,
         c.birth_date AS client_birth_date, c.allergies_notes, c.preferences_notes, c.privacy_version
@@ -1945,7 +1945,7 @@ async function getAppointmentByField(fieldSql, value) {
         TIME_FORMAT(a.start_time, '%H:%i') AS start_time,
         a.duration_minutes, a.services_json, a.services_summary, a.total_price,
         a.mode, a.payment_method, a.payment_status, a.paid_amount, a.payment_notes, a.paid_at,
-        a.stripe_session_id, a.stripe_payment_intent, a.status, a.notes, a.reminder_sent_at,
+        a.stripe_session_id, a.stripe_payment_intent, a.paypal_order_id, a.paypal_capture_id, a.status, a.notes, a.reminder_sent_at,
         a.privacy_accepted, a.privacy_accepted_at, a.created_at,
         c.full_name AS client_name, c.phone AS client_phone, c.email AS client_email
      FROM appointments a
@@ -1980,11 +1980,29 @@ async function updateAppointmentStripeSession(id, sessionId) {
   );
 }
 
+async function getAppointmentByPayPalOrder(orderId) {
+  return getAppointmentByField('a.paypal_order_id = ?', String(orderId || '').trim());
+}
+
+async function getAppointmentByPayPalCapture(captureId) {
+  return getAppointmentByField('a.paypal_capture_id = ?', String(captureId || '').trim());
+}
+
+async function updateAppointmentPayPalOrder(id, orderId) {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE appointments
+     SET paypal_order_id = ?, payment_method = 'paypal_online'
+     WHERE id = ?`,
+    [String(orderId || '').trim() || null, id]
+  );
+}
+
 async function fallbackAppointmentToStudioPayment(id) {
   const pool = getPool();
   await pool.query(
     `UPDATE appointments
-     SET payment_method = 'studio', stripe_session_id = NULL
+     SET payment_method = 'studio', stripe_session_id = NULL, paypal_order_id = NULL
      WHERE id = ? AND payment_status = 'unpaid'`,
     [id]
   );
@@ -2054,6 +2072,8 @@ async function recordAppointmentPayment({
   direction = 'payment',
   stripeSessionId = null,
   stripePaymentIntent = null,
+  paypalOrderId = null,
+  paypalCaptureId = null,
   paymentNotes = null,
   transactionNotes = null,
   statusOverride = null,
@@ -2065,12 +2085,26 @@ async function recordAppointmentPayment({
   try {
     await conn.beginTransaction();
 
-    if (stripeSessionId && direction === 'payment') {
+    if (direction === 'payment' && (stripeSessionId || paypalOrderId || paypalCaptureId)) {
+      const conds = [];
+      const dupParams = [];
+      if (stripeSessionId) {
+        conds.push('stripe_session_id = ?');
+        dupParams.push(stripeSessionId);
+      }
+      if (paypalCaptureId) {
+        conds.push('paypal_capture_id = ?');
+        dupParams.push(paypalCaptureId);
+      }
+      if (paypalOrderId) {
+        conds.push('paypal_order_id = ?');
+        dupParams.push(paypalOrderId);
+      }
       const [dup] = await conn.query(
         `SELECT * FROM payment_transactions
-         WHERE stripe_session_id = ? AND direction = 'payment' AND status = 'succeeded'
+         WHERE (${conds.join(' OR ')}) AND direction = 'payment' AND status = 'succeeded'
          LIMIT 1`,
-        [stripeSessionId]
+        dupParams
       );
       if (dup.length > 0) {
         await conn.rollback();
@@ -2129,11 +2163,13 @@ async function recordAppointmentPayment({
     const nextApptStatus = statusOverride || appt.status;
     const nextSession = stripeSessionId || appt.stripe_session_id || null;
     const nextIntent = stripePaymentIntent || appt.stripe_payment_intent || null;
+    const nextPaypalOrder = paypalOrderId || appt.paypal_order_id || null;
+    const nextPaypalCapture = paypalCaptureId || appt.paypal_capture_id || null;
 
     await conn.query(
       `UPDATE appointments
        SET payment_method = ?, payment_status = ?, paid_amount = ?, payment_notes = ?, paid_at = ?,
-           stripe_session_id = ?, stripe_payment_intent = ?, status = ?
+           stripe_session_id = ?, stripe_payment_intent = ?, paypal_order_id = ?, paypal_capture_id = ?, status = ?
        WHERE id = ?`,
       [
         nextMethod,
@@ -2143,6 +2179,8 @@ async function recordAppointmentPayment({
         nextPaidAt,
         nextSession,
         nextIntent,
+        nextPaypalOrder,
+        nextPaypalCapture,
         nextApptStatus,
         appointmentId,
       ]
@@ -2153,8 +2191,8 @@ async function recordAppointmentPayment({
       const [insTx] = await conn.query(
         `INSERT INTO payment_transactions
          (appointment_id, client_id, booking_code, direction, payment_method, amount, currency, status,
-          stripe_session_id, stripe_payment_intent, notes, created_by_admin_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'succeeded', ?, ?, ?, ?, ?)`,
+          stripe_session_id, stripe_payment_intent, paypal_order_id, paypal_capture_id, notes, created_by_admin_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'succeeded', ?, ?, ?, ?, ?, ?, ?)`,
         [
           appointmentId,
           appt.client_id,
@@ -2164,6 +2202,8 @@ async function recordAppointmentPayment({
           txAmt.toFixed(2),
           stripeSessionId || null,
           stripePaymentIntent || null,
+          paypalOrderId || null,
+          paypalCaptureId || null,
           transactionNotes || nextNotes || null,
           adminId || null,
           nowStr,
@@ -2445,6 +2485,9 @@ module.exports = {
   getAppointmentByCode,
   getAppointmentByStripeSession,
   updateAppointmentStripeSession,
+  getAppointmentByPayPalOrder,
+  getAppointmentByPayPalCapture,
+  updateAppointmentPayPalOrder,
   fallbackAppointmentToStudioPayment,
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,
