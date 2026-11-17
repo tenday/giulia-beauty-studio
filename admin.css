@@ -2200,9 +2200,44 @@ body {
 .ai-widget-title {
   display: block;
   font-family: var(--font-serif);
-  font-size: 1.18rem;
+  font-size: 1.24rem;
   font-weight: 600;
   line-height: 1.15;
+}
+
+.ai-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-serif);
+  letter-spacing: 0.03em;
+}
+
+.ai-brand-mark--fab {
+  font-size: 1.06rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ai-brand-spark {
+  color: #b67a3d;
+  font-size: 0.76em;
+  margin: 0 2px;
+  line-height: 1;
+}
+
+.ai-brand-ia {
+  color: var(--rose);
+  font-weight: 700;
+}
+
+.ai-widget-head .ai-brand-spark,
+.ai-widget-fab:not(.is-open) .ai-brand-spark {
+  color: #f7d9b8;
+}
+
+.ai-widget-head .ai-brand-ia,
+.ai-widget-fab:not(.is-open) .ai-brand-ia {
+  color: #f5c6cf;
 }
 
 .ai-widget-sub {
