@@ -1219,10 +1219,67 @@ async function runApiSuite() {
     const delCatRes = await req('POST', '/api/admin/catalog', { action: 'delete_category', id: customCatId });
     assert.strictEqual(delCatRes.status, 200);
 
+    // 15. Studio AI Chatbot (.env OpenAI-compatible & fallback)
+    const insightsBeforeAi = await req('GET', '/api/admin/insights');
+    assert.strictEqual(insightsBeforeAi.status, 200);
+    assert.strictEqual(insightsBeforeAi.json.ai_provider, 'local');
+
+    const prevAiKey = process.env.AI_API_KEY;
+    const prevAiBase = process.env.AI_BASE_URL;
+    const prevAiModel = process.env.AI_MODEL;
+    process.env.AI_API_KEY = 'sk-ol-ci-mock-key';
+    process.env.AI_BASE_URL = 'https://openlimits.app/v1';
+    process.env.AI_MODEL = 'openai/gpt-6-luna';
+
+    let capturedAiReq = null;
+    globalThis.__GBS_AI_FETCH__ = async (url, opts) => {
+      capturedAiReq = {
+        url: String(url),
+        auth: opts?.headers?.Authorization || '',
+        body: JSON.parse(String(opts?.body || '{}')),
+      };
+      return new Response(
+        JSON.stringify({
+          id: 'chatcmpl-ci-1',
+          model: 'openai/gpt-6-luna',
+          choices: [{ message: { role: 'assistant', content: 'Ciao Giulia, ecco i dati aggiornati dello studio.' } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    try {
+      const insightsWithAi = await req('GET', '/api/admin/insights');
+      assert.strictEqual(insightsWithAi.status, 200);
+      assert.strictEqual(insightsWithAi.json.ai_enabled, true);
+      assert.strictEqual(insightsWithAi.json.ai_provider, 'openai_compatible');
+
+      const aiChatRes = await req('POST', '/api/admin/ai-chat', {
+        question: 'Chi ho oggi in agenda?',
+        active_view: 'agenda',
+        history: [{ role: 'user', content: 'Ciao' }, { role: 'assistant', content: 'Ciao Giulia!' }],
+      });
+      assert.strictEqual(aiChatRes.status, 200);
+      assert.strictEqual(aiChatRes.json.engine, 'ai (openai/gpt-6-luna)');
+      assert(aiChatRes.json.answer.includes('Ciao Giulia'));
+      assert.strictEqual(capturedAiReq.url, 'https://openlimits.app/v1/chat/completions');
+      assert.strictEqual(capturedAiReq.auth, 'Bearer sk-ol-ci-mock-key');
+      assert(capturedAiReq.body.messages.length >= 4);
+    } finally {
+      delete globalThis.__GBS_AI_FETCH__;
+      if (prevAiKey === undefined) delete process.env.AI_API_KEY;
+      else process.env.AI_API_KEY = prevAiKey;
+      if (prevAiBase === undefined) delete process.env.AI_BASE_URL;
+      else process.env.AI_BASE_URL = prevAiBase;
+      if (prevAiModel === undefined) delete process.env.AI_MODEL;
+      else process.env.AI_MODEL = prevAiModel;
+    }
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_STRIPE_FETCH__;
     delete globalThis.__GBS_PAYPAL_FETCH__;
+    delete globalThis.__GBS_AI_FETCH__;
     await new Promise((r) => server.close(r));
     if (fs.existsSync(TMP_DB_PATH)) fs.unlinkSync(TMP_DB_PATH);
   }
@@ -1275,6 +1332,9 @@ function checkGdprDefaults() {
   assert(!agendaHtml.includes('id="waAutomationPanel"'), 'agenda.html non deve contenere il vecchio pannello Meta API');
   assert(!serverJs.includes('sendWhatsAppCloudMessage') && !whatsappJs.includes('graph.facebook.com'), 'Nessun riferimento a Meta Graph API deve restare');
   assert(adminJs.includes('async function sendWhatsAppSemiautomatic('), 'admin.js deve usare sendWhatsAppSemiautomatic');
+  assert(agendaHtml.includes('id="aiWidgetFab"') && agendaHtml.includes('id="aiWidgetPanel"'), 'agenda.html deve contenere il chatbot AI flottante sempre richiamabile');
+  assert(adminJs.includes('function initFloatingAiWidget('), 'admin.js deve inizializzare initFloatingAiWidget');
+  assert(!adminJs.includes('sk-ol-') && !agendaHtml.includes('sk-ol-'), 'Nessuna API key deve comparire lato client');
   console.log('[CI] GDPR Defaults & Shared Legal Parity OK');
 }
 

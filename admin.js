@@ -55,6 +55,8 @@ const STATE = {
   privacyVersion: 'v2.0-2026-11',
   insights: null,
   geminiEnabled: false,
+  aiProvider: 'local',
+  aiChatHistory: [],
   inactiveDaysFilter: 30,
   clientPickerMode: 'existing', // 'existing' | 'new'
   selectedCatalogIds: new Set(),
@@ -814,7 +816,8 @@ async function loadInsights() {
   const days = Number(STATE.inactiveDaysFilter || 30);
   const data = await apiFetch(`admin/insights?days=${days}`, { method: 'GET' });
   STATE.insights = data.insights || null;
-  STATE.geminiEnabled = Boolean(data.gemini_enabled);
+  STATE.geminiEnabled = Boolean(data.ai_enabled ?? data.gemini_enabled);
+  STATE.aiProvider = data.ai_provider || (STATE.geminiEnabled ? 'gemini' : 'local');
   if (data.privacy_version) STATE.privacyVersion = data.privacy_version;
 }
 
@@ -5068,6 +5071,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initGiftCardGeneratorControls();
   initPromotionsControls();
   initCatalogControls();
+  initFloatingAiWidget();
 });
 
 /* ==========================================================================
@@ -5078,6 +5082,27 @@ function formatAiTextToSafeHtml(rawText) {
   safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   safe = safe.replace(/\*(.+?)\*/g, '<em>$1</em>');
   return safe;
+}
+
+function updateAiStatusLabels(engineUsed = '') {
+  const isExternal = STATE.geminiEnabled || (engineUsed && engineUsed !== 'local-analytics-ai');
+  const badgeText =
+    STATE.aiProvider === 'openai_compatible' || String(engineUsed).startsWith('ai (')
+      ? '✨ Assistente AI Studio (Connessa) • Dati Reali'
+      : isExternal
+      ? '✨ AI Studio Attiva + Dati Reali'
+      : '✨ Assistente AI Locale • Dati Studio';
+  const widgetText =
+    STATE.aiProvider === 'openai_compatible' || String(engineUsed).startsWith('ai (')
+      ? 'Online AI • Dati reali Studio'
+      : isExternal
+      ? 'AI Connessa • Dati reali Studio'
+      : 'Analisi Locale • Dati reali Studio';
+
+  const badgeEl = document.getElementById('aiEngineBadge');
+  if (badgeEl) badgeEl.textContent = badgeText;
+  const subEl = document.getElementById('aiWidgetStatusLabel');
+  if (subEl) subEl.textContent = widgetText;
 }
 
 function buildWinBackWhatsAppUrl(client) {
@@ -5096,15 +5121,9 @@ function renderInsightsView() {
   const inactiveBox = document.getElementById('inactiveClientsContainer');
   const svcBox = document.getElementById('topServicesReportList');
   const vipBox = document.getElementById('vipClientsReportList');
-  const badge = document.getElementById('aiEngineBadge');
 
   if (!ins || !kpiGrid) return;
-
-  if (badge) {
-    badge.textContent = STATE.geminiEnabled
-      ? '✨ AI Potenziata da Gemini + Dati Reali'
-      : '✨ Assistente AI Studio • Dati Reali';
-  }
+  updateAiStatusLabels();
 
   const s = ins.summary;
   const deltaText =
@@ -5322,38 +5341,163 @@ function renderInsightsView() {
   }
 }
 
+let __sendingAiQuestion = false;
+
+function getAiMessageContainers() {
+  return [
+    document.getElementById('aiChatMessages'),
+    document.getElementById('aiWidgetMessages'),
+  ].filter(Boolean);
+}
+
+function appendAiChatBubblePair(role, { html = '', isLoading = false } = {}) {
+  const created = [];
+  for (const box of getAiMessageContainers()) {
+    const bubble = document.createElement('div');
+    bubble.className = `ai-msg ${role === 'user' ? 'ai-msg-user' : 'ai-msg-bot'}`;
+    if (isLoading) {
+      bubble.innerHTML =
+        '<span class="ai-typing-dots" aria-label="Elaborazione"><span></span><span></span><span></span></span>';
+    } else {
+      bubble.innerHTML = html;
+    }
+    box.appendChild(bubble);
+    box.scrollTop = box.scrollHeight;
+    created.push({ box, bubble });
+  }
+  return created;
+}
+
+function resetAiConversationThreads() {
+  STATE.aiChatHistory = [];
+  const tabBox = document.getElementById('aiChatMessages');
+  if (tabBox) {
+    tabBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Analizzo automaticamente agenda, operatori, clienti, LTV, magazzino e riordini reali del tuo studio. Scegli una domanda rapida qui sopra oppure scrivimi cosa vuoi verificare.</div>`;
+  }
+  const floatBox = document.getElementById('aiWidgetMessages');
+  if (floatBox) {
+    floatBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono sempre qui in qualsiasi sezione: chiedimi appuntamenti di oggi/domani, clienti inattive, magazzino, incassi o bozze WhatsApp.</div>`;
+  }
+}
+
+function toggleFloatingAiWidget(forceOpen = null) {
+  const panel = document.getElementById('aiWidgetPanel');
+  const fab = document.getElementById('aiWidgetFab');
+  if (!panel || !fab) return;
+  const shouldOpen = forceOpen !== null ? Boolean(forceOpen) : panel.hidden;
+  panel.hidden = !shouldOpen;
+  fab.classList.toggle('is-open', shouldOpen);
+  fab.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+  if (shouldOpen) {
+    const box = document.getElementById('aiWidgetMessages');
+    if (box) box.scrollTop = box.scrollHeight;
+    document.getElementById('aiWidgetInput')?.focus();
+  }
+}
+
+function initFloatingAiWidget() {
+  const fab = document.getElementById('aiWidgetFab');
+  const closeBtn = document.getElementById('aiWidgetCloseBtn');
+  const resetBtn = document.getElementById('aiWidgetResetBtn');
+  const form = document.getElementById('aiWidgetForm');
+  const input = document.getElementById('aiWidgetInput');
+  if (!fab || fab.dataset.bound === '1') return;
+  fab.dataset.bound = '1';
+
+  fab.addEventListener('click', () => toggleFloatingAiWidget());
+  closeBtn?.addEventListener('click', () => toggleFloatingAiWidget(false));
+  resetBtn?.addEventListener('click', () => {
+    resetAiConversationThreads();
+    input?.focus();
+  });
+
+  document.querySelectorAll('.ai-widget-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const q = chip.dataset.question;
+      if (q) sendAiQuestion(q);
+    });
+  });
+
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = (input?.value || '').trim();
+    if (!q) return;
+    if (input) input.value = '';
+    sendAiQuestion(q);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const panel = document.getElementById('aiWidgetPanel');
+      if (panel && !panel.hidden) {
+        toggleFloatingAiWidget(false);
+      }
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
+      const workspace = document.getElementById('adminWorkspace');
+      if (workspace && !workspace.hidden) {
+        e.preventDefault();
+        toggleFloatingAiWidget();
+      }
+    }
+  });
+
+  updateAiStatusLabels();
+}
+
 async function sendAiQuestion(question) {
-  const messagesBox = document.getElementById('aiChatMessages');
-  const sendBtn = document.getElementById('aiSendBtn');
-  if (!messagesBox) return;
+  const qText = String(question || '').trim();
+  if (!qText || __sendingAiQuestion) return;
+  const containers = getAiMessageContainers();
+  if (containers.length === 0) return;
 
-  const userDiv = document.createElement('div');
-  userDiv.className = 'ai-msg ai-msg-user';
-  userDiv.textContent = question;
-  messagesBox.appendChild(userDiv);
+  __sendingAiQuestion = true;
+  const sendBtns = [
+    document.getElementById('aiSendBtn'),
+    document.getElementById('aiWidgetSendBtn'),
+  ].filter(Boolean);
 
-  const loadingDiv = document.createElement('div');
-  loadingDiv.className = 'ai-msg ai-msg-bot';
-  loadingDiv.textContent = 'Sto analizzando i dati aggiornati dello studio...';
-  messagesBox.appendChild(loadingDiv);
-  messagesBox.scrollTop = messagesBox.scrollHeight;
+  appendAiChatBubblePair('user', { html: escapeHtml(qText) });
+  const loadingPairs = appendAiChatBubblePair('bot', { isLoading: true });
+  sendBtns.forEach((b) => {
+    b.disabled = true;
+  });
 
-  if (sendBtn) sendBtn.disabled = true;
   try {
     const res = await apiFetch('admin/ai-chat', {
       method: 'POST',
-      body: JSON.stringify({ question }),
+      silentLoader: true,
+      body: JSON.stringify({
+        question: qText,
+        history: (STATE.aiChatHistory || []).slice(-8),
+        active_view: STATE.activeView || 'agenda',
+      }),
     });
-    loadingDiv.innerHTML = formatAiTextToSafeHtml(res.answer);
+    const safeHtml = formatAiTextToSafeHtml(res.answer || '');
+    loadingPairs.forEach(({ box, bubble }) => {
+      bubble.innerHTML = safeHtml;
+      box.scrollTop = box.scrollHeight;
+    });
+    STATE.aiChatHistory.push({ role: 'user', content: qText });
+    STATE.aiChatHistory.push({ role: 'assistant', content: String(res.answer || '') });
+    if (STATE.aiChatHistory.length > 20) {
+      STATE.aiChatHistory = STATE.aiChatHistory.slice(-20);
+    }
+    if (res.engine) updateAiStatusLabels(res.engine);
     if (res.insights) {
       STATE.insights = res.insights;
       renderInsightsView();
     }
   } catch (err) {
-    loadingDiv.textContent = `Errore durante l'analisi: ${err.message}`;
+    const errText = `Errore durante l'analisi: ${err.message}`;
+    loadingPairs.forEach(({ box, bubble }) => {
+      bubble.textContent = errText;
+      box.scrollTop = box.scrollHeight;
+    });
   } finally {
-    if (sendBtn) sendBtn.disabled = false;
-    messagesBox.scrollTop = messagesBox.scrollHeight;
+    __sendingAiQuestion = false;
+    sendBtns.forEach((b) => {
+      b.disabled = false;
+    });
   }
 }
 

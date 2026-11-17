@@ -696,16 +696,131 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
   };
 }
 
+function shiftIsoDate(isoDate, deltaDays) {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate;
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    dt.getUTCDate()
+  ).padStart(2, '0')}`;
+}
+
+function summarizeAppointmentsForAi(appointments = [], operators = [], targetIso = '') {
+  if (!targetIso) return [];
+  const opMap = new Map((operators || []).map((o) => [Number(o.id), o.name]));
+  return (appointments || [])
+    .filter((a) => String(a.appointment_date || '').slice(0, 10) === targetIso && a.status !== 'cancelled')
+    .sort((a, b) => String(a.start_time || '').localeCompare(String(b.start_time || '')))
+    .slice(0, 25)
+    .map((a) => ({
+      time: String(a.start_time || '').slice(0, 5),
+      client_name: a.client_name || 'Cliente',
+      operator: a.operator_name || opMap.get(Number(a.operator_id)) || 'Giulia',
+      services: a.services_summary || 'Trattamento',
+      duration_min: Number(a.duration_minutes || 0),
+      total_price: Number(a.total_price || 0),
+      status: a.status || 'pending',
+      payment_status: a.payment_status || 'unpaid',
+      paid_amount: Number(a.paid_amount || 0),
+      reminder_sent: Boolean(a.reminder_sent_at),
+    }));
+}
+
+function sanitizeChatHistory(history = []) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .map((m) => ({
+      role: m.role,
+      content: m.content.trim().slice(0, 1200),
+    }))
+    .filter((m) => m.content.length > 0)
+    .slice(-8);
+}
+
+async function callOpenAiCompatibleChat({ apiKey, baseUrl, model, systemPrompt, history = [], question }) {
+  const fetchFn = globalThis.__GBS_AI_FETCH__ || fetch;
+  const endpoint = `${String(baseUrl || 'https://openlimits.app/v1').replace(/\/+$/, '')}/chat/completions`;
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: question },
+  ];
+
+  const res = await fetchFn(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.35,
+      max_tokens: 1400,
+    }),
+    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(25000) : undefined,
+  });
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const text = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!text) return null;
+  return {
+    engine: `ai (${data?.model || model})`,
+    answer: text,
+  };
+}
+
+async function callGeminiChat({ apiKey, model, systemPrompt, history = [], question }) {
+  const fetchFn = globalThis.__GBS_AI_FETCH__ || fetch;
+  const historyBlock =
+    history.length > 0
+      ? `\nCRONOLOGIA RECENTE:\n${history
+          .map((m) => `${m.role === 'user' ? 'GIULIA' : 'ASSISTENTE'}: ${m.content}`)
+          .join('\n')}\n`
+      : '';
+  const prompt = `${systemPrompt}${historyBlock}\nDOMANDA DI GIULIA: ${question}`;
+
+  const res = await fetchFn(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1100 },
+      }),
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(25000) : undefined,
+    }
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const text = String(data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  if (!text) return null;
+  return {
+    engine: `gemini (${model})`,
+    answer: text,
+  };
+}
+
 async function answerStudioQuestion(question, clients, appointments, todayIso, extra = {}) {
   const localResult = buildLocalAiReply(question, clients, appointments, todayIso, extra);
-  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
+  const aiApiKey = String(process.env.AI_API_KEY || '').trim();
+  const geminiKey = String(process.env.GEMINI_API_KEY || '').trim();
+  if (!aiApiKey && !geminiKey) {
     return localResult;
   }
 
   try {
-    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const tomorrowIso = shiftIsoDate(todayIso, 1);
     const compactData = {
+      active_view: extra.activeView || 'agenda',
+      today: todayIso,
+      tomorrow: tomorrowIso,
+      today_agenda: summarizeAppointmentsForAi(appointments, extra.operators, todayIso),
+      tomorrow_agenda: summarizeAppointmentsForAi(appointments, extra.operators, tomorrowIso),
       summary: localResult.insights.summary,
       operator_stats: localResult.insights.operator_stats,
       inactive_clients: localResult.insights.inactive_clients.slice(0, 15),
@@ -718,38 +833,56 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
       recommendations: localResult.insights.recommendations,
     };
 
-    const prompt = [
-      "Sei l'Assistente AI manageriale di Giulia Beauty Studio (centro estetico).",
-      'Rispondi in italiano chiaro, pratico e caloroso usando ESCLUSIVAMENTE i dati reali JSON forniti qui sotto (non inventare mai nomi, numeri o date).',
+    const systemPrompt = [
+      "Sei l'Assistente AI manageriale e operativa di Giulia Beauty Studio (centro estetico).",
+      'Rispondi in italiano chiaro, pratico, elegante e conciso usando ESCLUSIVAMENTE i dati reali JSON forniti qui sotto (non inventare mai nomi, numeri, prezzi o orari).',
+      "Quando opportuno usa elenchi puntati leggibili o brevi bozze pronte (es. messaggi WhatsApp cortesi per clienti).",
       '',
       `DATI REALI STUDIO (${todayIso}):`,
       JSON.stringify(compactData),
-      '',
-      `DOMANDA DI GIULIA: ${question}`,
     ].join('\n');
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 900 },
-        }),
+    const history = sanitizeChatHistory(extra.history);
+
+    if (aiApiKey) {
+      const baseUrl = String(process.env.AI_BASE_URL || 'https://openlimits.app/v1').trim();
+      const model = String(process.env.AI_MODEL || 'openai/gpt-6-luna').trim();
+      const remoteRes = await callOpenAiCompatibleChat({
+        apiKey: aiApiKey,
+        baseUrl,
+        model,
+        systemPrompt,
+        history,
+        question,
+      });
+      if (remoteRes) {
+        return {
+          engine: remoteRes.engine,
+          answer: remoteRes.answer,
+          insights: localResult.insights,
+        };
       }
-    );
+    }
 
-    if (!res.ok) return localResult;
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return localResult;
+    if (geminiKey) {
+      const geminiModel = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+      const geminiRes = await callGeminiChat({
+        apiKey: geminiKey,
+        model: geminiModel,
+        systemPrompt,
+        history,
+        question,
+      });
+      if (geminiRes) {
+        return {
+          engine: geminiRes.engine,
+          answer: geminiRes.answer,
+          insights: localResult.insights,
+        };
+      }
+    }
 
-    return {
-      engine: `gemini (${model})`,
-      answer: text.trim(),
-      insights: localResult.insights,
-    };
+    return localResult;
   } catch {
     return localResult;
   }

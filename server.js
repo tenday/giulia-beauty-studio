@@ -2235,9 +2235,14 @@ app.get('/api/admin/insights', requireAdmin, async (req, res, next) => {
     const days = Math.max(7, Math.min(365, Number.parseInt(req.query.days || '30', 10) || 30));
     const { clients, appointments, extra } = await loadInsightsContext(getStore());
     const insights = computeStudioInsights(clients, appointments, getRomeToday(), days, extra);
+    const hasAiApi = Boolean(String(process.env.AI_API_KEY || '').trim());
+    const hasGemini = Boolean(String(process.env.GEMINI_API_KEY || '').trim());
+    const aiEnabled = hasAiApi || hasGemini;
     return res.json({
       ok: true,
-      gemini_enabled: Boolean(String(process.env.GEMINI_API_KEY || '').trim()),
+      ai_enabled: aiEnabled,
+      ai_provider: hasAiApi ? 'openai_compatible' : hasGemini ? 'gemini' : 'local',
+      gemini_enabled: aiEnabled,
       privacy_version: getPrivacyVersion(),
       insights,
     });
@@ -2253,8 +2258,14 @@ app.post('/api/admin/ai-chat', requireAdmin, async (req, res, next) => {
       return sendError(res, "Scrivi una domanda per l'Assistente AI.", 400);
     }
 
+    const history = Array.isArray(req.body?.history) ? req.body.history : [];
+    const activeView = String(req.body?.active_view || '').trim();
     const { clients, appointments, extra } = await loadInsightsContext(getStore());
-    const reply = await answerStudioQuestion(question, clients, appointments, getRomeToday(), extra);
+    const reply = await answerStudioQuestion(question, clients, appointments, getRomeToday(), {
+      ...extra,
+      history,
+      activeView,
+    });
     return res.json({
       ok: true,
       engine: reply.engine,
