@@ -2289,6 +2289,107 @@ function startAgendaAutoRefresh() {
 
 const ALL_ADMIN_VIEWS = ['agenda', 'clients', 'inventory', 'messages', 'giftcards', 'promotions', 'catalog', 'insights', 'settings'];
 
+let __syncAdminTabsScrollUi = null;
+
+function initAdminTabsScrollControls() {
+  const shell = document.getElementById('adminTabsShell');
+  const nav = document.getElementById('adminTabsNav');
+  const prevBtn = document.getElementById('adminTabsPrevBtn');
+  const nextBtn = document.getElementById('adminTabsNextBtn');
+  if (!shell || !nav || nav.dataset.scrollBound === '1') return;
+  nav.dataset.scrollBound = '1';
+
+  const syncUi = () => {
+    const maxScroll = Math.max(0, nav.scrollWidth - nav.clientWidth);
+    const hasOverflow = maxScroll > 4;
+    const canLeft = hasOverflow && nav.scrollLeft > 4;
+    const canRight = hasOverflow && nav.scrollLeft < maxScroll - 4;
+    shell.classList.toggle('has-overflow', hasOverflow);
+    shell.classList.toggle('can-scroll-left', canLeft);
+    shell.classList.toggle('can-scroll-right', canRight);
+    if (prevBtn) prevBtn.hidden = !canLeft;
+    if (nextBtn) nextBtn.hidden = !canRight;
+  };
+  __syncAdminTabsScrollUi = syncUi;
+
+  prevBtn?.addEventListener('click', () => {
+    nav.scrollBy({ left: -240, behavior: 'smooth' });
+  });
+  nextBtn?.addEventListener('click', () => {
+    nav.scrollBy({ left: 240, behavior: 'smooth' });
+  });
+
+  nav.addEventListener('scroll', syncUi, { passive: true });
+  window.addEventListener('resize', syncUi, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(syncUi);
+    ro.observe(nav);
+    ro.observe(shell);
+  }
+
+  nav.addEventListener(
+    'wheel',
+    (e) => {
+      if (nav.scrollWidth <= nav.clientWidth + 4) return;
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        nav.scrollLeft += e.deltaY;
+      }
+    },
+    { passive: false }
+  );
+
+  let dragState = null;
+  let suppressClickUntil = 0;
+
+  nav.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || nav.scrollWidth <= nav.clientWidth + 4) return;
+    dragState = {
+      startX: e.clientX,
+      startScrollLeft: nav.scrollLeft,
+      moved: false,
+    };
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!dragState) return;
+    const dx = e.clientX - dragState.startX;
+    if (!dragState.moved && Math.abs(dx) >= 6) {
+      dragState.moved = true;
+      nav.classList.add('is-dragging');
+    }
+    if (dragState.moved) {
+      nav.scrollLeft = dragState.startScrollLeft - dx;
+      syncUi();
+    }
+  });
+
+  const endDrag = () => {
+    if (!dragState) return;
+    if (dragState.moved) {
+      suppressClickUntil = Date.now() + 140;
+    }
+    dragState = null;
+    nav.classList.remove('is-dragging');
+  };
+
+  window.addEventListener('mouseup', endDrag);
+  window.addEventListener('blur', endDrag);
+
+  nav.addEventListener(
+    'click',
+    (e) => {
+      if (Date.now() < suppressClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    true
+  );
+
+  syncUi();
+}
+
 function switchAdminView(viewName) {
   if (!ALL_ADMIN_VIEWS.includes(viewName)) return;
   if (viewName !== 'agenda') {
@@ -2306,6 +2407,7 @@ function switchAdminView(viewName) {
       b.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
   });
+  if (__syncAdminTabsScrollUi) __syncAdminTabsScrollUi();
   ALL_ADMIN_VIEWS.forEach((v) => {
     const el = document.getElementById(`view${v.charAt(0).toUpperCase()}${v.slice(1)}`);
     if (el) el.hidden = v !== viewName;
@@ -4218,7 +4320,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.location.href = 'admin.html';
   });
 
-  // Main View Tabs
+  // Main View Tabs + Draggable / Scrollable Tab Bar
+  initAdminTabsScrollControls();
   document.querySelectorAll('.admin-tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchAdminView(btn.dataset.view));
   });

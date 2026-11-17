@@ -310,9 +310,36 @@ body {
   padding: 8px 24px 10px;
 }
 
-.admin-tabs {
+.admin-tabs-shell {
+  position: relative;
   max-width: 1380px;
   margin: 0 auto;
+}
+
+.admin-tabs-shell.can-scroll-left::before,
+.admin-tabs-shell.can-scroll-right::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 44px;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.admin-tabs-shell.can-scroll-left::before {
+  left: 2px;
+  border-radius: 13px 0 0 13px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.96) 28%, rgba(255, 255, 255, 0) 100%);
+}
+
+.admin-tabs-shell.can-scroll-right::after {
+  right: 2px;
+  border-radius: 0 13px 13px 0;
+  background: linear-gradient(270deg, rgba(255, 255, 255, 0.96) 28%, rgba(255, 255, 255, 0) 100%);
+}
+
+.admin-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -324,6 +351,62 @@ body {
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  user-select: none;
+  scroll-behavior: smooth;
+}
+
+.admin-tabs-shell.has-overflow .admin-tabs {
+  cursor: grab;
+  padding-left: 36px;
+  padding-right: 36px;
+}
+
+.admin-tabs.is-dragging {
+  cursor: grabbing !important;
+  scroll-behavior: auto;
+}
+
+.admin-tabs.is-dragging .admin-tab-btn {
+  cursor: grabbing !important;
+}
+
+.admin-tabs-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 108, 114, 0.28);
+  background: rgba(255, 251, 250, 0.96);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px -4px rgba(61, 18, 24, 0.28);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.admin-tabs-arrow:hover {
+  background: #ffffff;
+  color: var(--rose);
+  transform: translateY(-50%) scale(1.06);
+  box-shadow: 0 6px 14px -4px rgba(61, 18, 24, 0.34);
+}
+
+.admin-tabs-arrow svg {
+  width: 15px;
+  height: 15px;
+}
+
+.admin-tabs-arrow.is-left {
+  left: 6px;
+}
+
+.admin-tabs-arrow.is-right {
+  right: 6px;
 }
 
 .admin-tabs::-webkit-scrollbar {
@@ -348,6 +431,7 @@ body {
   letter-spacing: 0.015em;
   white-space: nowrap;
   cursor: pointer;
+  user-select: none;
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.2s ease, transform 0.15s ease;
 }
 
