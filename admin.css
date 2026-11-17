@@ -2281,6 +2281,47 @@ body {
   height: 16px;
 }
 
+.ai-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(168, 108, 114, 0.25);
+}
+
+.ai-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 0.67rem;
+  font-weight: 600;
+  background: #fdf2f4;
+  color: #6b1d30;
+  border: 1px solid rgba(181, 88, 107, 0.3);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.ai-action-pill:hover {
+  background: #fbe4e8;
+  border-color: var(--rose);
+}
+
+.ai-action-pill.is-wa {
+  background: #ecfdf5;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.28);
+}
+
+.ai-action-pill.is-wa:hover {
+  background: #dcfce7;
+}
+
 .ai-typing-dots {
   display: inline-flex;
   align-items: center;

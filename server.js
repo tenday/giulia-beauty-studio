@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
+const { runStudioAiAgent } = require('./backend/ai-agent');
 const {
   computeDateSlotAvailability,
   findNextAvailableDate,
@@ -2258,18 +2259,27 @@ app.post('/api/admin/ai-chat', requireAdmin, async (req, res, next) => {
       return sendError(res, "Scrivi una domanda per l'Assistente AI.", 400);
     }
 
+    const store = getStore();
     const history = Array.isArray(req.body?.history) ? req.body.history : [];
     const activeView = String(req.body?.active_view || '').trim();
-    const { clients, appointments, extra } = await loadInsightsContext(getStore());
-    const reply = await answerStudioQuestion(question, clients, appointments, getRomeToday(), {
-      ...extra,
+    const insightsContext = await loadInsightsContext(store);
+    const reply = await runStudioAiAgent({
+      store,
+      adminId: req.admin?.id || null,
+      origin: getRequestOrigin(req),
+      todayIso: getRomeToday(),
+      question,
       history,
       activeView,
+      privacyVersion: getPrivacyVersion(),
+      insightsContext,
     });
     return res.json({
       ok: true,
       engine: reply.engine,
       answer: reply.answer,
+      actions_executed: reply.actionsExecuted || [],
+      ui_directives: reply.uiDirectives || {},
       insights: reply.insights,
     });
   } catch (err) {

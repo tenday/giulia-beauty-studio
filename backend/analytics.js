@@ -891,4 +891,5 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
 module.exports = {
   computeStudioInsights,
   answerStudioQuestion,
+  summarizeAppointmentsForAi,
 };

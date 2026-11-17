@@ -1265,6 +1265,81 @@ async function runApiSuite() {
       assert.strictEqual(capturedAiReq.url, 'https://openlimits.app/v1/chat/completions');
       assert.strictEqual(capturedAiReq.auth, 'Bearer sk-ol-ci-mock-key');
       assert(capturedAiReq.body.messages.length >= 4);
+      assert(Array.isArray(capturedAiReq.body.tools) && capturedAiReq.body.tools.length >= 10);
+
+      // Multi-turn Tool Execution: AI creates appointment -> pays it -> verified in real store
+      let aiTurn = 0;
+      globalThis.__GBS_AI_FETCH__ = async (_url, opts) => {
+        aiTurn += 1;
+        const payload = JSON.parse(String(opts?.body || '{}'));
+        if (aiTurn === 1) {
+          return new Response(
+            JSON.stringify({
+              id: 'chatcmpl-ci-tool-1',
+              model: 'anthropic/claude-haiku-4.5',
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: 'call_ci_appt_1',
+                        type: 'function',
+                        function: {
+                          name: 'create_appointment',
+                          arguments: JSON.stringify({
+                            client_name: 'Nadia AI Test',
+                            client_phone: '+39 333 7776655',
+                            date: '2026-12-22',
+                            time: '15:30',
+                            service_names: ['Manicure spa'],
+                            payment_method: 'contanti',
+                            payment_status: 'paid',
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        const toolMsg = payload.messages.find((m) => m.role === 'tool' && m.tool_call_id === 'call_ci_appt_1');
+        const toolParsed = JSON.parse(toolMsg.content);
+        assert.strictEqual(toolParsed.ok, true);
+        assert.strictEqual(toolParsed.time, '15:30');
+        assert.strictEqual(toolParsed.payment_status, 'paid');
+        assert.strictEqual(toolParsed.client_privacy_accepted, false);
+        return new Response(
+          JSON.stringify({
+            id: 'chatcmpl-ci-tool-2',
+            model: 'anthropic/claude-haiku-4.5',
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: `Appuntamento ${toolParsed.booking_code} creato per Nadia AI Test il 22/12 alle 15:30.`,
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      };
+
+      const aiActionRes = await req('POST', '/api/admin/ai-chat', {
+        question: 'Crea appuntamento per Nadia AI Test +39 333 7776655 il 22 dicembre alle 15:30 con Manicure spa e segnalo pagato in contanti',
+        active_view: 'agenda',
+      });
+      assert.strictEqual(aiActionRes.status, 200);
+      assert(aiActionRes.json.actions_executed.length === 1);
+      assert.strictEqual(aiActionRes.json.actions_executed[0].tool, 'create_appointment');
+      assert.strictEqual(aiActionRes.json.ui_directives.focus_date, '2026-12-22');
+      const aiApptCheck = await req('GET', '/api/admin/appointments?date=2026-12-22');
+      assert(aiApptCheck.json.appointments.some((a) => a.client_name === 'Nadia AI Test' && a.start_time === '15:30'));
     } finally {
       delete globalThis.__GBS_AI_FETCH__;
       if (prevAiKey === undefined) delete process.env.AI_API_KEY;

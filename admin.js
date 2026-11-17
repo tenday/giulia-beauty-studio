@@ -5376,7 +5376,7 @@ function resetAiConversationThreads() {
   }
   const floatBox = document.getElementById('aiWidgetMessages');
   if (floatBox) {
-    floatBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono sempre qui in qualsiasi sezione: chiedimi appuntamenti di oggi/domani, clienti inattive, magazzino, incassi o bozze WhatsApp.</div>`;
+    floatBox.innerHTML = `<div class="ai-msg ai-msg-bot">Ciao Giulia ♡ Sono sempre qui in qualsiasi sezione: puoi farmi domande oppure chiedermi di agire al posto tuo (es. "Crea appuntamento", "Segna pagato", "Nuova cliente", "Emetti Gift Card", "Scarica prodotto").</div>`;
   }
 }
 
@@ -5473,8 +5473,43 @@ async function sendAiQuestion(question) {
       }),
     });
     const safeHtml = formatAiTextToSafeHtml(res.answer || '');
+    const actions = Array.isArray(res.actions_executed) ? res.actions_executed : [];
+    const actionsHtml =
+      actions.length > 0
+        ? `<div class="ai-actions-row">${actions
+            .map((act) => {
+              const parts = [];
+              const viewAttr = act.view ? ` data-ai-view="${escapeHtml(act.view)}"` : '';
+              const dateAttr = act.focus_date ? ` data-ai-date="${escapeHtml(act.focus_date)}"` : '';
+              parts.push(
+                `<button type="button" class="ai-action-pill"${viewAttr}${dateAttr}>✓ ${escapeHtml(
+                  act.summary || act.tool
+                )}</button>`
+              );
+              if (act.wa_url) {
+                parts.push(
+                  `<a href="${escapeHtml(
+                    act.wa_url
+                  )}" target="_blank" rel="noopener" class="ai-action-pill is-wa">📲 Apri WhatsApp</a>`
+                );
+              }
+              return parts.join('');
+            })
+            .join('')}</div>`
+        : '';
+
     loadingPairs.forEach(({ box, bubble }) => {
-      bubble.innerHTML = safeHtml;
+      bubble.innerHTML = `${safeHtml}${actionsHtml}`;
+      bubble.querySelectorAll('.ai-action-pill[data-ai-view], .ai-action-pill[data-ai-date]').forEach((pillBtn) => {
+        pillBtn.addEventListener('click', () => {
+          const targetView = pillBtn.dataset.aiView;
+          const targetDate = pillBtn.dataset.aiDate;
+          if (targetView) switchAdminView(targetView);
+          if (targetDate && /^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+            jumpAgendaToDate(parseIsoDate(targetDate));
+          }
+        });
+      });
       box.scrollTop = box.scrollHeight;
     });
     STATE.aiChatHistory.push({ role: 'user', content: qText });
@@ -5486,6 +5521,20 @@ async function sendAiQuestion(question) {
     if (res.insights) {
       STATE.insights = res.insights;
       renderInsightsView();
+    }
+
+    const hasMutating = actions.some((a) => a.mutating);
+    if (hasMutating) {
+      await refreshAllData();
+    }
+    const dir = res.ui_directives || {};
+    if (dir.navigate_view) {
+      switchAdminView(dir.navigate_view);
+    }
+    if (dir.focus_date && /^\d{4}-\d{2}-\d{2}$/.test(dir.focus_date)) {
+      if (dir.navigate_view === 'agenda' || STATE.activeView === 'agenda') {
+        jumpAgendaToDate(parseIsoDate(dir.focus_date));
+      }
     }
   } catch (err) {
     const errText = `Errore durante l'analisi: ${err.message}`;
