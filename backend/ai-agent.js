@@ -7,6 +7,7 @@
 const crypto = require('crypto');
 const { computeStudioInsights, answerStudioQuestion, summarizeAppointmentsForAi } = require('./analytics');
 const { computeDateSlotAvailability, buildDefaultSchedule, parseOperatorSchedule } = require('./availability');
+const { normalizeStudioCosts } = require('./defaults');
 const {
   PAYMENT_METHOD_LABELS,
   roundMoney,
@@ -601,6 +602,24 @@ const AI_TOOL_DEFINITIONS = [
           template_code: { type: 'string', description: 'Es. reminder_tomorrow, booking_confirmed, winback_inactive, birthday_wish' },
           message_text: { type: 'string', description: 'Testo personalizzato del messaggio WhatsApp' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_studio_costs',
+      description: 'Legge o aggiorna i costi fissi mensili dello studio (affitto locale, utenze/bollette, altre spese fisse) usati per il margine mensile e i report.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['get', 'update'] },
+          monthly_rent: { type: 'number', description: 'Affitto mensile del locale in euro' },
+          monthly_utilities: { type: 'number', description: 'Utenze/bollette mensili stimate in euro' },
+          monthly_other_fixed: { type: 'number', description: 'Altre spese fisse mensili in euro' },
+          notes: { type: 'string', description: 'Eventuali note sui costi fissi' },
+        },
+        required: ['action'],
       },
     },
   },
@@ -1505,6 +1524,30 @@ async function executeAiTool(name, args = {}, ctx = {}) {
     return { ok: true, recipient_name: recName, wa_url: waUrl, message_text: dispatch?.message_text || '' };
   }
 
+  if (name === 'manage_studio_costs') {
+    const existing = normalizeStudioCosts((await store.getStudioSetting('studio_costs')) || {});
+    if (args.action === 'get') {
+      markAction('Consultati costi fissi mensili', null, { mutating: false });
+      return { ok: true, studio_costs: existing };
+    }
+    const candidate = {
+      monthly_rent: args.monthly_rent !== undefined ? args.monthly_rent : existing.monthly_rent,
+      monthly_utilities: args.monthly_utilities !== undefined ? args.monthly_utilities : existing.monthly_utilities,
+      monthly_other_fixed: args.monthly_other_fixed !== undefined ? args.monthly_other_fixed : existing.monthly_other_fixed,
+      notes: args.notes !== undefined ? String(args.notes) : existing.notes,
+    };
+    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed']) {
+      const num = Number(candidate[field]);
+      if (!Number.isFinite(num) || num < 0) {
+        return { ok: false, error: 'Gli importi dei costi fissi devono essere numeri >= 0.' };
+      }
+    }
+    const nextCosts = normalizeStudioCosts(candidate);
+    await store.saveStudioSetting('studio_costs', nextCosts);
+    markAction(`Costi fissi studio aggiornati (${nextCosts.monthly_fixed_total.toFixed(0)} €/mese)`, 'insights');
+    return { ok: true, studio_costs: nextCosts };
+  }
+
   if (name === 'navigate_admin_view') {
     if (args.view && ALLOWED_ADMIN_VIEWS.includes(args.view)) {
       uiDirectives.navigate_view = args.view;
@@ -1572,6 +1615,7 @@ async function runStudioAiAgent({
     `Agenda oggi (${todayIso}): ${JSON.stringify(todayAgenda)}`,
     `Agenda domani (${tomorrowIso}): ${JSON.stringify(tomorrowAgenda)}`,
     `KPI riepilogo studio: ${JSON.stringify(baseInsights.summary)}`,
+    `Costi fissi mensili studio: ${JSON.stringify(baseInsights.studio_costs)} | Margine mese dopo costi fissi: ${baseInsights.summary.month_net_after_fixed} € (copertura fisse: ${baseInsights.summary.break_even_pct ?? 100}%)`,
     `Clienti inattive 30+ gg (top 12): ${JSON.stringify((baseInsights.inactive_clients || []).slice(0, 12))}`,
     `Riordini magazzino: ${JSON.stringify((baseInsights.reorder_forecasts || []).filter((r) => r.needs_reorder))}`,
     `Promozioni attive: ${JSON.stringify(baseInsights.active_promotions || [])}`,
@@ -1581,7 +1625,8 @@ async function runStudioAiAgent({
     '2. Per creare/modificare appuntamenti, usa i nomi reali di cliente, trattamento e operatore chiamando direttamente il tool appropriato. Se per una nuova cliente manca il telefono o ci sono più omonimi, riporta la richiesta in italiano chiaro senza inventare numeri.',
     '3. Non attivare MAI privacy_accepted = true se la titolare non ha detto esplicitamente che la cliente ha già firmato.',
     '4. Per eliminazioni permanenti (delete_*), procedi solo su richiesta chiara dell utente; altrimenti chiedi conferma breve.',
-    '5. Rispondi sempre in italiano elegante, chiaro, sintetico e accurato dopo aver eseguito i tool necessari.',
+    '5. Quando calcoli utili, pareggio o margini mensili dello studio, sottrai sempre dai ricavi i Costi fissi mensili studio configurati (affitto + eventuali utenze/altre spese fisse, specificando che eventuali tasse o consumabili non inseriti restano esclusi). Se Giulia comunica un aggiornamento dei costi fissi (es. affitto o bollette), usa manage_studio_costs con action="update".',
+    '6. Rispondi sempre in italiano elegante, chiaro, sintetico e accurato dopo aver eseguito i tool necessari.',
   ].join('\n');
 
   const safeHistory = (Array.isArray(history) ? history : [])

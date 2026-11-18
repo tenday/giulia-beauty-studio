@@ -1371,6 +1371,34 @@ async function runApiSuite() {
       else process.env.AI_MODEL = prevAiModel;
     }
 
+    // 17. Studio Fixed Costs (default ~400€ rent, update & insights integration)
+    const defaultCostsRes = await req('GET', '/api/admin/studio-costs');
+    assert.strictEqual(defaultCostsRes.status, 200);
+    assert.strictEqual(defaultCostsRes.json.studio_costs.monthly_rent, 400);
+    assert.strictEqual(defaultCostsRes.json.studio_costs.monthly_fixed_total, 400);
+
+    const insightsDefaultCosts = await req('GET', '/api/admin/insights');
+    assert.strictEqual(insightsDefaultCosts.status, 200);
+    assert.strictEqual(insightsDefaultCosts.json.insights.summary.monthly_rent, 400);
+    assert.strictEqual(insightsDefaultCosts.json.insights.summary.monthly_fixed_costs, 400);
+
+    const updateCostsRes = await req('POST', '/api/admin/studio-costs', {
+      monthly_rent: 400,
+      monthly_utilities: 85,
+      monthly_other_fixed: 15,
+      notes: 'Affitto ~400 € + utenze base',
+    });
+    assert.strictEqual(updateCostsRes.status, 200);
+    assert.strictEqual(updateCostsRes.json.studio_costs.monthly_fixed_total, 500);
+
+    const localCostsChat = await req('POST', '/api/admin/ai-chat', {
+      question: "Quali sono i costi d'affitto e il margine dopo spese fisse?",
+      active_view: 'insights',
+    });
+    assert.strictEqual(localCostsChat.status, 200);
+    assert(localCostsChat.json.answer.includes('400 €'));
+    assert(localCostsChat.json.answer.includes('500 €'));
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_STRIPE_FETCH__;

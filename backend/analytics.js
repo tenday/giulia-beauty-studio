@@ -4,6 +4,8 @@
  * client LTV, cross-selling, inventory reorder forecasts & conversational AI (Local NLP + Gemini).
  */
 
+const { normalizeStudioCosts } = require('./defaults');
+
 function parseIsoDateUtc(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
   const [y, m, d] = String(iso).split('-').map(Number);
@@ -487,6 +489,12 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
     return sumLower.startsWith('promo:') || promoTitlesLower.some((t) => sumLower.includes(t));
   }).length;
 
+  const studioCosts = normalizeStudioCosts(extra.studioCosts || {});
+  const monthlyFixedCosts = studioCosts.monthly_fixed_total;
+  const monthNetAfterFixed = Math.round((monthRevenue - monthlyFixedCosts) * 100) / 100;
+  const breakEvenPct =
+    monthlyFixedCosts > 0 ? Math.min(999, Math.round((monthRevenue / monthlyFixedCosts) * 100)) : null;
+
   return {
     generated_at: todayIso,
     current_month: currentMonth,
@@ -510,6 +518,12 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
       avg_ticket: Math.round(avgTicket * 100) / 100,
       avg_client_ltv: avgClientLtv,
       cross_sell_pct: crossSellPct,
+      monthly_rent: studioCosts.monthly_rent,
+      monthly_utilities: studioCosts.monthly_utilities,
+      monthly_other_fixed: studioCosts.monthly_other_fixed,
+      monthly_fixed_costs: monthlyFixedCosts,
+      month_net_after_fixed: monthNetAfterFixed,
+      break_even_pct: breakEvenPct,
       inactive_30_plus: inactive30Plus,
       inactive_60_plus: inactive60Plus,
       inactive_90_plus: inactive90Plus,
@@ -525,6 +539,7 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
       active_promotions_count: activePromotions.length,
       month_promo_bookings_count: monthPromoBookingsCount,
     },
+    studio_costs: studioCosts,
     inactive_threshold_days: inactiveThresholdDays,
     inactive_clients: customThresholdClients,
     inactive_all_30_plus: inactiveAll,
@@ -577,6 +592,7 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
   const isBirthdayQ = /compleann|augur/.test(qLower);
   const isTomorrowQ = /domani|promemoria|whatsapp/.test(qLower);
   const isPromoQ = /promoz|promo|offert|scont/.test(qLower);
+  const isCostsQ = /affitt|cost[oi]|spese|fiss[ei]|utile|netto|margine|pareggio|break.?even/.test(qLower);
   const isReportQ = /report|riepilog|fatturat|incass|andamento|statistich|mese|guadagn|bilancio/.test(qLower);
 
   const lines = [];
@@ -669,6 +685,18 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
         );
       });
     }
+  } else if (isCostsQ && !isReportQ) {
+    const netTxt = `${s.month_net_after_fixed >= 0 ? '+' : ''}${s.month_net_after_fixed.toFixed(0)} €`;
+    lines.push(`🏢 **Costi Fissi Studio & Margine (${insights.current_month}):**`);
+    lines.push(
+      `• **Affitto locale:** ${s.monthly_rent.toFixed(0)} €/mese | **Utenze:** ${s.monthly_utilities.toFixed(0)} € | **Altre fisse:** ${s.monthly_other_fixed.toFixed(0)} €`
+    );
+    lines.push(
+      `• **Totale costi fissi:** ${s.monthly_fixed_costs.toFixed(0)} €/mese • **Fatturato mese:** ${s.month_revenue.toFixed(0)} €`
+    );
+    lines.push(
+      `• **Margine dopo costi fissi:** **${netTxt}**${s.break_even_pct !== null ? ` (copertura fisse: ${s.break_even_pct}%)` : ''}`
+    );
   } else if (isTomorrowQ && !isReportQ) {
     lines.push(
       `📲 **Situazione Domani:** ${s.tomorrow_appointments_count} appuntamenti in agenda (${s.tomorrow_unsent_reminders} promemoria WhatsApp ancora da inviare).`
@@ -678,10 +706,14 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
       s.revenue_delta_pct === null
         ? ''
         : ` (${s.revenue_delta_pct >= 0 ? '+' : ''}${s.revenue_delta_pct}% vs mese scorso)`;
+    const netTxt = `${s.month_net_after_fixed >= 0 ? '+' : ''}${s.month_net_after_fixed.toFixed(0)} €`;
     lines.push(`✨ **Report Generale Studio (${insights.current_month}):**`);
     lines.push(`• **Clienti:** ${s.total_clients} (LTV medio: ${s.avg_client_ltv.toFixed(0)} € | Privacy firmata: ${s.privacy_accepted_clients})`);
     lines.push(
       `• **Incassi mese:** ${s.month_revenue.toFixed(0)} € (Servizi ${s.service_month_revenue.toFixed(0)} € + Prodotti ${s.retail_month_revenue.toFixed(0)} €)${deltaLabel}`
+    );
+    lines.push(
+      `• **Costi fissi mese:** ${s.monthly_fixed_costs.toFixed(0)} € (Affitto ${s.monthly_rent.toFixed(0)} €) | **Margine dopo fisse:** ${netTxt}`
     );
     lines.push(`• **Operatori attivi:** ${s.active_operators_count} | **Prodotti sottoscorta:** ${s.low_stock_count}`);
     lines.push(
@@ -822,6 +854,7 @@ async function answerStudioQuestion(question, clients, appointments, todayIso, e
       today_agenda: summarizeAppointmentsForAi(appointments, extra.operators, todayIso),
       tomorrow_agenda: summarizeAppointmentsForAi(appointments, extra.operators, tomorrowIso),
       summary: localResult.insights.summary,
+      studio_costs: localResult.insights.studio_costs,
       operator_stats: localResult.insights.operator_stats,
       inactive_clients: localResult.insights.inactive_clients.slice(0, 15),
       top_services: localResult.insights.top_services.slice(0, 10),

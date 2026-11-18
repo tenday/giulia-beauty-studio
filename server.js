@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
+const { normalizeStudioCosts } = require('./backend/defaults');
 const { runStudioAiAgent } = require('./backend/ai-agent');
 const {
   computeDateSlotAvailability,
@@ -2216,7 +2217,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res, next) => {
    ADMIN AI INSIGHTS & STUDIO REPORTS API (ALL MODULES UNIFIED)
    ============================================================================ */
 async function loadInsightsContext(store) {
-  const [clients, appointments, operators, products, movements, cards, promotions] = await Promise.all([
+  const [clients, appointments, operators, products, movements, cards, promotions, studioCostsRaw] = await Promise.all([
     store.listClients(''),
     store.listAppointments({ startDate: '', endDate: '', status: '', clientId: 0 }),
     store.listOperators(false),
@@ -2224,13 +2225,62 @@ async function loadInsightsContext(store) {
     store.listProductMovements(500),
     store.listClientCards(0),
     store.listPromotions({ activeOnly: false }),
+    store.getStudioSetting('studio_costs'),
   ]);
   return {
     clients,
     appointments,
-    extra: { operators, products, movements, cards, promotions, privacyVersion: getPrivacyVersion() },
+    extra: {
+      operators,
+      products,
+      movements,
+      cards,
+      promotions,
+      studioCosts: normalizeStudioCosts(studioCostsRaw || {}),
+      privacyVersion: getPrivacyVersion(),
+    },
   };
 }
+
+app.get('/api/admin/studio-costs', requireAdmin, async (req, res, next) => {
+  try {
+    const raw = (await getStore().getStudioSetting('studio_costs')) || {};
+    return res.json({
+      ok: true,
+      studio_costs: normalizeStudioCosts(raw),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/studio-costs', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const existing = normalizeStudioCosts((await store.getStudioSetting('studio_costs')) || {});
+    const body = req.body || {};
+    const candidate = {
+      monthly_rent: body.monthly_rent !== undefined ? body.monthly_rent : existing.monthly_rent,
+      monthly_utilities: body.monthly_utilities !== undefined ? body.monthly_utilities : existing.monthly_utilities,
+      monthly_other_fixed: body.monthly_other_fixed !== undefined ? body.monthly_other_fixed : existing.monthly_other_fixed,
+      notes: body.notes !== undefined ? String(body.notes) : existing.notes,
+    };
+    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed']) {
+      const n = Number(candidate[field]);
+      if (!Number.isFinite(n) || n < 0) {
+        return sendError(res, 'Inserisci importi validi uguali o superiori a 0 €.', 422, 'INVALID_STUDIO_COSTS');
+      }
+    }
+    const nextCosts = normalizeStudioCosts(candidate);
+    await store.saveStudioSetting('studio_costs', nextCosts);
+    return res.json({
+      ok: true,
+      studio_costs: nextCosts,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 app.get('/api/admin/insights', requireAdmin, async (req, res, next) => {
   try {
@@ -2246,6 +2296,7 @@ app.get('/api/admin/insights', requireAdmin, async (req, res, next) => {
       ai_provider: hasAiApi ? 'openai_compatible' : hasGemini ? 'gemini' : 'local',
       gemini_enabled: aiEnabled,
       privacy_version: getPrivacyVersion(),
+      studio_costs: insights.studio_costs,
       insights,
     });
   } catch (err) {

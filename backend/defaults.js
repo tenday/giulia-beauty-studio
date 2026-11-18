@@ -152,10 +152,43 @@ const DEFAULT_PAYMENT_SETTINGS = {
   currency: 'eur',
 };
 
+const DEFAULT_STUDIO_COSTS = {
+  monthly_rent: 400,
+  monthly_utilities: 0,
+  monthly_other_fixed: 0,
+  notes: 'Affitto mensile indicativo circa 400 €',
+};
+
+function roundStudioEuro(val, fallback = 0) {
+  if (val === undefined || val === null || val === '') return fallback;
+  const num = Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(0, Math.round((num + Number.EPSILON) * 100) / 100);
+}
+
+function normalizeStudioCosts(raw = {}) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const monthly_rent = roundStudioEuro(src.monthly_rent, DEFAULT_STUDIO_COSTS.monthly_rent);
+  const monthly_utilities = roundStudioEuro(src.monthly_utilities, DEFAULT_STUDIO_COSTS.monthly_utilities);
+  const monthly_other_fixed = roundStudioEuro(src.monthly_other_fixed, DEFAULT_STUDIO_COSTS.monthly_other_fixed);
+  const monthly_fixed_total = Math.round((monthly_rent + monthly_utilities + monthly_other_fixed) * 100) / 100;
+  const notes =
+    typeof src.notes === 'string' ? src.notes.trim().slice(0, 300) : DEFAULT_STUDIO_COSTS.notes;
+  return {
+    monthly_rent,
+    monthly_utilities,
+    monthly_other_fixed,
+    monthly_fixed_total,
+    notes,
+  };
+}
+
 module.exports = {
   getDefaultOperatorPayload,
   DEFAULT_MESSAGE_TEMPLATES,
   DEFAULT_MONTHLY_PROMOTIONS,
   DEFAULT_WHATSAPP_SETTINGS,
   DEFAULT_PAYMENT_SETTINGS,
+  DEFAULT_STUDIO_COSTS,
+  normalizeStudioCosts,
 };

@@ -1009,6 +1009,44 @@
         </div>
 
         <!-- ==============================================================
+             STUDIO FIXED COSTS (AFFITTO & SPESE FISSE MENSILI)
+             ============================================================== -->
+        <div class="settings-card" id="studioCostsSection" style="margin-top:18px;">
+          <div class="insights-section-head" style="margin-bottom:10px;">
+            <div>
+              <h3>🏢 Costi Fissi Mensili Studio</h3>
+              <p class="muted-text" style="margin:0;">Parametri economici usati da Giul✦IA e nei Report Studio per calcolare margine dopo le spese fisse e punto di pareggio.</p>
+            </div>
+            <span class="status-badge badge-confirmed" id="studioFixedTotalBadge">400 €/mese</span>
+          </div>
+
+          <form id="studioCostsForm" class="admin-form-stack">
+            <div class="form-row-3">
+              <div class="form-group">
+                <label for="studioRentInput">Affitto Locale (€/mese)</label>
+                <input type="number" id="studioRentInput" class="form-control" min="0" step="1" value="400" required />
+              </div>
+              <div class="form-group">
+                <label for="studioUtilitiesInput">Utenze &amp; Bollette (€/mese)</label>
+                <input type="number" id="studioUtilitiesInput" class="form-control" min="0" step="1" value="0" />
+              </div>
+              <div class="form-group">
+                <label for="studioOtherFixedInput">Altre Spese Fisse (€/mese)</label>
+                <input type="number" id="studioOtherFixedInput" class="form-control" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="studioCostsNotesInput">Note Costi Fissi</label>
+              <input type="text" id="studioCostsNotesInput" class="form-control" placeholder="Es. Affitto mensile indicativo circa 400 €" />
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button type="submit" class="btn-primary-admin" id="saveStudioCostsBtn">💾 Salva Costi Fissi Studio</button>
+            </div>
+            <div id="studioCostsAlert" class="admin-alert" hidden></div>
+          </form>
+        </div>
+
+        <!-- ==============================================================
              PAYMENTS, STRIPE CHECKOUT & CASSA LEDGER
              ============================================================== -->
         <div class="settings-grid" id="paymentsAdminSection" style="margin-top:18px;">
@@ -1955,6 +1993,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=34"></script>
+  <script src="admin.js?v=35"></script>
 </body>
 </html>

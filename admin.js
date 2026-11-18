@@ -53,6 +53,7 @@ const STATE = {
   currentEditingAppt: null,
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
+  studioCosts: { monthly_rent: 400, monthly_utilities: 0, monthly_other_fixed: 0, monthly_fixed_total: 400, notes: 'Affitto mensile indicativo circa 400 €' },
   insights: null,
   geminiEnabled: false,
   aiProvider: 'local',
@@ -960,6 +961,9 @@ async function loadInsights() {
   const days = Number(STATE.inactiveDaysFilter || 30);
   const data = await apiFetch(`admin/insights?days=${days}`, { method: 'GET' });
   STATE.insights = data.insights || null;
+  if (data.insights?.studio_costs || data.studio_costs) {
+    STATE.studioCosts = data.insights?.studio_costs || data.studio_costs;
+  }
   STATE.geminiEnabled = Boolean(data.ai_enabled ?? data.gemini_enabled);
   STATE.aiProvider = data.ai_provider || (STATE.geminiEnabled ? 'gemini' : 'local');
   if (data.privacy_version) STATE.privacyVersion = data.privacy_version;
@@ -5322,6 +5326,11 @@ function renderInsightsView() {
       <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">${escapeHtml(deltaText)}</span>
     </div>
     <div class="kpi-card">
+      <span class="kpi-label">Margine dopo Costi Fissi</span>
+      <strong class="kpi-value">${s.month_net_after_fixed >= 0 ? '+' : ''}${Number(s.month_net_after_fixed || 0).toFixed(0)} €</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Fisse ${Number(s.monthly_fixed_costs || 400).toFixed(0)} €/m (Affitto ${Number(s.monthly_rent || 400).toFixed(0)} €)</span>
+    </div>
+    <div class="kpi-card">
       <span class="kpi-label">Ticket Medio Studio</span>
       <strong class="kpi-value">${s.avg_ticket.toFixed(0)} €</strong>
       <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Su ${s.total_active_appointments} app. • ${s.active_promotions_count || 0} promo (${s.month_promo_bookings_count || 0} nel mese)</span>
@@ -5829,6 +5838,10 @@ async function sendAiQuestion(question) {
     if (res.engine) updateAiStatusLabels(res.engine);
     if (res.insights) {
       STATE.insights = res.insights;
+      if (res.insights.studio_costs) {
+        STATE.studioCosts = res.insights.studio_costs;
+        renderStudioCostsPanel();
+      }
       renderInsightsView();
     }
 
@@ -5917,8 +5930,8 @@ function printStudioReport() {
   <div class="kpis">
     <div class="kpi"><span>Clienti Totali</span><strong>${s.total_clients}</strong></div>
     <div class="kpi"><span>Fatturato Mese</span><strong>${s.month_revenue.toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Dopo Fisse (${Number(s.monthly_fixed_costs || 400).toFixed(0)} €)</span><strong>${Number(s.month_net_after_fixed || 0) >= 0 ? '+' : ''}${Number(s.month_net_after_fixed || 0).toFixed(0)} €</strong></div>
     <div class="kpi"><span>Ticket Medio</span><strong>${s.avg_ticket.toFixed(0)} €</strong></div>
-    <div class="kpi"><span>Assenti 30+ gg</span><strong>${s.inactive_30_plus}</strong></div>
   </div>
   <h2>Clienti che non vengono da 30+ giorni</h2>
   ${inactiveRows ? `<table><thead><tr><th>Cliente</th><th>Telefono</th><th>Ultima Visita</th><th>Assenza</th><th>Ultimo Trattamento</th></tr></thead><tbody>${inactiveRows}</tbody></table>` : '<p style="font-family:Arial,sans-serif;font-size:13px;">Nessuna cliente assente da oltre 30 giorni.</p>'}
@@ -6411,6 +6424,30 @@ function renderSettingsView() {
   }
 
   renderPaymentSettingsPanel();
+  renderStudioCostsPanel();
+}
+
+function renderStudioCostsPanel() {
+  const sc = STATE.studioCosts || {
+    monthly_rent: 400,
+    monthly_utilities: 0,
+    monthly_other_fixed: 0,
+    monthly_fixed_total: 400,
+    notes: '',
+  };
+  const rentIn = document.getElementById('studioRentInput');
+  const utilIn = document.getElementById('studioUtilitiesInput');
+  const otherIn = document.getElementById('studioOtherFixedInput');
+  const notesIn = document.getElementById('studioCostsNotesInput');
+  const badge = document.getElementById('studioFixedTotalBadge');
+  if (rentIn && document.activeElement !== rentIn) rentIn.value = Number(sc.monthly_rent ?? 400);
+  if (utilIn && document.activeElement !== utilIn) utilIn.value = Number(sc.monthly_utilities || 0);
+  if (otherIn && document.activeElement !== otherIn) otherIn.value = Number(sc.monthly_other_fixed || 0);
+  if (notesIn && document.activeElement !== notesIn) notesIn.value = sc.notes || '';
+  if (badge) {
+    const tot = Number(sc.monthly_fixed_total ?? 400);
+    badge.textContent = `${tot % 1 === 0 ? tot.toFixed(0) : tot.toFixed(2)} €/mese`;
+  }
 }
 
 /* ==========================================================================
@@ -8307,6 +8344,44 @@ function initPaymentSettingsControls() {
     await loadPaymentsData(STATE.paymentMethodFilter);
     renderPaymentSettingsPanel();
     showAgendaToast('Registro incassi aggiornato ✓');
+  });
+
+  document.getElementById('studioCostsForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const alertEl = document.getElementById('studioCostsAlert');
+    const saveBtn = document.getElementById('saveStudioCostsBtn');
+    if (alertEl) alertEl.hidden = true;
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      const payload = {
+        monthly_rent: Number(document.getElementById('studioRentInput')?.value || 0),
+        monthly_utilities: Number(document.getElementById('studioUtilitiesInput')?.value || 0),
+        monthly_other_fixed: Number(document.getElementById('studioOtherFixedInput')?.value || 0),
+        notes: (document.getElementById('studioCostsNotesInput')?.value || '').trim(),
+      };
+      const res = await apiFetch('admin/studio-costs', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      STATE.studioCosts = res.studio_costs || STATE.studioCosts;
+      await loadInsights();
+      renderStudioCostsPanel();
+      renderInsightsView();
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.className = 'admin-alert admin-alert-ok';
+        alertEl.textContent = 'Costi fissi mensili salvati ✓ (usati subito da Giul✦IA e nei Report)';
+      }
+      showAgendaToast('Costi fissi studio salvati ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.className = 'admin-alert admin-alert-error';
+        alertEl.textContent = err.message || 'Errore salvataggio costi fissi';
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
   });
 }
 
