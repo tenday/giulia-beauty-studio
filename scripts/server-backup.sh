@@ -149,9 +149,9 @@ prune_keep_latest "$BACKUP_ROOT/manual" 15
 prune_keep_latest "$BACKUP_ROOT/pre-restore" 10
 
 FILE_BYTES="$(stat -c%s "$OUT_FILE" 2>/dev/null || wc -c < "$OUT_FILE")"
-DAILY_COUNT="$(ls -1 "$BACKUP_ROOT/daily"/*.sql.gz 2>/dev/null | wc -l | tr -d ' ')"
-WEEKLY_COUNT="$(ls -1 "$BACKUP_ROOT/weekly"/*.sql.gz 2>/dev/null | wc -l | tr -d ' ')"
-PREDEPLOY_COUNT="$(ls -1 "$BACKUP_ROOT/pre-deploy"/*.sql.gz 2>/dev/null | wc -l | tr -d ' ')"
+DAILY_COUNT="$(find "$BACKUP_ROOT/daily" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
+WEEKLY_COUNT="$(find "$BACKUP_ROOT/weekly" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
+PREDEPLOY_COUNT="$(find "$BACKUP_ROOT/pre-deploy" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
 TOTAL_COUNT=$((DAILY_COUNT + WEEKLY_COUNT + PREDEPLOY_COUNT))
 ISO_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
