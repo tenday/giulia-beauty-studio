@@ -1250,7 +1250,7 @@ async function runApiSuite() {
     const prevAiModel = process.env.AI_MODEL;
     process.env.AI_API_KEY = 'sk-ol-ci-mock-key';
     process.env.AI_BASE_URL = 'https://openlimits.app/v1';
-    process.env.AI_MODEL = 'anthropic/claude-haiku-4.5';
+    process.env.AI_MODEL = 'openai/gpt-6-luna';
 
     let capturedAiReq = null;
     globalThis.__GBS_AI_FETCH__ = async (url, opts) => {
@@ -1262,7 +1262,7 @@ async function runApiSuite() {
       return new Response(
         JSON.stringify({
           id: 'chatcmpl-ci-1',
-          model: 'anthropic/claude-haiku-4.5',
+          model: 'openai/gpt-6-luna',
           choices: [{ message: { role: 'assistant', content: 'Ciao Giulia, ecco i dati aggiornati dello studio.' } }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -1281,7 +1281,7 @@ async function runApiSuite() {
         history: [{ role: 'user', content: 'Ciao' }, { role: 'assistant', content: 'Ciao Giulia!' }],
       });
       assert.strictEqual(aiChatRes.status, 200);
-      assert.strictEqual(aiChatRes.json.engine, 'ai (anthropic/claude-haiku-4.5)');
+      assert.strictEqual(aiChatRes.json.engine, 'ai (openai/gpt-6-luna)');
       assert(aiChatRes.json.answer.includes('Ciao Giulia'));
       assert.strictEqual(capturedAiReq.url, 'https://openlimits.app/v1/chat/completions');
       assert.strictEqual(capturedAiReq.auth, 'Bearer sk-ol-ci-mock-key');
@@ -1297,7 +1297,7 @@ async function runApiSuite() {
           return new Response(
             JSON.stringify({
               id: 'chatcmpl-ci-tool-1',
-              model: 'anthropic/claude-haiku-4.5',
+              model: 'openai/gpt-6-luna',
               choices: [
                 {
                   message: {
@@ -1337,7 +1337,7 @@ async function runApiSuite() {
         return new Response(
           JSON.stringify({
             id: 'chatcmpl-ci-tool-2',
-            model: 'anthropic/claude-haiku-4.5',
+            model: 'openai/gpt-6-luna',
             choices: [
               {
                 message: {

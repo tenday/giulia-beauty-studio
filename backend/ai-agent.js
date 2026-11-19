@@ -1591,7 +1591,7 @@ async function runStudioAiAgent({
   }
 
   const baseUrl = String(process.env.AI_BASE_URL || 'https://openlimits.app/v1').trim().replace(/\/+$/, '');
-  const model = String(process.env.AI_MODEL || 'anthropic/claude-haiku-4.5').trim();
+  const model = String(process.env.AI_MODEL || 'openai/gpt-6-luna').trim();
   const fetchFn = globalThis.__GBS_AI_FETCH__ || fetch;
 
   const baseInsights = computeStudioInsights(clients, appointments, todayIso, 30, extra);
