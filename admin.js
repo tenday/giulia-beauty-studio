@@ -54,6 +54,7 @@ const STATE = {
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
   studioCosts: { monthly_rent: 400, monthly_utilities: 0, monthly_other_fixed: 0, monthly_fixed_total: 400, notes: 'Affitto mensile indicativo circa 400 €' },
+  backupStatus: null,
   insights: null,
   geminiEnabled: false,
   aiProvider: 'local',
@@ -598,6 +599,7 @@ async function refreshAllData() {
     loadPaymentsData(),
     loadAdminUsers(),
     loadInsights(),
+    loadBackupStatus(),
   ]);
   updateKpis();
   renderSmartAssistBar();
@@ -6425,6 +6427,39 @@ function renderSettingsView() {
 
   renderPaymentSettingsPanel();
   renderStudioCostsPanel();
+  renderBackupStatusHint();
+}
+
+async function loadBackupStatus() {
+  try {
+    const data = await apiFetch('admin/backup/status', { method: 'GET', silentLoader: true });
+    STATE.backupStatus = data || null;
+  } catch {
+    STATE.backupStatus = null;
+  }
+}
+
+function renderBackupStatusHint() {
+  const el = document.getElementById('backupStatusHint');
+  if (!el) return;
+  const st = STATE.backupStatus;
+  if (!st) {
+    el.textContent = 'Puoi scaricare in qualsiasi momento una copia completa dei dati studio sul tuo dispositivo.';
+    return;
+  }
+  const sb = st.server_backup;
+  const recTxt = `${Number(st.total_records || 0)} record totali protetti`;
+  if (sb && sb.last_backup_at) {
+    const dt = new Date(sb.last_backup_at);
+    const when = Number.isNaN(dt.getTime())
+      ? sb.last_backup_at
+      : dt.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const kb = Math.max(1, Math.round(Number(sb.last_size_bytes || 0) / 1024));
+    const kept = Number(sb.counts?.total || 1);
+    el.textContent = `✓ Backup automatico server attivo (${kept} copie salvate • ultimo: ${when}, ${kb} KB) • ${recTxt}.`;
+  } else {
+    el.textContent = `${recTxt}. Scarica periodicamente una copia JSON sul tuo PC o iPad per protezione extra.`;
+  }
 }
 
 function renderStudioCostsPanel() {
@@ -8344,6 +8379,32 @@ function initPaymentSettingsControls() {
     await loadPaymentsData(STATE.paymentMethodFilter);
     renderPaymentSettingsPanel();
     showAgendaToast('Registro incassi aggiornato ✓');
+  });
+
+  document.getElementById('downloadFullBackupBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('downloadFullBackupBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/download`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Errore durante la creazione del backup completo.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `giulia-beauty-backup-${toIsoDate(new Date())}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showAgendaToast('Backup completo studio scaricato ✓');
+    } catch (err) {
+      showAgendaToast(err.message || 'Errore download backup', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
 
   document.getElementById('studioCostsForm')?.addEventListener('submit', async (e) => {

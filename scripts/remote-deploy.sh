@@ -19,6 +19,11 @@ if [ "$PREV_DEPS" != "$NEW_DEPS" ] || [ ! -d "$HOME/nodevenv/giulia-beauty-studi
   cloudlinux-selector install-modules --json --interpreter=nodejs --app-root=giulia-beauty-studio
 fi
 
+if [ -f "$APP_DIR/scripts/server-backup.sh" ]; then
+  chmod +x "$APP_DIR/scripts/server-backup.sh" "$APP_DIR/scripts/server-restore.sh" 2>/dev/null || true
+  bash "$APP_DIR/scripts/server-backup.sh" pre-deploy
+fi
+
 source "$HOME/nodevenv/giulia-beauty-studio/22/bin/activate"
 npm run init-db
 

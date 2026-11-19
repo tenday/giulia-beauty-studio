@@ -1399,6 +1399,24 @@ async function runApiSuite() {
     assert(localCostsChat.json.answer.includes('400 €'));
     assert(localCostsChat.json.answer.includes('500 €'));
 
+    // 18. Full Backup Status & Sanitized JSON Snapshot Download
+    const bkpStatusRes = await req('GET', '/api/admin/backup/status');
+    assert.strictEqual(bkpStatusRes.status, 200);
+    assert.strictEqual(bkpStatusRes.json.ok, true);
+    assert(bkpStatusRes.json.total_records > 0);
+    assert(bkpStatusRes.json.table_counts.clients >= 1);
+    assert(bkpStatusRes.json.table_counts.catalog_services >= 40);
+
+    const bkpDownRes = await req('GET', '/api/admin/backup/download');
+    assert.strictEqual(bkpDownRes.status, 200);
+    assert.strictEqual(bkpDownRes.json.schema_version, 'gbs-backup-v1');
+    assert(typeof bkpDownRes.json.checksum_sha256 === 'string' && bkpDownRes.json.checksum_sha256.length === 64);
+    assert(Array.isArray(bkpDownRes.json.tables.clients) && bkpDownRes.json.tables.clients.length >= 1);
+    assert(Array.isArray(bkpDownRes.json.tables.appointments) && bkpDownRes.json.tables.appointments.length >= 1);
+    assert(!bkpDownRes.text.includes('password_hash'), 'Il backup JSON non deve esporre password_hash');
+    assert(!bkpDownRes.text.includes('sk_test_ci_secret_abcdef'), 'Il backup JSON non deve esporre Stripe secret key');
+    assert(!bkpDownRes.text.includes('EL_ci_paypal_secret_456'), 'Il backup JSON non deve esporre PayPal client secret');
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_STRIPE_FETCH__;

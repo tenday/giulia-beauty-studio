@@ -1002,9 +1002,11 @@
               <button type="submit" class="btn-primary-admin">Aggiorna Password</button>
             </form>
             <div class="settings-action-stack">
+              <button type="button" class="btn-primary-admin" id="downloadFullBackupBtn">💾 Scarica Backup Completo Studio (JSON)</button>
               <button type="button" class="btn-outline-sm" id="exportCsvSettingsBtn">Scarica Elenco Clienti (CSV)</button>
               <a href="index.html" class="btn-outline-sm" style="text-align: center; text-decoration: none;">Apri Boutique Pubblica</a>
             </div>
+            <div id="backupStatusHint" class="muted-text" style="font-size:0.75rem;margin:10px 0 0;">Verifica stato backup automatico…</div>
           </div>
         </div>
 
@@ -1993,6 +1995,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=35"></script>
+  <script src="admin.js?v=36"></script>
 </body>
 </html>

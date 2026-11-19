@@ -2404,6 +2404,52 @@ async function deleteCatalogService(id) {
   writeDb(db);
 }
 
+function sanitizeStudioSettingsForBackup(rows = []) {
+  return (rows || []).map((row) => {
+    if (!row || row.setting_key !== 'payment_settings') return row;
+    try {
+      const parsed = typeof row.setting_value === 'string' ? JSON.parse(row.setting_value) : { ...(row.setting_value || {}) };
+      delete parsed.stripe_secret_key;
+      delete parsed.stripe_webhook_secret;
+      delete parsed.paypal_client_secret;
+      return {
+        ...row,
+        setting_value: typeof row.setting_value === 'string' ? JSON.stringify(parsed) : parsed,
+      };
+    } catch {
+      return { ...row, setting_value: '{}' };
+    }
+  });
+}
+
+async function exportFullBackupSnapshot() {
+  const db = readDb();
+  const tables = {
+    admin_users: (db.admin_users || []).map(({ password_hash, ...safe }) => safe),
+    operators: db.operators || [],
+    operator_absences: db.operator_absences || [],
+    clients: db.clients || [],
+    appointments: db.appointments || [],
+    privacy_logs: db.privacy_logs || [],
+    privacy_signature_requests: db.privacy_signature_requests || [],
+    client_cards: db.client_cards || [],
+    client_morpho_records: db.client_morpho_records || [],
+    suppliers: db.suppliers || [],
+    products: db.products || [],
+    product_movements: db.product_movements || [],
+    message_templates: db.message_templates || [],
+    message_logs: db.message_logs || [],
+    studio_settings: sanitizeStudioSettingsForBackup(db.studio_settings || []),
+    automation_runs: db.automation_runs || [],
+    gift_cards: db.gift_cards || [],
+    monthly_promotions: db.monthly_promotions || [],
+    payment_transactions: db.payment_transactions || [],
+    catalog_categories: db.catalog_categories || [],
+    catalog_services: db.catalog_services || [],
+  };
+  return tables;
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -2492,4 +2538,5 @@ module.exports = {
   createCatalogService,
   updateCatalogService,
   deleteCatalogService,
+  exportFullBackupSnapshot,
 };

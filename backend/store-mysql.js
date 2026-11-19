@@ -2412,6 +2412,106 @@ async function deleteCatalogService(id) {
   await pool.query('DELETE FROM catalog_services WHERE id = ?', [Number(id)]);
 }
 
+function sanitizeStudioSettingsForBackup(rows = []) {
+  return (rows || []).map((row) => {
+    if (!row || row.setting_key !== 'payment_settings') return row;
+    try {
+      const parsed = typeof row.setting_value === 'string' ? JSON.parse(row.setting_value) : { ...(row.setting_value || {}) };
+      delete parsed.stripe_secret_key;
+      delete parsed.stripe_webhook_secret;
+      delete parsed.paypal_client_secret;
+      return {
+        ...row,
+        setting_value: typeof row.setting_value === 'string' ? JSON.stringify(parsed) : parsed,
+      };
+    } catch {
+      return { ...row, setting_value: '{}' };
+    }
+  });
+}
+
+async function exportFullBackupSnapshot() {
+  const pool = getPool();
+  await ensureDefaults(pool);
+  const querySafe = async (sql) => {
+    try {
+      const [rows] = await pool.query(sql);
+      return Array.isArray(rows) ? rows : [];
+    } catch {
+      return [];
+    }
+  };
+  const [
+    admin_users,
+    operators,
+    operator_absences,
+    clients,
+    appointments,
+    privacy_logs,
+    privacy_signature_requests,
+    client_cards,
+    client_morpho_records,
+    suppliers,
+    products,
+    product_movements,
+    message_templates,
+    message_logs,
+    studio_settings_raw,
+    automation_runs,
+    gift_cards,
+    monthly_promotions,
+    payment_transactions,
+    catalog_categories,
+    catalog_services,
+  ] = await Promise.all([
+    querySafe('SELECT id, username, display_name, role, active, created_at FROM admin_users ORDER BY id ASC'),
+    querySafe('SELECT * FROM operators ORDER BY id ASC'),
+    querySafe('SELECT * FROM operator_absences ORDER BY id ASC'),
+    querySafe('SELECT * FROM clients ORDER BY id ASC'),
+    querySafe('SELECT * FROM appointments ORDER BY id ASC'),
+    querySafe('SELECT * FROM privacy_logs ORDER BY id ASC'),
+    querySafe('SELECT * FROM privacy_signature_requests ORDER BY id ASC'),
+    querySafe('SELECT * FROM client_cards ORDER BY id ASC'),
+    querySafe('SELECT * FROM client_morpho_records ORDER BY id ASC'),
+    querySafe('SELECT * FROM suppliers ORDER BY id ASC'),
+    querySafe('SELECT * FROM products ORDER BY id ASC'),
+    querySafe('SELECT * FROM product_movements ORDER BY id ASC'),
+    querySafe('SELECT * FROM message_templates ORDER BY id ASC'),
+    querySafe('SELECT * FROM message_logs ORDER BY id ASC'),
+    querySafe('SELECT * FROM studio_settings ORDER BY setting_key ASC'),
+    querySafe('SELECT * FROM automation_runs ORDER BY id ASC'),
+    querySafe('SELECT * FROM gift_cards ORDER BY id ASC'),
+    querySafe('SELECT * FROM monthly_promotions ORDER BY id ASC'),
+    querySafe('SELECT * FROM payment_transactions ORDER BY id ASC'),
+    querySafe('SELECT * FROM catalog_categories ORDER BY id ASC'),
+    querySafe('SELECT * FROM catalog_services ORDER BY id ASC'),
+  ]);
+
+  return {
+    admin_users,
+    operators,
+    operator_absences,
+    clients,
+    appointments,
+    privacy_logs,
+    privacy_signature_requests,
+    client_cards,
+    client_morpho_records,
+    suppliers,
+    products,
+    product_movements,
+    message_templates,
+    message_logs,
+    studio_settings: sanitizeStudioSettingsForBackup(studio_settings_raw),
+    automation_runs,
+    gift_cards,
+    monthly_promotions,
+    payment_transactions,
+    catalog_categories,
+    catalog_services,
+  };
+}
+
 module.exports = {
   healthCheck,
   initSchemaAndCountAdmins,
@@ -2500,4 +2600,5 @@ module.exports = {
   createCatalogService,
   updateCatalogService,
   deleteCatalogService,
+  exportFullBackupSnapshot,
 };

@@ -6,6 +6,9 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const express = require('express');
 const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
@@ -2277,6 +2280,74 @@ app.post('/api/admin/studio-costs', requireAdmin, async (req, res, next) => {
       ok: true,
       studio_costs: nextCosts,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+function readServerBackupStatusFile() {
+  try {
+    const statusPath = path.join(os.homedir(), 'backups', 'mysql', 'last-status.json');
+    if (!fs.existsSync(statusPath)) return null;
+    const raw = fs.readFileSync(statusPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+app.get('/api/admin/backup/status', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const tables = await store.exportFullBackupSnapshot();
+    const tableCounts = {};
+    let totalRecords = 0;
+    for (const [k, rows] of Object.entries(tables)) {
+      const cnt = Array.isArray(rows) ? rows.length : 0;
+      tableCounts[k] = cnt;
+      totalRecords += cnt;
+    }
+    const serverBackup = readServerBackupStatusFile();
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      ok: true,
+      db_mode: String(process.env.DB_MODE || 'mysql').toLowerCase(),
+      total_records: totalRecords,
+      table_counts: tableCounts,
+      server_backup: serverBackup,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.get('/api/admin/backup/download', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const tables = await store.exportFullBackupSnapshot();
+    const tableCounts = {};
+    for (const [k, rows] of Object.entries(tables)) {
+      tableCounts[k] = Array.isArray(rows) ? rows.length : 0;
+    }
+    const tablesJson = JSON.stringify(tables);
+    const checksum = crypto.createHash('sha256').update(tablesJson, 'utf8').digest('hex');
+    const nowIso = new Date().toISOString();
+    const payload = {
+      schema_version: 'gbs-backup-v1',
+      studio: 'Giulia Beauty Studio',
+      exported_at: nowIso,
+      exported_by: req.admin?.username || 'admin',
+      db_mode: String(process.env.DB_MODE || 'mysql').toLowerCase(),
+      table_counts: tableCounts,
+      checksum_sha256: checksum,
+      tables,
+    };
+    const stamp = getRomeToday();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="giulia-beauty-backup-${stamp}.json"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(JSON.stringify(payload, null, 2));
   } catch (err) {
     return next(err);
   }
