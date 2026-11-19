@@ -69,8 +69,8 @@ if [ -z "$DUMP_BIN" ]; then
   exit 1
 fi
 
-mkdir -p "$TARGET_DIR" "$WEEKLY_DIR"
-chmod 700 "$HOME/backups" "$BACKUP_ROOT" "$TARGET_DIR" "$WEEKLY_DIR" 2>/dev/null || true
+mkdir -p "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly" "$BACKUP_ROOT/pre-deploy" "$BACKUP_ROOT/manual" "$BACKUP_ROOT/pre-restore"
+chmod 700 "$HOME/backups" "$BACKUP_ROOT" "$BACKUP_ROOT/daily" "$BACKUP_ROOT/weekly" "$BACKUP_ROOT/pre-deploy" "$BACKUP_ROOT/manual" "$BACKUP_ROOT/pre-restore" 2>/dev/null || true
 
 TMP_CNF="$(mktemp)"
 chmod 600 "$TMP_CNF"
@@ -149,9 +149,9 @@ prune_keep_latest "$BACKUP_ROOT/manual" 15
 prune_keep_latest "$BACKUP_ROOT/pre-restore" 10
 
 FILE_BYTES="$(stat -c%s "$OUT_FILE" 2>/dev/null || wc -c < "$OUT_FILE")"
-DAILY_COUNT="$(find "$BACKUP_ROOT/daily" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
-WEEKLY_COUNT="$(find "$BACKUP_ROOT/weekly" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
-PREDEPLOY_COUNT="$(find "$BACKUP_ROOT/pre-deploy" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')"
+DAILY_COUNT="$({ find "$BACKUP_ROOT/daily" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null || true; } | wc -l | tr -d ' ')"
+WEEKLY_COUNT="$({ find "$BACKUP_ROOT/weekly" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null || true; } | wc -l | tr -d ' ')"
+PREDEPLOY_COUNT="$({ find "$BACKUP_ROOT/pre-deploy" -maxdepth 1 -type f -name '*.sql.gz' 2>/dev/null || true; } | wc -l | tr -d ' ')"
 TOTAL_COUNT=$((DAILY_COUNT + WEEKLY_COUNT + PREDEPLOY_COUNT))
 ISO_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
