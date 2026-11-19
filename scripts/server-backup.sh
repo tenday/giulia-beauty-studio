@@ -49,7 +49,10 @@ read_env_var() {
 DB_HOST="$(read_env_var DB_HOST)"
 DB_PORT="$(read_env_var DB_PORT)"
 DB_USER="$(read_env_var DB_USER)"
-DB_PASSWORD="$(read_env_var DB_PASSWORD)"
+DB_PASSWORD="$(read_env_var DB_PASS)"
+if [ -z "$DB_PASSWORD" ]; then
+  DB_PASSWORD="$(read_env_var DB_PASSWORD)"
+fi
 DB_NAME="$(read_env_var DB_NAME)"
 
 DB_HOST="${DB_HOST:-127.0.0.1}"
@@ -57,6 +60,12 @@ DB_PORT="${DB_PORT:-3306}"
 
 if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ]; then
   echo "[BACKUP ERROR] DB_USER o DB_NAME mancanti in $ENV_FILE" >&2
+  exit 1
+fi
+
+DUMP_BIN="$(command -v mariadb-dump || command -v mysqldump || true)"
+if [ -z "$DUMP_BIN" ]; then
+  echo "[BACKUP ERROR] mariadb-dump / mysqldump non trovato" >&2
   exit 1
 fi
 
@@ -70,19 +79,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+ESCAPED_PASS="${DB_PASSWORD//\\/\\\\}"
+ESCAPED_PASS="${ESCAPED_PASS//\"/\\\"}"
+
 {
   echo "[client]"
   printf 'host=%s\n' "$DB_HOST"
   printf 'port=%s\n' "$DB_PORT"
   printf 'user=%s\n' "$DB_USER"
-  printf 'password=%s\n' "$DB_PASSWORD"
+  printf 'password="%s"\n' "$ESCAPED_PASS"
 } > "$TMP_CNF"
 
 STAMP="$(date -u +%Y-%m-%d_%H-%M-%S)"
 OUT_FILE="$TARGET_DIR/${DB_NAME}_${TYPE}_${STAMP}.sql.gz"
 TMP_OUT="${OUT_FILE}.tmp"
 
-mysqldump \
+"$DUMP_BIN" \
   --defaults-extra-file="$TMP_CNF" \
   --single-transaction \
   --quick \

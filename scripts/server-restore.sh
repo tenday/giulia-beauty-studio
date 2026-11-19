@@ -52,24 +52,35 @@ read_env_var() {
 DB_HOST="$(read_env_var DB_HOST)"
 DB_PORT="$(read_env_var DB_PORT)"
 DB_USER="$(read_env_var DB_USER)"
-DB_PASSWORD="$(read_env_var DB_PASSWORD)"
+DB_PASSWORD="$(read_env_var DB_PASS)"
+if [ -z "$DB_PASSWORD" ]; then
+  DB_PASSWORD="$(read_env_var DB_PASSWORD)"
+fi
 DB_NAME="$(read_env_var DB_NAME)"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
 
+MYSQL_BIN="$(command -v mariadb || command -v mysql || true)"
+if [ -z "$MYSQL_BIN" ]; then
+  echo "[RESTORE ERROR] mariadb / mysql client non trovato" >&2
+  exit 1
+fi
+
 TMP_CNF="$(mktemp)"
 chmod 600 "$TMP_CNF"
 trap 'rm -f "$TMP_CNF"' EXIT
+ESCAPED_PASS="${DB_PASSWORD//\\/\\\\}"
+ESCAPED_PASS="${ESCAPED_PASS//\"/\\\"}"
 {
   echo "[client]"
   printf 'host=%s\n' "$DB_HOST"
   printf 'port=%s\n' "$DB_PORT"
   printf 'user=%s\n' "$DB_USER"
-  printf 'password=%s\n' "$DB_PASSWORD"
+  printf 'password="%s"\n' "$ESCAPED_PASS"
 } > "$TMP_CNF"
 
 echo "[RESTORE] Importazione $DUMP_FILE nel database $DB_NAME..."
-gunzip -c "$DUMP_FILE" | mysql --defaults-extra-file="$TMP_CNF" --default-character-set=utf8mb4 "$DB_NAME"
+gunzip -c "$DUMP_FILE" | "$MYSQL_BIN" --defaults-extra-file="$TMP_CNF" --default-character-set=utf8mb4 "$DB_NAME"
 
 if command -v cloudlinux-selector >/dev/null 2>&1; then
   cloudlinux-selector restart --json --interpreter=nodejs --app-root=giulia-beauty-studio || true
