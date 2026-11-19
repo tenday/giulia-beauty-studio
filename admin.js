@@ -8055,13 +8055,17 @@ function renderPaymentsLedger() {
         <tr>
           <td>${escapeHtml(String(tx.created_at || '').slice(0, 16))}</td>
           <td>
-            <strong>${escapeHtml(tx.client_name || 'Cliente')}</strong>
+            <strong>${escapeHtml(tx.client_name || 'Cassa Studio')}</strong>
             ${tx.booking_code ? `<br /><span style="font-size:0.72rem;color:var(--ink-muted);">${escapeHtml(tx.booking_code)}</span>` : ''}
           </td>
-          <td>${escapeHtml(tx.services_summary || tx.notes || 'Appuntamento')}</td>
+          <td>${escapeHtml(tx.notes || tx.services_summary || 'Movimento cassa')}</td>
           <td><span class="status-badge badge-confirmed">${escapeHtml(mLabel)}</span></td>
           <td>${isRefund ? 'Rimborso' : 'Incasso'}</td>
           <td style="text-align:right;font-weight:700;color:${amtColor};">${sign}${formatPromoEuroAmount(tx.amount)} €</td>
+          <td style="text-align:right;white-space:nowrap;">
+            <button type="button" class="btn-outline-sm js-edit-pay-tx-btn" data-id="${tx.id}" title="Modifica movimento">✎ Modifica</button>
+            <button type="button" class="btn-outline-sm js-del-pay-tx-btn" data-id="${tx.id}" title="Elimina movimento" style="color:#a12a2e;border-color:#e0b5b5;">🗑</button>
+          </td>
         </tr>
       `;
     })
@@ -8078,12 +8082,91 @@ function renderPaymentsLedger() {
             <th>Metodo</th>
             <th>Tipo</th>
             <th style="text-align:right;">Importo</th>
+            <th style="text-align:right;">Azioni</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
     </div>
   `;
+
+  container.querySelectorAll('.js-edit-pay-tx-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tx = (STATE.paymentTransactions || []).find((t) => Number(t.id) === Number(btn.dataset.id));
+      if (tx) openPaymentTxModal(tx);
+    });
+  });
+
+  container.querySelectorAll('.js-del-pay-tx-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.id);
+      const tx = (STATE.paymentTransactions || []).find((t) => Number(t.id) === id);
+      if (!tx) return;
+      const label = `${tx.direction === 'refund' ? '-' : '+'}${formatPromoEuroAmount(tx.amount)} € (${PAYMENT_METHOD_LABELS[tx.payment_method] || tx.payment_method})`;
+      if (!confirm(`Eliminare il movimento di cassa ${label}? Se collegato a un appuntamento, il saldo verrà ricalcolato automaticamente.`)) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await apiFetch('admin/payments/transactions', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'delete', id }),
+        });
+        await refreshAllData();
+        showAgendaToast('Movimento di incasso eliminato ✓');
+      } catch (err) {
+        showAgendaToast(err.message || 'Errore eliminazione movimento', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function toDatetimeLocalInput(rawStr) {
+  const s = String(rawStr || '').trim().replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s.slice(0, 16);
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function openPaymentTxModal(tx = null) {
+  const modal = document.getElementById('paymentTxModal');
+  if (!modal) return;
+  const titleEl = document.getElementById('paymentTxModalTitle');
+  const idEl = document.getElementById('payTxIdInput');
+  const dirEl = document.getElementById('payTxDirectionSelect');
+  const amtEl = document.getElementById('payTxAmountInput');
+  const methEl = document.getElementById('payTxMethodSelect');
+  const dateEl = document.getElementById('payTxDateInput');
+  const notesEl = document.getElementById('payTxNotesInput');
+  const delBtn = document.getElementById('deletePayTxBtn');
+  const alertEl = document.getElementById('payTxAlert');
+  if (alertEl) alertEl.hidden = true;
+
+  if (tx) {
+    if (titleEl) titleEl.textContent = `Modifica Movimento #${tx.id}`;
+    if (idEl) idEl.value = String(tx.id);
+    if (dirEl) dirEl.value = tx.direction === 'refund' ? 'refund' : 'payment';
+    if (amtEl) amtEl.value = Number(tx.amount || 0).toFixed(2);
+    if (methEl) methEl.value = tx.payment_method || 'contanti';
+    if (dateEl) dateEl.value = toDatetimeLocalInput(tx.created_at);
+    if (notesEl) notesEl.value = tx.notes || tx.services_summary || '';
+    if (delBtn) delBtn.hidden = false;
+  } else {
+    if (titleEl) titleEl.textContent = 'Nuovo Incasso / Movimento Cassa';
+    if (idEl) idEl.value = '';
+    if (dirEl) dirEl.value = 'payment';
+    if (amtEl) amtEl.value = '';
+    if (methEl) methEl.value = 'contanti';
+    if (dateEl) dateEl.value = toDatetimeLocalInput('');
+    if (notesEl) notesEl.value = '';
+    if (delBtn) delBtn.hidden = true;
+  }
+
+  modal.classList.add('open');
+  amtEl?.focus();
 }
 
 function initPaymentSettingsControls() {
@@ -8379,6 +8462,73 @@ function initPaymentSettingsControls() {
     await loadPaymentsData(STATE.paymentMethodFilter);
     renderPaymentSettingsPanel();
     showAgendaToast('Registro incassi aggiornato ✓');
+  });
+
+  document.getElementById('newPaymentTxBtn')?.addEventListener('click', () => {
+    openPaymentTxModal(null);
+  });
+
+  document.getElementById('closePaymentTxModalBtn')?.addEventListener('click', () => {
+    document.getElementById('paymentTxModal')?.classList.remove('open');
+  });
+
+  document.getElementById('paymentTxModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'paymentTxModal') {
+      e.target.classList.remove('open');
+    }
+  });
+
+  document.getElementById('paymentTxForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const alertEl = document.getElementById('payTxAlert');
+    const saveBtn = document.getElementById('savePayTxBtn');
+    if (alertEl) alertEl.hidden = true;
+    if (saveBtn) saveBtn.disabled = true;
+
+    const editId = Number(document.getElementById('payTxIdInput')?.value || 0);
+    const payload = {
+      action: editId > 0 ? 'update' : 'create',
+      id: editId > 0 ? editId : undefined,
+      direction: document.getElementById('payTxDirectionSelect')?.value || 'payment',
+      amount: Number(document.getElementById('payTxAmountInput')?.value || 0),
+      payment_method: document.getElementById('payTxMethodSelect')?.value || 'contanti',
+      created_at: document.getElementById('payTxDateInput')?.value || '',
+      notes: (document.getElementById('payTxNotesInput')?.value || '').trim(),
+    };
+
+    try {
+      await apiFetch('admin/payments/transactions', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      document.getElementById('paymentTxModal')?.classList.remove('open');
+      await refreshAllData();
+      showAgendaToast(editId > 0 ? 'Incasso aggiornato ✓' : 'Nuovo incasso registrato ✓');
+    } catch (err) {
+      if (alertEl) {
+        alertEl.hidden = false;
+        alertEl.textContent = err.message || 'Errore salvataggio incasso';
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+
+  document.getElementById('deletePayTxBtn')?.addEventListener('click', async () => {
+    const editId = Number(document.getElementById('payTxIdInput')?.value || 0);
+    if (!editId) return;
+    if (!confirm('Eliminare definitivamente questo movimento di cassa?')) return;
+    try {
+      await apiFetch('admin/payments/transactions', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete', id: editId }),
+      });
+      document.getElementById('paymentTxModal')?.classList.remove('open');
+      await refreshAllData();
+      showAgendaToast('Movimento eliminato ✓');
+    } catch (err) {
+      showAgendaToast(err.message || 'Errore eliminazione movimento', 'error');
+    }
   });
 
   document.getElementById('downloadFullBackupBtn')?.addEventListener('click', async () => {

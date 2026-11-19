@@ -1499,6 +1499,37 @@ app.post('/api/admin/appointments', requireAdmin, async (req, res, next) => {
             adminId: req.admin?.id || null,
             nowStr: formatRomeNow(),
           });
+        } else if (nextPaid < prevPaid - 0.009) {
+          await store.recordAppointmentPayment({
+            appointmentId: id,
+            paymentStatus: nextPayStatus,
+            paymentMethod: nextMethod,
+            paidAmount: nextPaid,
+            transactionAmount: roundMoney(prevPaid - nextPaid),
+            direction: 'refund',
+            paymentNotes: nextNotes,
+            transactionNotes: `Rettifica incasso da scheda appuntamento (${PAYMENT_METHOD_LABELS[nextMethod] || nextMethod})`,
+            adminId: req.admin?.id || null,
+            nowStr: formatRomeNow(),
+          });
+          if (nextPayStatus === 'unpaid') {
+            await store.updateAppointment(id, {
+              date,
+              time,
+              duration: Math.max(10, Number.parseInt(body.duration_minutes || '60', 10) || 60),
+              operatorId,
+              servicesJson: Array.isArray(body.services) ? JSON.stringify(body.services) : null,
+              servicesSummary: (String(body.services_summary || '').trim() || 'Trattamento personalizzato').slice(0, 490),
+              totalPrice: nextTotalPrice,
+              status,
+              notes: String(body.notes || '').trim(),
+              paymentMethod: nextMethod,
+              paymentStatus: 'unpaid',
+              paidAmount: 0,
+              paymentNotes: nextNotes,
+              paidAt: null,
+            });
+          }
         } else {
           await store.updateAppointment(id, {
             date,
@@ -2726,6 +2757,96 @@ app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
       paypal_webhook_url: `${origin}/api/webhooks/paypal`,
       summary,
       transactions,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post('/api/admin/payments/transactions', requireAdmin, async (req, res, next) => {
+  try {
+    const store = getStore();
+    const body = req.body || {};
+    const action = String(body.action || 'update').trim().toLowerCase();
+
+    const normalizeTxTimestamp = (raw) => {
+      const s = String(raw || '').trim();
+      if (!s) return undefined;
+      // Accept YYYY-MM-DDTHH:MM or YYYY-MM-DD HH:MM(:SS)
+      const cleaned = s.replace('T', ' ');
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(cleaned)) return `${cleaned}:00`;
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cleaned)) return cleaned;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return `${cleaned} 12:00:00`;
+      return undefined;
+    };
+
+    let resultTx = null;
+    let deletedId = null;
+
+    if (action === 'create') {
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount) || amount < 0.01) {
+        return sendError(res, 'Inserisci un importo valido superiore a 0 €.', 422, 'INVALID_AMOUNT');
+      }
+      const direction = String(body.direction || 'payment').trim().toLowerCase() === 'refund' ? 'refund' : 'payment';
+      const paymentMethod = normalizePaymentMethod(body.payment_method, 'contanti');
+      const notes = String(body.notes || '').trim() || (direction === 'refund' ? 'Storno manuale cassa' : 'Incasso manuale cassa');
+      const createdAt = normalizeTxTimestamp(body.created_at) || formatRomeNow();
+      resultTx = await store.createPaymentTransaction({
+        appointmentId: body.appointment_id ? Number(body.appointment_id) : null,
+        clientId: body.client_id ? Number(body.client_id) : null,
+        direction,
+        paymentMethod,
+        amount,
+        notes,
+        adminId: req.admin?.id || null,
+        createdAt,
+      });
+    } else if (action === 'update') {
+      const id = Number.parseInt(String(body.id || '0'), 10) || 0;
+      if (id <= 0) return sendError(res, 'ID movimento mancante.', 422);
+      const patch = {};
+      if (body.amount !== undefined) {
+        const amount = Number(body.amount);
+        if (!Number.isFinite(amount) || amount < 0.01) {
+          return sendError(res, 'Inserisci un importo valido superiore a 0 €.', 422, 'INVALID_AMOUNT');
+        }
+        patch.amount = amount;
+      }
+      if (body.direction !== undefined) {
+        patch.direction = String(body.direction).trim().toLowerCase() === 'refund' ? 'refund' : 'payment';
+      }
+      if (body.payment_method !== undefined) {
+        patch.paymentMethod = normalizePaymentMethod(body.payment_method, 'contanti');
+      }
+      if (body.notes !== undefined) {
+        patch.notes = String(body.notes || '').trim();
+      }
+      if (body.created_at !== undefined) {
+        const ts = normalizeTxTimestamp(body.created_at);
+        if (ts) patch.createdAt = ts;
+      }
+      resultTx = await store.updatePaymentTransaction(id, patch);
+    } else if (action === 'delete') {
+      const id = Number.parseInt(String(body.id || '0'), 10) || 0;
+      if (id <= 0) return sendError(res, 'ID movimento mancante.', 422);
+      await store.deletePaymentTransaction(id);
+      deletedId = id;
+    } else {
+      return sendError(res, 'Azione movimento non supportata.', 400);
+    }
+
+    const [transactions, allAppts] = await Promise.all([
+      store.listPaymentTransactions({ limit: 500 }),
+      store.listAppointments({}),
+    ]);
+    const summary = computePaymentsDashboardSummary(allAppts, transactions);
+    return res.json({
+      ok: true,
+      transaction: resultTx,
+      deleted_id: deletedId,
+      summary,
+      transactions: transactions.slice(0, 120),
     });
   } catch (err) {
     return next(err);

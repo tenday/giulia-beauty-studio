@@ -2228,6 +2228,183 @@ async function recordAppointmentPayment({
   }
 }
 
+async function recomputeMysqlAppointmentFromTransactions(conn, appointmentId, nowStr) {
+  if (!appointmentId) return;
+  const [apptRows] = await conn.query('SELECT * FROM appointments WHERE id = ? FOR UPDATE', [Number(appointmentId)]);
+  if (apptRows.length === 0) return;
+  const appt = apptRows[0];
+  const [txRows] = await conn.query(
+    "SELECT direction, payment_method, amount, created_at FROM payment_transactions WHERE appointment_id = ? AND status = 'succeeded' ORDER BY created_at ASC, id ASC",
+    [Number(appointmentId)]
+  );
+  let net = 0;
+  let hasRefund = false;
+  let latestMethod = appt.payment_method || 'studio';
+  let latestAt = null;
+  for (const t of txRows) {
+    const amt = Number(t.amount || 0);
+    if (t.direction === 'refund') {
+      net -= amt;
+      hasRefund = true;
+    } else {
+      net += amt;
+      latestMethod = t.payment_method || latestMethod;
+      latestAt = t.created_at || latestAt;
+    }
+  }
+  const nextPaid = Math.max(0, Math.round((net + Number.EPSILON) * 100) / 100);
+  const total = Math.max(0, Number(appt.total_price || 0));
+  let nextStatus = 'unpaid';
+  if (total > 0 && nextPaid >= total - 0.01) nextStatus = 'paid';
+  else if (nextPaid > 0.009) nextStatus = 'partial';
+  else nextStatus = hasRefund ? 'refunded' : 'unpaid';
+
+  const nextMethod = nextStatus === 'unpaid' ? 'studio' : latestMethod;
+  const nextPaidAt = nextStatus === 'unpaid' ? null : appt.paid_at || latestAt || nowStr;
+  await conn.query(
+    'UPDATE appointments SET paid_amount = ?, payment_status = ?, payment_method = ?, paid_at = ? WHERE id = ?',
+    [nextPaid.toFixed(2), nextStatus, nextMethod, nextPaidAt, Number(appointmentId)]
+  );
+}
+
+async function createPaymentTransaction({
+  appointmentId = null,
+  clientId = null,
+  bookingCode = null,
+  direction = 'payment',
+  paymentMethod = 'contanti',
+  amount = 0,
+  notes = null,
+  adminId = null,
+  createdAt = formatRomeNow(),
+}) {
+  const pool = getPool();
+  const amt = Math.max(0, Math.round((Number(amount || 0) + Number.EPSILON) * 100) / 100);
+  if (amt < 0.01) {
+    const err = new Error("Inserisci un importo valido superiore a 0 €.");
+    err.status = 422;
+    throw err;
+  }
+  const dir = direction === 'refund' ? 'refund' : 'payment';
+  const method = String(paymentMethod || 'contanti').trim().slice(0, 40);
+  const noteVal = notes ? String(notes).trim().slice(0, 300) : null;
+  const ts = String(createdAt || formatRomeNow()).slice(0, 19);
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [ins] = await conn.query(
+      `INSERT INTO payment_transactions
+       (appointment_id, client_id, booking_code, direction, payment_method, amount, currency, status, notes, created_by_admin_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'succeeded', ?, ?, ?)`,
+      [
+        appointmentId ? Number(appointmentId) : null,
+        clientId ? Number(clientId) : null,
+        bookingCode ? String(bookingCode).trim().slice(0, 32) : null,
+        dir,
+        method,
+        amt.toFixed(2),
+        noteVal,
+        adminId ? Number(adminId) : null,
+        ts,
+      ]
+    );
+    if (appointmentId) {
+      await recomputeMysqlAppointmentFromTransactions(conn, Number(appointmentId), formatRomeNow());
+    }
+    const [rows] = await conn.query('SELECT * FROM payment_transactions WHERE id = ? LIMIT 1', [Number(ins.insertId)]);
+    await conn.commit();
+    return rows[0] || null;
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {}
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+async function updatePaymentTransaction(id, { direction, paymentMethod, amount, notes, createdAt } = {}) {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [existingRows] = await conn.query('SELECT * FROM payment_transactions WHERE id = ? FOR UPDATE', [Number(id)]);
+    if (existingRows.length === 0) {
+      await conn.rollback();
+      const err = new Error('Movimento di incasso non trovato.');
+      err.status = 404;
+      throw err;
+    }
+    const cur = existingRows[0];
+    let nextAmt = Number(cur.amount || 0);
+    if (amount !== undefined) {
+      const parsed = Math.round((Number(amount) + Number.EPSILON) * 100) / 100;
+      if (!Number.isFinite(parsed) || parsed < 0.01) {
+        await conn.rollback();
+        const err = new Error("Inserisci un importo valido superiore a 0 €.");
+        err.status = 422;
+        throw err;
+      }
+      nextAmt = parsed;
+    }
+    const nextDir = direction !== undefined ? (direction === 'refund' ? 'refund' : 'payment') : cur.direction;
+    const nextMethod =
+      paymentMethod !== undefined ? String(paymentMethod || 'contanti').trim().slice(0, 40) : cur.payment_method;
+    const nextNotes = notes !== undefined ? String(notes || '').trim().slice(0, 300) || null : cur.notes;
+    const nextCreatedAt =
+      createdAt !== undefined && String(createdAt || '').trim() ? String(createdAt).trim().slice(0, 19) : cur.created_at;
+
+    await conn.query(
+      'UPDATE payment_transactions SET direction = ?, payment_method = ?, amount = ?, notes = ?, created_at = ? WHERE id = ?',
+      [nextDir, nextMethod, nextAmt.toFixed(2), nextNotes, nextCreatedAt, Number(id)]
+    );
+    if (cur.appointment_id) {
+      await recomputeMysqlAppointmentFromTransactions(conn, Number(cur.appointment_id), formatRomeNow());
+    }
+    const [afterRows] = await conn.query('SELECT * FROM payment_transactions WHERE id = ? LIMIT 1', [Number(id)]);
+    await conn.commit();
+    return afterRows[0] || null;
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {}
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+async function deletePaymentTransaction(id) {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [existingRows] = await conn.query('SELECT * FROM payment_transactions WHERE id = ? FOR UPDATE', [Number(id)]);
+    if (existingRows.length === 0) {
+      await conn.rollback();
+      const err = new Error('Movimento di incasso non trovato.');
+      err.status = 404;
+      throw err;
+    }
+    const cur = existingRows[0];
+    await conn.query('DELETE FROM payment_transactions WHERE id = ?', [Number(id)]);
+    if (cur.appointment_id) {
+      await recomputeMysqlAppointmentFromTransactions(conn, Number(cur.appointment_id), formatRomeNow());
+    }
+    await conn.commit();
+    return cur;
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {}
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 /* ============================================================================
    CONFIGURABLE SERVICE CATALOG (CATEGORIES & TREATMENTS)
    ============================================================================ */
@@ -2592,6 +2769,9 @@ module.exports = {
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,
   recordAppointmentPayment,
+  createPaymentTransaction,
+  updatePaymentTransaction,
+  deletePaymentTransaction,
   listCatalogData,
   listPublicCatalog,
   createCatalogCategory,

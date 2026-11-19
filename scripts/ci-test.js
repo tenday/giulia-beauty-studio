@@ -1417,6 +1417,36 @@ async function runApiSuite() {
     assert(!bkpDownRes.text.includes('sk_test_ci_secret_abcdef'), 'Il backup JSON non deve esporre Stripe secret key');
     assert(!bkpDownRes.text.includes('EL_ci_paypal_secret_456'), 'Il backup JSON non deve esporre PayPal client secret');
 
+    // 19. Editable Payment Transactions (Create / Update / Delete)
+    const txCreateRes = await req('POST', '/api/admin/payments/transactions', {
+      action: 'create',
+      direction: 'payment',
+      amount: 55,
+      payment_method: 'contanti',
+      notes: 'Incasso manuale prova CI',
+    });
+    assert.strictEqual(txCreateRes.status, 200);
+    assert.strictEqual(Number(txCreateRes.json.transaction.amount), 55);
+    const createdTxId = txCreateRes.json.transaction.id;
+
+    const txUpdateRes = await req('POST', '/api/admin/payments/transactions', {
+      action: 'update',
+      id: createdTxId,
+      amount: 65,
+      payment_method: 'pos',
+      notes: 'Incasso corretto POS',
+    });
+    assert.strictEqual(txUpdateRes.status, 200);
+    assert.strictEqual(Number(txUpdateRes.json.transaction.amount), 65);
+    assert.strictEqual(txUpdateRes.json.transaction.payment_method, 'pos');
+
+    const txDeleteRes = await req('POST', '/api/admin/payments/transactions', {
+      action: 'delete',
+      id: createdTxId,
+    });
+    assert.strictEqual(txDeleteRes.status, 200);
+    assert.strictEqual(txDeleteRes.json.deleted_id, createdTxId);
+
     console.log('[CI] API Regression Suite OK');
   } finally {
     delete globalThis.__GBS_STRIPE_FETCH__;

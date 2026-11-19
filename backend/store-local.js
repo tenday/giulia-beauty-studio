@@ -2230,6 +2230,144 @@ async function recordAppointmentPayment({
   return { appointment: hydrateLocalAppointment(db, appt), transaction: insertedTx, duplicate: false };
 }
 
+function recomputeLocalAppointmentFromTransactions(db, appointmentId, nowStr) {
+  if (!appointmentId) return null;
+  const appt = (db.appointments || []).find((a) => Number(a.id) === Number(appointmentId));
+  if (!appt) return null;
+  const txs = (db.payment_transactions || []).filter(
+    (t) => Number(t.appointment_id) === Number(appointmentId) && (t.status || 'succeeded') === 'succeeded'
+  );
+  let net = 0;
+  let hasRefund = false;
+  let latestMethod = appt.payment_method || 'studio';
+  let latestAt = null;
+  for (const t of txs) {
+    const amt = Number(t.amount || 0);
+    if (t.direction === 'refund') {
+      net -= amt;
+      hasRefund = true;
+    } else {
+      net += amt;
+      if (!latestAt || String(t.created_at || '') >= latestAt) {
+        latestAt = String(t.created_at || '');
+        latestMethod = t.payment_method || latestMethod;
+      }
+    }
+  }
+  const nextPaid = Math.max(0, Math.round((net + Number.EPSILON) * 100) / 100);
+  const total = Math.max(0, Number(appt.total_price || 0));
+  let nextStatus = 'unpaid';
+  if (total > 0 && nextPaid >= total - 0.01) nextStatus = 'paid';
+  else if (nextPaid > 0.009) nextStatus = 'partial';
+  else nextStatus = hasRefund ? 'refunded' : 'unpaid';
+
+  appt.paid_amount = nextPaid.toFixed(2);
+  appt.payment_status = nextStatus;
+  appt.payment_method = nextStatus === 'unpaid' ? 'studio' : latestMethod;
+  appt.paid_at = nextStatus === 'unpaid' ? null : appt.paid_at || latestAt || nowStr;
+  appt.updated_at = nowStr;
+  return appt;
+}
+
+async function createPaymentTransaction({
+  appointmentId = null,
+  clientId = null,
+  bookingCode = null,
+  direction = 'payment',
+  paymentMethod = 'contanti',
+  amount = 0,
+  notes = null,
+  adminId = null,
+  createdAt = formatRomeNow(),
+}) {
+  const db = readDb();
+  const amt = Math.max(0, Math.round((Number(amount || 0) + Number.EPSILON) * 100) / 100);
+  if (amt < 0.01) {
+    const err = new Error("Inserisci un importo valido superiore a 0 €.");
+    err.status = 422;
+    throw err;
+  }
+  const dir = direction === 'refund' ? 'refund' : 'payment';
+  const tx = {
+    id: nextId(db, 'payment_tx'),
+    appointment_id: appointmentId ? Number(appointmentId) : null,
+    client_id: clientId ? Number(clientId) : null,
+    booking_code: bookingCode ? String(bookingCode).trim().slice(0, 32) : null,
+    direction: dir,
+    payment_method: String(paymentMethod || 'contanti').trim().slice(0, 40),
+    amount: amt.toFixed(2),
+    currency: 'EUR',
+    status: 'succeeded',
+    stripe_session_id: null,
+    stripe_payment_intent: null,
+    paypal_order_id: null,
+    paypal_capture_id: null,
+    notes: notes ? String(notes).trim().slice(0, 300) : null,
+    created_by_admin_id: adminId ? Number(adminId) : null,
+    created_at: String(createdAt || formatRomeNow()).slice(0, 19),
+  };
+  db.payment_transactions = db.payment_transactions || [];
+  db.payment_transactions.push(tx);
+  if (tx.appointment_id) {
+    recomputeLocalAppointmentFromTransactions(db, tx.appointment_id, formatRomeNow());
+  }
+  writeDb(db);
+  return tx;
+}
+
+async function updatePaymentTransaction(id, { direction, paymentMethod, amount, notes, createdAt } = {}) {
+  const db = readDb();
+  const tx = (db.payment_transactions || []).find((t) => Number(t.id) === Number(id));
+  if (!tx) {
+    const err = new Error('Movimento di incasso non trovato.');
+    err.status = 404;
+    throw err;
+  }
+  if (amount !== undefined) {
+    const amt = Math.round((Number(amount) + Number.EPSILON) * 100) / 100;
+    if (!Number.isFinite(amt) || amt < 0.01) {
+      const err = new Error("Inserisci un importo valido superiore a 0 €.");
+      err.status = 422;
+      throw err;
+    }
+    tx.amount = amt.toFixed(2);
+  }
+  if (direction !== undefined) {
+    tx.direction = direction === 'refund' ? 'refund' : 'payment';
+  }
+  if (paymentMethod !== undefined) {
+    tx.payment_method = String(paymentMethod || 'contanti').trim().slice(0, 40);
+  }
+  if (notes !== undefined) {
+    tx.notes = String(notes || '').trim().slice(0, 300) || null;
+  }
+  if (createdAt !== undefined && String(createdAt || '').trim()) {
+    tx.created_at = String(createdAt).trim().slice(0, 19);
+  }
+  if (tx.appointment_id) {
+    recomputeLocalAppointmentFromTransactions(db, tx.appointment_id, formatRomeNow());
+  }
+  writeDb(db);
+  return tx;
+}
+
+async function deletePaymentTransaction(id) {
+  const db = readDb();
+  const list = db.payment_transactions || [];
+  const idx = list.findIndex((t) => Number(t.id) === Number(id));
+  if (idx === -1) {
+    const err = new Error('Movimento di incasso non trovato.');
+    err.status = 404;
+    throw err;
+  }
+  const [removed] = list.splice(idx, 1);
+  if (removed.appointment_id) {
+    recomputeLocalAppointmentFromTransactions(db, removed.appointment_id, formatRomeNow());
+  }
+  writeDb(db);
+  return removed;
+}
+
 /* ============================================================================
    CONFIGURABLE SERVICE CATALOG (CATEGORIES & TREATMENTS)
    ============================================================================ */
@@ -2530,6 +2668,9 @@ module.exports = {
   cancelUnpaidPendingAppointment,
   listPaymentTransactions,
   recordAppointmentPayment,
+  createPaymentTransaction,
+  updatePaymentTransaction,
+  deletePaymentTransaction,
   listCatalogData,
   listPublicCatalog,
   createCatalogCategory,

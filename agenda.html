@@ -1199,7 +1199,10 @@
                 <h3>🧾 Riepilogo Incassi &amp; Cassa</h3>
                 <p class="muted-text" style="margin:0;">Monitoraggio netto tra Studio (Contanti, POS, Satispay) e pagamenti online Stripe / PayPal.</p>
               </div>
-              <button type="button" class="btn-outline-sm" id="refreshPaymentsLedgerBtn">↻ Aggiorna</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="button" class="btn-primary-admin" id="newPaymentTxBtn">+ Nuovo Incasso</button>
+                <button type="button" class="btn-outline-sm" id="refreshPaymentsLedgerBtn">↻ Aggiorna</button>
+              </div>
             </div>
 
             <div class="payments-kpi-row">
@@ -1987,6 +1990,65 @@
     </div>
   </div>
 
+  <!-- ====================================================================
+       MODAL: MODIFICA / NUOVO MOVIMENTO INCASSO CASSA
+       ==================================================================== -->
+  <div id="paymentTxModal" class="admin-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="paymentTxModalTitle">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="eyebrow">Registro Incassi &amp; Cassa</span>
+          <h3 id="paymentTxModalTitle">Modifica Incasso</h3>
+        </div>
+        <button type="button" class="btn-close-modal" id="closePaymentTxModalBtn">✕</button>
+      </div>
+      <form id="paymentTxForm" class="admin-modal-body">
+        <input type="hidden" id="payTxIdInput" value="" />
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="payTxDirectionSelect">Tipo Movimento *</label>
+            <select id="payTxDirectionSelect" class="form-control">
+              <option value="payment">Incasso (+)</option>
+              <option value="refund">Rimborso / Storno (-)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="payTxAmountInput">Importo (€) *</label>
+            <input type="number" id="payTxAmountInput" class="form-control" min="0.01" step="0.01" required />
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="payTxMethodSelect">Metodo di Pagamento *</label>
+            <select id="payTxMethodSelect" class="form-control">
+              <option value="contanti">Contanti</option>
+              <option value="pos">POS / Carta Studio</option>
+              <option value="satispay">Satispay</option>
+              <option value="bonifico">Bonifico</option>
+              <option value="gift_card">Gift Card</option>
+              <option value="stripe_online">Stripe Online</option>
+              <option value="paypal_online">PayPal Online</option>
+              <option value="carta">Carta / Digitale</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="payTxDateInput">Data &amp; Ora</label>
+            <input type="datetime-local" id="payTxDateInput" class="form-control" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="payTxNotesInput">Dettaglio / Note</label>
+          <input type="text" id="payTxNotesInput" class="form-control" maxlength="300" placeholder="Es. Saldo contanti, correzione importo, vendita prodotto..." />
+        </div>
+        <div id="payTxAlert" class="admin-alert admin-alert-error" hidden></div>
+        <div class="admin-modal-footer">
+          <button type="button" class="btn-danger-outline" id="deletePayTxBtn" hidden>🗑 Elimina</button>
+          <button type="submit" class="btn-primary-admin" id="savePayTxBtn">💾 Salva Incasso</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="calContextMenu" class="cal-context-menu" role="menu" aria-label="Azioni rapide appuntamento" hidden></div>
   <div id="calNotePopover" class="cal-note-popover" role="dialog" aria-label="Note appuntamento" hidden></div>
   <div id="calToast" class="cal-toast" role="status" aria-live="polite" hidden></div>
@@ -1995,6 +2057,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=36"></script>
+  <script src="admin.js?v=37"></script>
 </body>
 </html>
