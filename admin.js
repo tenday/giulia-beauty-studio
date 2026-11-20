@@ -1307,7 +1307,7 @@ async function openRemindersModal() {
 /* ==========================================================================
    CALENDAR VIEW (WEEK / DAY / LIST + INTERACTIVE DRAG, RESIZE & LONG-PRESS)
    ========================================================================== */
-const CAL_START_HOUR = 9;
+const CAL_START_HOUR = 8;
 const CAL_END_HOUR = 21; // Ultimo blocco 20:00-21:00
 const CAL_SNAP_MIN = 15;
 const CAL_MIN_DURATION = 15;
@@ -1324,7 +1324,7 @@ const STUDIO_WEEKLY_HOURS = {
   3: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
   4: { enabled: true, start: '13:00', end: '21:00', break_start: '', break_end: '' },
   5: { enabled: true, start: '09:00', end: '19:00', break_start: '', break_end: '' },
-  6: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  6: { enabled: true, start: '08:00', end: '18:00', break_start: '', break_end: '' },
 };
 
 function getInitialCalAutoRefresh() {

@@ -5,7 +5,7 @@ const { isValidIsoDate, timeToMinutes, slotOverlapsBooked, getRomeNowParts } = r
 
 const SLOT_STEP_MINUTES = 15;
 const DEFAULT_SAME_DAY_LEAD_MINUTES = 60;
-const CANDIDATE_SLOTS = ['09:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '18:30', '19:30'];
+const CANDIDATE_SLOTS = ['08:00', '09:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '18:30', '19:30'];
 
 // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
 const STUDIO_WEEKLY_HOURS = {
@@ -15,7 +15,7 @@ const STUDIO_WEEKLY_HOURS = {
   3: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
   4: { enabled: true, start: '13:00', end: '21:00', break_start: '', break_end: '' },
   5: { enabled: true, start: '09:00', end: '19:00', break_start: '', break_end: '' },
-  6: { enabled: true, start: '09:00', end: '18:00', break_start: '', break_end: '' },
+  6: { enabled: true, start: '08:00', end: '18:00', break_start: '', break_end: '' },
 };
 
 function buildDefaultSchedule() {

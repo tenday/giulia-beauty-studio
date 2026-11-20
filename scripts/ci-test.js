@@ -112,6 +112,7 @@ async function runApiSuite() {
     assert.strictEqual(sara.weekly_schedule[4].start, '13:00');
     assert.strictEqual(sara.weekly_schedule[4].end, '21:00');
     assert.strictEqual(sara.weekly_schedule[5].end, '19:00');
+    assert.strictEqual(sara.weekly_schedule[6].start, '08:00');
     assert.strictEqual(sara.weekly_schedule[6].end, '18:00');
     assert.strictEqual(sara.weekly_schedule[0].enabled, false);
 
