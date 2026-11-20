@@ -1051,6 +1051,23 @@ function updateKpis() {
     const val = Number(STATE.paymentSummary?.week_collected || 0);
     weekPaidEl.textContent = `${formatPromoEuroAmount(val)} €`;
   }
+  const monthNetEl = document.getElementById('kpiMonthNetAmount');
+  const monthNetHintEl = document.getElementById('kpiMonthNetHint');
+  if (monthNetEl) {
+    const sum = STATE.paymentSummary || {};
+    const gross = Number(sum.month_collected || 0);
+    const taxes = Number(sum.month_total_state_outflow ?? sum.month_estimated_taxes ?? 0);
+    const fixed = Number(sum.monthly_fixed_total ?? STATE.studioCosts?.monthly_fixed_total ?? 400);
+    const net =
+      sum.month_net_real !== undefined && sum.month_net_real !== null
+        ? Number(sum.month_net_real)
+        : Math.round((gross - taxes - fixed) * 100) / 100;
+    monthNetEl.textContent = `${net >= 0 ? '+' : ''}${formatPromoEuroAmount(net)} €`;
+    monthNetEl.style.color = net >= 0 ? '#166534' : '#91384a';
+    if (monthNetHintEl) {
+      monthNetHintEl.textContent = `Lordo ${formatPromoEuroAmount(gross)} € • Tasse -${formatPromoEuroAmount(taxes)} € • Fisse -${formatPromoEuroAmount(fixed)} €`;
+    }
+  }
 
   const unsentCount = STATE.tomorrowAppointments.filter((a) => !a.reminder_sent_at).length;
   const badgeEl = document.getElementById('tomorrowRemindersBadge');
@@ -8612,6 +8629,7 @@ function initPaymentSettingsControls() {
       });
       STATE.studioCosts = res.studio_costs || STATE.studioCosts;
       await Promise.all([loadInsights(), loadPaymentsData(STATE.paymentMethodFilter)]);
+      updateKpis();
       renderStudioCostsPanel();
       renderPaymentSettingsPanel();
       renderInsightsView();

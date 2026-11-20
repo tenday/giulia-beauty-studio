@@ -517,8 +517,16 @@ body {
   margin: 20px auto 0;
   padding: 0 24px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
   gap: 14px;
+}
+
+.kpi-sub-hint {
+  display: block;
+  font-size: 0.67rem;
+  color: var(--ink-muted);
+  margin-top: 4px;
+  line-height: 1.25;
 }
 
 .kpi-card {
