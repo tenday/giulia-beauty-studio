@@ -609,7 +609,7 @@ const AI_TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'manage_studio_costs',
-      description: 'Legge o aggiorna i costi fissi mensili dello studio (affitto locale, utenze/bollette, altre spese fisse) usati per il margine mensile e i report.',
+      description: 'Legge o aggiorna costi fissi mensili e parametri fiscali forfettari dello studio (affitto, utenze, altre spese fisse, coefficiente di redditività %, aliquota imposta %, INPS mensile).',
       parameters: {
         type: 'object',
         properties: {
@@ -617,7 +617,10 @@ const AI_TOOL_DEFINITIONS = [
           monthly_rent: { type: 'number', description: 'Affitto mensile del locale in euro' },
           monthly_utilities: { type: 'number', description: 'Utenze/bollette mensili stimate in euro' },
           monthly_other_fixed: { type: 'number', description: 'Altre spese fisse mensili in euro' },
-          notes: { type: 'string', description: 'Eventuali note sui costi fissi' },
+          profitability_coeff_pct: { type: 'number', description: 'Coefficiente di redditività forfettario in % (67 per estetista ATECO 96.02.02 / 96.22)' },
+          tax_rate_pct: { type: 'number', description: 'Aliquota imposta sostitutiva forfettaria in % (es. 15 o 5)' },
+          monthly_inps: { type: 'number', description: 'Contributi INPS mensili stimati in euro (deducibili)' },
+          notes: { type: 'string', description: 'Eventuali note sui costi fissi e fiscali' },
         },
         required: ['action'],
       },
@@ -1534,17 +1537,24 @@ async function executeAiTool(name, args = {}, ctx = {}) {
       monthly_rent: args.monthly_rent !== undefined ? args.monthly_rent : existing.monthly_rent,
       monthly_utilities: args.monthly_utilities !== undefined ? args.monthly_utilities : existing.monthly_utilities,
       monthly_other_fixed: args.monthly_other_fixed !== undefined ? args.monthly_other_fixed : existing.monthly_other_fixed,
+      profitability_coeff_pct:
+        args.profitability_coeff_pct !== undefined ? args.profitability_coeff_pct : existing.profitability_coeff_pct,
+      tax_rate_pct: args.tax_rate_pct !== undefined ? args.tax_rate_pct : existing.tax_rate_pct,
+      monthly_inps: args.monthly_inps !== undefined ? args.monthly_inps : existing.monthly_inps,
       notes: args.notes !== undefined ? String(args.notes) : existing.notes,
     };
-    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed']) {
+    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed', 'monthly_inps']) {
       const num = Number(candidate[field]);
       if (!Number.isFinite(num) || num < 0) {
-        return { ok: false, error: 'Gli importi dei costi fissi devono essere numeri >= 0.' };
+        return { ok: false, error: 'Gli importi dei costi fissi e INPS devono essere numeri >= 0.' };
       }
     }
     const nextCosts = normalizeStudioCosts(candidate);
     await store.saveStudioSetting('studio_costs', nextCosts);
-    markAction(`Costi fissi studio aggiornati (${nextCosts.monthly_fixed_total.toFixed(0)} €/mese)`, 'insights');
+    markAction(
+      `Parametri economici aggiornati (fisse ${nextCosts.monthly_fixed_total.toFixed(0)} €/m • tasse ${nextCosts.tax_rate_pct}% su ${nextCosts.profitability_coeff_pct}%)`,
+      'insights'
+    );
     return { ok: true, studio_costs: nextCosts };
   }
 
@@ -1615,7 +1625,7 @@ async function runStudioAiAgent({
     `Agenda oggi (${todayIso}): ${JSON.stringify(todayAgenda)}`,
     `Agenda domani (${tomorrowIso}): ${JSON.stringify(tomorrowAgenda)}`,
     `KPI riepilogo studio: ${JSON.stringify(baseInsights.summary)}`,
-    `Costi fissi mensili studio: ${JSON.stringify(baseInsights.studio_costs)} | Margine mese dopo costi fissi: ${baseInsights.summary.month_net_after_fixed} € (copertura fisse: ${baseInsights.summary.break_even_pct ?? 100}%)`,
+    `Costi fissi & fisco studio: ${JSON.stringify(baseInsights.studio_costs)} | Tasse stimate mese (${baseInsights.summary.tax_rate_pct}% su coeff. ${baseInsights.summary.profitability_coeff_pct}%): ${baseInsights.summary.month_estimated_taxes} € | Ricavo netto reale mese (dopo fisse + tasse): ${baseInsights.summary.month_net_real} €`,
     `Clienti inattive 30+ gg (top 12): ${JSON.stringify((baseInsights.inactive_clients || []).slice(0, 12))}`,
     `Riordini magazzino: ${JSON.stringify((baseInsights.reorder_forecasts || []).filter((r) => r.needs_reorder))}`,
     `Promozioni attive: ${JSON.stringify(baseInsights.active_promotions || [])}`,

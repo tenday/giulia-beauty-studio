@@ -1371,33 +1371,45 @@ async function runApiSuite() {
       else process.env.AI_MODEL = prevAiModel;
     }
 
-    // 17. Studio Fixed Costs (default ~400€ rent, update & insights integration)
+    // 17. Studio Fixed Costs & Forfettario Tax Estimation (default 400€ rent, 67% coeff, 15% tax)
     const defaultCostsRes = await req('GET', '/api/admin/studio-costs');
     assert.strictEqual(defaultCostsRes.status, 200);
     assert.strictEqual(defaultCostsRes.json.studio_costs.monthly_rent, 400);
     assert.strictEqual(defaultCostsRes.json.studio_costs.monthly_fixed_total, 400);
+    assert.strictEqual(defaultCostsRes.json.studio_costs.profitability_coeff_pct, 67);
+    assert.strictEqual(defaultCostsRes.json.studio_costs.tax_rate_pct, 15);
+    assert.strictEqual(defaultCostsRes.json.studio_costs.effective_tax_rate_pct, 10.05);
 
     const insightsDefaultCosts = await req('GET', '/api/admin/insights');
     assert.strictEqual(insightsDefaultCosts.status, 200);
     assert.strictEqual(insightsDefaultCosts.json.insights.summary.monthly_rent, 400);
     assert.strictEqual(insightsDefaultCosts.json.insights.summary.monthly_fixed_costs, 400);
+    assert.strictEqual(insightsDefaultCosts.json.insights.summary.profitability_coeff_pct, 67);
+    assert.strictEqual(insightsDefaultCosts.json.insights.summary.tax_rate_pct, 15);
+    assert.strictEqual(typeof insightsDefaultCosts.json.insights.summary.month_estimated_taxes, 'number');
+    assert.strictEqual(typeof insightsDefaultCosts.json.insights.summary.month_net_real, 'number');
 
     const updateCostsRes = await req('POST', '/api/admin/studio-costs', {
       monthly_rent: 400,
       monthly_utilities: 85,
       monthly_other_fixed: 15,
+      profitability_coeff_pct: 67,
+      tax_rate_pct: 15,
+      monthly_inps: 0,
       notes: 'Affitto ~400 € + utenze base',
     });
     assert.strictEqual(updateCostsRes.status, 200);
     assert.strictEqual(updateCostsRes.json.studio_costs.monthly_fixed_total, 500);
 
     const localCostsChat = await req('POST', '/api/admin/ai-chat', {
-      question: "Quali sono i costi d'affitto e il margine dopo spese fisse?",
+      question: "Quali sono i costi d'affitto, le tasse al 15% e il ricavo netto?",
       active_view: 'insights',
     });
     assert.strictEqual(localCostsChat.status, 200);
     assert(localCostsChat.json.answer.includes('400 €'));
     assert(localCostsChat.json.answer.includes('500 €'));
+    assert(localCostsChat.json.answer.includes('67%'));
+    assert(localCostsChat.json.answer.includes('15%'));
 
     // 18. Full Backup Status & Sanitized JSON Snapshot Download
     const bkpStatusRes = await req('GET', '/api/admin/backup/status');

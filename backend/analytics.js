@@ -4,7 +4,7 @@
  * client LTV, cross-selling, inventory reorder forecasts & conversational AI (Local NLP + Gemini).
  */
 
-const { normalizeStudioCosts } = require('./defaults');
+const { normalizeStudioCosts, computeForfettarioMonthSummary } = require('./defaults');
 
 function parseIsoDateUtc(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
@@ -491,7 +491,8 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
 
   const studioCosts = normalizeStudioCosts(extra.studioCosts || {});
   const monthlyFixedCosts = studioCosts.monthly_fixed_total;
-  const monthNetAfterFixed = Math.round((monthRevenue - monthlyFixedCosts) * 100) / 100;
+  const fiscalMonth = computeForfettarioMonthSummary(monthRevenue, studioCosts);
+  const monthNetAfterFixed = fiscalMonth.net_after_fixed;
   const breakEvenPct =
     monthlyFixedCosts > 0 ? Math.min(999, Math.round((monthRevenue / monthlyFixedCosts) * 100)) : null;
 
@@ -522,7 +523,16 @@ function computeStudioInsights(clients, appointments, todayIso, inactiveThreshol
       monthly_utilities: studioCosts.monthly_utilities,
       monthly_other_fixed: studioCosts.monthly_other_fixed,
       monthly_fixed_costs: monthlyFixedCosts,
+      profitability_coeff_pct: studioCosts.profitability_coeff_pct,
+      tax_rate_pct: studioCosts.tax_rate_pct,
+      effective_tax_rate_pct: studioCosts.effective_tax_rate_pct,
+      monthly_inps: studioCosts.monthly_inps,
+      month_taxable_income: fiscalMonth.taxable_net,
+      month_estimated_taxes: fiscalMonth.estimated_taxes,
+      month_total_state_outflow: fiscalMonth.total_state_outflow,
+      month_net_after_taxes: fiscalMonth.net_after_taxes,
       month_net_after_fixed: monthNetAfterFixed,
+      month_net_real: fiscalMonth.net_real,
       break_even_pct: breakEvenPct,
       inactive_30_plus: inactive30Plus,
       inactive_60_plus: inactive60Plus,
@@ -592,7 +602,7 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
   const isBirthdayQ = /compleann|augur/.test(qLower);
   const isTomorrowQ = /domani|promemoria|whatsapp/.test(qLower);
   const isPromoQ = /promoz|promo|offert|scont/.test(qLower);
-  const isCostsQ = /affitt|cost[oi]|spese|fiss[ei]|utile|netto|margine|pareggio|break.?even/.test(qLower);
+  const isCostsQ = /affitt|cost[oi]|spese|fiss[ei]|utile|netto|margine|pareggio|break.?even|tass|forfettar|impost|stato|inps|redditivit|aliquot|fisco/.test(qLower);
   const isReportQ = /report|riepilog|fatturat|incass|andamento|statistich|mese|guadagn|bilancio/.test(qLower);
 
   const lines = [];
@@ -686,16 +696,20 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
       });
     }
   } else if (isCostsQ && !isReportQ) {
-    const netTxt = `${s.month_net_after_fixed >= 0 ? '+' : ''}${s.month_net_after_fixed.toFixed(0)} €`;
-    lines.push(`🏢 **Costi Fissi Studio & Margine (${insights.current_month}):**`);
+    const netRealTxt = `${s.month_net_real >= 0 ? '+' : ''}${s.month_net_real.toFixed(2)} €`;
+    const inpsLine = s.monthly_inps > 0 ? ` | **INPS mese:** ${s.monthly_inps.toFixed(0)} €` : '';
+    lines.push(`🏢 **Costi Fissi, Tasse Forfettario & Ricavo Netto (${insights.current_month}):**`);
     lines.push(
-      `• **Affitto locale:** ${s.monthly_rent.toFixed(0)} €/mese | **Utenze:** ${s.monthly_utilities.toFixed(0)} € | **Altre fisse:** ${s.monthly_other_fixed.toFixed(0)} €`
+      `• **Fatturato mese:** ${s.month_revenue.toFixed(2)} € | **Imponibile (${s.profitability_coeff_pct}%):** ${s.month_taxable_income.toFixed(2)} €`
     );
     lines.push(
-      `• **Totale costi fissi:** ${s.monthly_fixed_costs.toFixed(0)} €/mese • **Fatturato mese:** ${s.month_revenue.toFixed(0)} €`
+      `• **Tasse stimate Stato (${s.tax_rate_pct}% su imponibile = ${s.effective_tax_rate_pct}% sul lordo):** **${s.month_estimated_taxes.toFixed(2)} €**${inpsLine}`
     );
     lines.push(
-      `• **Margine dopo costi fissi:** **${netTxt}**${s.break_even_pct !== null ? ` (copertura fisse: ${s.break_even_pct}%)` : ''}`
+      `• **Costi fissi mese:** ${s.monthly_fixed_costs.toFixed(0)} € (Affitto ${s.monthly_rent.toFixed(0)} € | Utenze ${s.monthly_utilities.toFixed(0)} € | Altre ${s.monthly_other_fixed.toFixed(0)} €)`
+    );
+    lines.push(
+      `• **Ricavo netto reale stimato (dopo tasse e costi fissi):** **${netRealTxt}**`
     );
   } else if (isTomorrowQ && !isReportQ) {
     lines.push(
@@ -706,14 +720,14 @@ function buildLocalAiReply(question, clients, appointments, todayIso, extra = {}
       s.revenue_delta_pct === null
         ? ''
         : ` (${s.revenue_delta_pct >= 0 ? '+' : ''}${s.revenue_delta_pct}% vs mese scorso)`;
-    const netTxt = `${s.month_net_after_fixed >= 0 ? '+' : ''}${s.month_net_after_fixed.toFixed(0)} €`;
+    const netRealTxt = `${s.month_net_real >= 0 ? '+' : ''}${s.month_net_real.toFixed(0)} €`;
     lines.push(`✨ **Report Generale Studio (${insights.current_month}):**`);
     lines.push(`• **Clienti:** ${s.total_clients} (LTV medio: ${s.avg_client_ltv.toFixed(0)} € | Privacy firmata: ${s.privacy_accepted_clients})`);
     lines.push(
       `• **Incassi mese:** ${s.month_revenue.toFixed(0)} € (Servizi ${s.service_month_revenue.toFixed(0)} € + Prodotti ${s.retail_month_revenue.toFixed(0)} €)${deltaLabel}`
     );
     lines.push(
-      `• **Costi fissi mese:** ${s.monthly_fixed_costs.toFixed(0)} € (Affitto ${s.monthly_rent.toFixed(0)} €) | **Margine dopo fisse:** ${netTxt}`
+      `• **Tasse stimate (${s.tax_rate_pct}% su coeff. ${s.profitability_coeff_pct}%):** ${s.month_estimated_taxes.toFixed(0)} € | **Costi fissi:** ${s.monthly_fixed_costs.toFixed(0)} € | **Netto reale stimato:** **${netRealTxt}**`
     );
     lines.push(`• **Operatori attivi:** ${s.active_operators_count} | **Prodotti sottoscorta:** ${s.low_stock_count}`);
     lines.push(

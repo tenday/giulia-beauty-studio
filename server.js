@@ -12,7 +12,7 @@ const path = require('path');
 const express = require('express');
 const { getStore } = require('./backend/store');
 const { computeStudioInsights, answerStudioQuestion } = require('./backend/analytics');
-const { normalizeStudioCosts } = require('./backend/defaults');
+const { normalizeStudioCosts, computeForfettarioMonthSummary } = require('./backend/defaults');
 const { runStudioAiAgent } = require('./backend/ai-agent');
 const {
   computeDateSlotAvailability,
@@ -2297,13 +2297,22 @@ app.post('/api/admin/studio-costs', requireAdmin, async (req, res, next) => {
       monthly_rent: body.monthly_rent !== undefined ? body.monthly_rent : existing.monthly_rent,
       monthly_utilities: body.monthly_utilities !== undefined ? body.monthly_utilities : existing.monthly_utilities,
       monthly_other_fixed: body.monthly_other_fixed !== undefined ? body.monthly_other_fixed : existing.monthly_other_fixed,
+      profitability_coeff_pct:
+        body.profitability_coeff_pct !== undefined ? body.profitability_coeff_pct : existing.profitability_coeff_pct,
+      tax_rate_pct: body.tax_rate_pct !== undefined ? body.tax_rate_pct : existing.tax_rate_pct,
+      monthly_inps: body.monthly_inps !== undefined ? body.monthly_inps : existing.monthly_inps,
       notes: body.notes !== undefined ? String(body.notes) : existing.notes,
     };
-    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed']) {
+    for (const field of ['monthly_rent', 'monthly_utilities', 'monthly_other_fixed', 'monthly_inps']) {
       const n = Number(candidate[field]);
       if (!Number.isFinite(n) || n < 0) {
         return sendError(res, 'Inserisci importi validi uguali o superiori a 0 €.', 422, 'INVALID_STUDIO_COSTS');
       }
+    }
+    const coeffNum = Number(candidate.profitability_coeff_pct);
+    const taxNum = Number(candidate.tax_rate_pct);
+    if (!Number.isFinite(coeffNum) || coeffNum < 1 || coeffNum > 100 || !Number.isFinite(taxNum) || taxNum < 0 || taxNum > 60) {
+      return sendError(res, 'Inserisci percentuali fiscali valide (coefficiente 1–100%, imposta 0–60%).', 422, 'INVALID_TAX_PARAMS');
     }
     const nextCosts = normalizeStudioCosts(candidate);
     await store.saveStudioSetting('studio_costs', nextCosts);
@@ -2738,8 +2747,9 @@ app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
     const appointmentId = Number.parseInt(req.query.appointment_id || '0', 10) || 0;
     const limit = Number.parseInt(req.query.limit || '120', 10) || 120;
 
-    const [rawSettings, transactions, allTransactionsForKpi, allAppts] = await Promise.all([
+    const [rawSettings, rawStudioCosts, transactions, allTransactionsForKpi, allAppts] = await Promise.all([
       store.getStudioSetting('payment_settings'),
+      store.getStudioSetting('studio_costs'),
       store.listPaymentTransactions({ startDate, endDate, method, appointmentId, limit }),
       appointmentId > 0 || startDate || endDate || method
         ? store.listPaymentTransactions({ limit: 500 })
@@ -2747,7 +2757,19 @@ app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
       store.listAppointments({}),
     ]);
 
-    const summary = computePaymentsDashboardSummary(allAppts, allTransactionsForKpi || transactions);
+    const baseSummary = computePaymentsDashboardSummary(allAppts, allTransactionsForKpi || transactions);
+    const fiscal = computeForfettarioMonthSummary(baseSummary.month_collected, rawStudioCosts || {});
+    const summary = {
+      ...baseSummary,
+      month_estimated_taxes: fiscal.estimated_taxes,
+      month_total_state_outflow: fiscal.total_state_outflow,
+      month_net_after_taxes: fiscal.net_after_taxes,
+      month_net_real: fiscal.net_real,
+      monthly_fixed_total: fiscal.monthly_fixed_total,
+      profitability_coeff_pct: fiscal.profitability_coeff_pct,
+      tax_rate_pct: fiscal.tax_rate_pct,
+      effective_tax_rate_pct: fiscal.effective_tax_rate_pct,
+    };
     const origin = getRequestOrigin(req);
 
     return res.json({

@@ -1016,10 +1016,10 @@
         <div class="settings-card" id="studioCostsSection" style="margin-top:18px;">
           <div class="insights-section-head" style="margin-bottom:10px;">
             <div>
-              <h3>🏢 Costi Fissi Mensili Studio</h3>
-              <p class="muted-text" style="margin:0;">Parametri economici usati da Giul✦IA e nei Report Studio per calcolare margine dopo le spese fisse e punto di pareggio.</p>
+              <h3>🏢 Costi Fissi &amp; Regime Fiscale Studio</h3>
+              <p class="muted-text" style="margin:0;">Parametri usati da Giul✦IA, nei Report e nel Riepilogo Incassi per stimare le tasse allo Stato e il ricavo netto reale.</p>
             </div>
-            <span class="status-badge badge-confirmed" id="studioFixedTotalBadge">400 €/mese</span>
+            <span class="status-badge badge-confirmed" id="studioFixedTotalBadge">400 €/mese • 15% su 67%</span>
           </div>
 
           <form id="studioCostsForm" class="admin-form-stack">
@@ -1037,12 +1037,29 @@
                 <input type="number" id="studioOtherFixedInput" class="form-control" min="0" step="1" value="0" />
               </div>
             </div>
+            <div class="form-row-3">
+              <div class="form-group">
+                <label for="studioProfitCoeffInput">Coeff. Redditività (%)</label>
+                <input type="number" id="studioProfitCoeffInput" class="form-control" min="1" max="100" step="1" value="67" required />
+              </div>
+              <div class="form-group">
+                <label for="studioTaxRateInput">Imposta Sostitutiva (%)</label>
+                <input type="number" id="studioTaxRateInput" class="form-control" min="0" max="60" step="0.5" value="15" required />
+              </div>
+              <div class="form-group">
+                <label for="studioInpsInput">Contributi INPS (€/mese, opz.)</label>
+                <input type="number" id="studioInpsInput" class="form-control" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <small class="muted-text" style="display:block;margin:-4px 0 8px;">
+              Regime forfettario Estetista (ATECO 96.02.02 / 96.22): coefficiente di redditività <strong>67%</strong>, aliquota <strong>15%</strong> (effettivo <strong>10,05%</strong> sul lordo; 5% se start-up). Stima indicativa: verifica sempre con il commercialista.
+            </small>
             <div class="form-group">
-              <label for="studioCostsNotesInput">Note Costi Fissi</label>
+              <label for="studioCostsNotesInput">Note Costi Fissi &amp; Fisco</label>
               <input type="text" id="studioCostsNotesInput" class="form-control" placeholder="Es. Affitto mensile indicativo circa 400 €" />
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <button type="submit" class="btn-primary-admin" id="saveStudioCostsBtn">💾 Salva Costi Fissi Studio</button>
+              <button type="submit" class="btn-primary-admin" id="saveStudioCostsBtn">💾 Salva Costi &amp; Tasse Studio</button>
             </div>
             <div id="studioCostsAlert" class="admin-alert" hidden></div>
           </form>
@@ -1215,8 +1232,16 @@
                 <strong id="paySumWeek">0 €</strong>
               </div>
               <div class="pay-kpi-box">
-                <span>Mese Corrente</span>
+                <span>Mese Corrente (Lordo)</span>
                 <strong id="paySumMonth">0 €</strong>
+              </div>
+              <div class="pay-kpi-box">
+                <span id="paySumMonthTaxesLabel">Tasse Stato Mese (15% su 67%)</span>
+                <strong id="paySumMonthTaxes" style="color:#91384a;">0 €</strong>
+              </div>
+              <div class="pay-kpi-box">
+                <span>Ricavo Netto Reale Mese</span>
+                <strong id="paySumMonthNetReal" style="color:#166534;">0 €</strong>
               </div>
               <div class="pay-kpi-box is-pending">
                 <span>Da Saldare in Sospeso</span>
@@ -2057,6 +2082,6 @@
   <script src="gbs-loader.js?v=1"></script>
   <script src="catalog.js?v=2"></script>
   <script src="morpho.js"></script>
-  <script src="admin.js?v=37"></script>
+  <script src="admin.js?v=38"></script>
 </body>
 </html>

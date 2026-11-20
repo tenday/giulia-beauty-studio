@@ -53,7 +53,17 @@ const STATE = {
   currentEditingAppt: null,
   adminUsers: [],
   privacyVersion: 'v2.0-2026-11',
-  studioCosts: { monthly_rent: 400, monthly_utilities: 0, monthly_other_fixed: 0, monthly_fixed_total: 400, notes: 'Affitto mensile indicativo circa 400 €' },
+  studioCosts: {
+    monthly_rent: 400,
+    monthly_utilities: 0,
+    monthly_other_fixed: 0,
+    monthly_fixed_total: 400,
+    profitability_coeff_pct: 67,
+    tax_rate_pct: 15,
+    monthly_inps: 0,
+    effective_tax_rate_pct: 10.05,
+    notes: 'Affitto mensile indicativo circa 400 €',
+  },
   backupStatus: null,
   insights: null,
   geminiEnabled: false,
@@ -5328,9 +5338,9 @@ function renderInsightsView() {
       <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">${escapeHtml(deltaText)}</span>
     </div>
     <div class="kpi-card">
-      <span class="kpi-label">Margine dopo Costi Fissi</span>
-      <strong class="kpi-value">${s.month_net_after_fixed >= 0 ? '+' : ''}${Number(s.month_net_after_fixed || 0).toFixed(0)} €</strong>
-      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Fisse ${Number(s.monthly_fixed_costs || 400).toFixed(0)} €/m (Affitto ${Number(s.monthly_rent || 400).toFixed(0)} €)</span>
+      <span class="kpi-label">Ricavo Netto Reale (dopo Tasse &amp; Fisse)</span>
+      <strong class="kpi-value">${Number(s.month_net_real ?? s.month_net_after_fixed ?? 0) >= 0 ? '+' : ''}${Number(s.month_net_real ?? s.month_net_after_fixed ?? 0).toFixed(0)} €</strong>
+      <span style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px;display:block;">Tasse ${Number(s.tax_rate_pct ?? 15)}% su ${Number(s.profitability_coeff_pct ?? 67)}%: -${Number(s.month_estimated_taxes || 0).toFixed(0)} € • Fisse: -${Number(s.monthly_fixed_costs || 400).toFixed(0)} €</span>
     </div>
     <div class="kpi-card">
       <span class="kpi-label">Ticket Medio Studio</span>
@@ -5930,10 +5940,10 @@ function printStudioReport() {
   <h1>Giulia Beauty Studio — Report Gestionale AI</h1>
   <div class="sub">Via Principe Amedeo, 17 - Verdellino (BG) • Generato il ${escapeHtml(ins.generated_at)}</div>
   <div class="kpis">
-    <div class="kpi"><span>Clienti Totali</span><strong>${s.total_clients}</strong></div>
     <div class="kpi"><span>Fatturato Mese</span><strong>${s.month_revenue.toFixed(0)} €</strong></div>
-    <div class="kpi"><span>Dopo Fisse (${Number(s.monthly_fixed_costs || 400).toFixed(0)} €)</span><strong>${Number(s.month_net_after_fixed || 0) >= 0 ? '+' : ''}${Number(s.month_net_after_fixed || 0).toFixed(0)} €</strong></div>
-    <div class="kpi"><span>Ticket Medio</span><strong>${s.avg_ticket.toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Tasse (${Number(s.tax_rate_pct ?? 15)}% su ${Number(s.profitability_coeff_pct ?? 67)}%)</span><strong>-${Number(s.month_estimated_taxes || 0).toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Costi Fissi / Mese</span><strong>-${Number(s.monthly_fixed_costs || 400).toFixed(0)} €</strong></div>
+    <div class="kpi"><span>Ricavo Netto Reale</span><strong>${Number(s.month_net_real || 0) >= 0 ? '+' : ''}${Number(s.month_net_real || 0).toFixed(0)} €</strong></div>
   </div>
   <h2>Clienti che non vengono da 30+ giorni</h2>
   ${inactiveRows ? `<table><thead><tr><th>Cliente</th><th>Telefono</th><th>Ultima Visita</th><th>Assenza</th><th>Ultimo Trattamento</th></tr></thead><tbody>${inactiveRows}</tbody></table>` : '<p style="font-family:Arial,sans-serif;font-size:13px;">Nessuna cliente assente da oltre 30 giorni.</p>'}
@@ -6468,20 +6478,31 @@ function renderStudioCostsPanel() {
     monthly_utilities: 0,
     monthly_other_fixed: 0,
     monthly_fixed_total: 400,
+    profitability_coeff_pct: 67,
+    tax_rate_pct: 15,
+    monthly_inps: 0,
     notes: '',
   };
   const rentIn = document.getElementById('studioRentInput');
   const utilIn = document.getElementById('studioUtilitiesInput');
   const otherIn = document.getElementById('studioOtherFixedInput');
+  const coeffIn = document.getElementById('studioProfitCoeffInput');
+  const taxIn = document.getElementById('studioTaxRateInput');
+  const inpsIn = document.getElementById('studioInpsInput');
   const notesIn = document.getElementById('studioCostsNotesInput');
   const badge = document.getElementById('studioFixedTotalBadge');
   if (rentIn && document.activeElement !== rentIn) rentIn.value = Number(sc.monthly_rent ?? 400);
   if (utilIn && document.activeElement !== utilIn) utilIn.value = Number(sc.monthly_utilities || 0);
   if (otherIn && document.activeElement !== otherIn) otherIn.value = Number(sc.monthly_other_fixed || 0);
+  if (coeffIn && document.activeElement !== coeffIn) coeffIn.value = Number(sc.profitability_coeff_pct ?? 67);
+  if (taxIn && document.activeElement !== taxIn) taxIn.value = Number(sc.tax_rate_pct ?? 15);
+  if (inpsIn && document.activeElement !== inpsIn) inpsIn.value = Number(sc.monthly_inps || 0);
   if (notesIn && document.activeElement !== notesIn) notesIn.value = sc.notes || '';
   if (badge) {
     const tot = Number(sc.monthly_fixed_total ?? 400);
-    badge.textContent = `${tot % 1 === 0 ? tot.toFixed(0) : tot.toFixed(2)} €/mese`;
+    const coeff = Number(sc.profitability_coeff_pct ?? 67);
+    const tax = Number(sc.tax_rate_pct ?? 15);
+    badge.textContent = `${tot % 1 === 0 ? tot.toFixed(0) : tot.toFixed(2)} €/mese • ${tax}% su ${coeff}%`;
   }
 }
 
@@ -8027,10 +8048,22 @@ function renderPaymentSettingsPanel() {
   const elToday = document.getElementById('paySumToday');
   const elWeek = document.getElementById('paySumWeek');
   const elMonth = document.getElementById('paySumMonth');
+  const elMonthTaxes = document.getElementById('paySumMonthTaxes');
+  const elMonthTaxesLbl = document.getElementById('paySumMonthTaxesLabel');
+  const elMonthNetReal = document.getElementById('paySumMonthNetReal');
   const elOut = document.getElementById('paySumOutstanding');
   if (elToday) elToday.textContent = `${formatPromoEuroAmount(sum.today_collected || 0)} €`;
   if (elWeek) elWeek.textContent = `${formatPromoEuroAmount(sum.week_collected || 0)} €`;
   if (elMonth) elMonth.textContent = `${formatPromoEuroAmount(sum.month_collected || 0)} €`;
+  if (elMonthTaxesLbl) {
+    elMonthTaxesLbl.textContent = `Tasse Stato Mese (${Number(sum.tax_rate_pct ?? 15)}% su ${Number(sum.profitability_coeff_pct ?? 67)}%)`;
+  }
+  if (elMonthTaxes) elMonthTaxes.textContent = `-${formatPromoEuroAmount(sum.month_total_state_outflow ?? sum.month_estimated_taxes ?? 0)} €`;
+  if (elMonthNetReal) {
+    const netVal = Number(sum.month_net_real ?? 0);
+    elMonthNetReal.textContent = `${netVal >= 0 ? '+' : ''}${formatPromoEuroAmount(netVal)} €`;
+    elMonthNetReal.style.color = netVal >= 0 ? '#166534' : '#91384a';
+  }
   if (elOut) elOut.textContent = `${formatPromoEuroAmount(sum.outstanding_total || 0)} €`;
 
   renderPaymentsLedger();
@@ -8568,6 +8601,9 @@ function initPaymentSettingsControls() {
         monthly_rent: Number(document.getElementById('studioRentInput')?.value || 0),
         monthly_utilities: Number(document.getElementById('studioUtilitiesInput')?.value || 0),
         monthly_other_fixed: Number(document.getElementById('studioOtherFixedInput')?.value || 0),
+        profitability_coeff_pct: Number(document.getElementById('studioProfitCoeffInput')?.value || 67),
+        tax_rate_pct: Number(document.getElementById('studioTaxRateInput')?.value || 15),
+        monthly_inps: Number(document.getElementById('studioInpsInput')?.value || 0),
         notes: (document.getElementById('studioCostsNotesInput')?.value || '').trim(),
       };
       const res = await apiFetch('admin/studio-costs', {
@@ -8575,8 +8611,9 @@ function initPaymentSettingsControls() {
         body: JSON.stringify(payload),
       });
       STATE.studioCosts = res.studio_costs || STATE.studioCosts;
-      await loadInsights();
+      await Promise.all([loadInsights(), loadPaymentsData(STATE.paymentMethodFilter)]);
       renderStudioCostsPanel();
+      renderPaymentSettingsPanel();
       renderInsightsView();
       if (alertEl) {
         alertEl.hidden = false;

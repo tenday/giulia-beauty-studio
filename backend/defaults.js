@@ -156,7 +156,10 @@ const DEFAULT_STUDIO_COSTS = {
   monthly_rent: 400,
   monthly_utilities: 0,
   monthly_other_fixed: 0,
-  notes: 'Affitto mensile indicativo circa 400 €',
+  profitability_coeff_pct: 67, // Regime forfettario Estetista / Centro Estetico (ATECO 96.02.02 / 96.22)
+  tax_rate_pct: 15, // Imposta sostitutiva ordinaria 15% (modificabile a 5% per start-up)
+  monthly_inps: 0, // Eventuali contributi INPS mensili stimati (deducibili dall'imponibile)
+  notes: 'Affitto mensile indicativo circa 400 € • Regime forfettario (coeff. 67%, imposta 15%)',
 };
 
 function roundStudioEuro(val, fallback = 0) {
@@ -166,12 +169,28 @@ function roundStudioEuro(val, fallback = 0) {
   return Math.max(0, Math.round((num + Number.EPSILON) * 100) / 100);
 }
 
+function clampPct(val, min, max, fallback) {
+  if (val === undefined || val === null || val === '') return fallback;
+  const num = Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, Math.round((num + Number.EPSILON) * 100) / 100));
+}
+
 function normalizeStudioCosts(raw = {}) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const monthly_rent = roundStudioEuro(src.monthly_rent, DEFAULT_STUDIO_COSTS.monthly_rent);
   const monthly_utilities = roundStudioEuro(src.monthly_utilities, DEFAULT_STUDIO_COSTS.monthly_utilities);
   const monthly_other_fixed = roundStudioEuro(src.monthly_other_fixed, DEFAULT_STUDIO_COSTS.monthly_other_fixed);
   const monthly_fixed_total = Math.round((monthly_rent + monthly_utilities + monthly_other_fixed) * 100) / 100;
+  const profitability_coeff_pct = clampPct(
+    src.profitability_coeff_pct,
+    1,
+    100,
+    DEFAULT_STUDIO_COSTS.profitability_coeff_pct
+  );
+  const tax_rate_pct = clampPct(src.tax_rate_pct, 0, 60, DEFAULT_STUDIO_COSTS.tax_rate_pct);
+  const monthly_inps = roundStudioEuro(src.monthly_inps, DEFAULT_STUDIO_COSTS.monthly_inps);
+  const effective_tax_rate_pct = Math.round(((profitability_coeff_pct * tax_rate_pct) / 100) * 100) / 100;
   const notes =
     typeof src.notes === 'string' ? src.notes.trim().slice(0, 300) : DEFAULT_STUDIO_COSTS.notes;
   return {
@@ -179,7 +198,38 @@ function normalizeStudioCosts(raw = {}) {
     monthly_utilities,
     monthly_other_fixed,
     monthly_fixed_total,
+    profitability_coeff_pct,
+    tax_rate_pct,
+    monthly_inps,
+    effective_tax_rate_pct,
     notes,
+  };
+}
+
+function computeForfettarioMonthSummary(grossRevenue, rawCosts = {}) {
+  const sc = normalizeStudioCosts(rawCosts);
+  const rev = Math.max(0, Math.round((Number(grossRevenue || 0) + Number.EPSILON) * 100) / 100);
+  const taxable_gross = Math.round((rev * (sc.profitability_coeff_pct / 100) + Number.EPSILON) * 100) / 100;
+  const taxable_net = Math.max(0, Math.round((taxable_gross - sc.monthly_inps + Number.EPSILON) * 100) / 100);
+  const estimated_taxes = Math.round((taxable_net * (sc.tax_rate_pct / 100) + Number.EPSILON) * 100) / 100;
+  const total_state_outflow = Math.round((estimated_taxes + sc.monthly_inps + Number.EPSILON) * 100) / 100;
+  const net_after_taxes = Math.round((rev - total_state_outflow + Number.EPSILON) * 100) / 100;
+  const net_after_fixed = Math.round((rev - sc.monthly_fixed_total + Number.EPSILON) * 100) / 100;
+  const net_real = Math.round((rev - sc.monthly_fixed_total - total_state_outflow + Number.EPSILON) * 100) / 100;
+  return {
+    gross_revenue: rev,
+    taxable_gross,
+    taxable_net,
+    estimated_taxes,
+    monthly_inps: sc.monthly_inps,
+    total_state_outflow,
+    monthly_fixed_total: sc.monthly_fixed_total,
+    net_after_taxes,
+    net_after_fixed,
+    net_real,
+    profitability_coeff_pct: sc.profitability_coeff_pct,
+    tax_rate_pct: sc.tax_rate_pct,
+    effective_tax_rate_pct: sc.effective_tax_rate_pct,
   };
 }
 
@@ -191,4 +241,5 @@ module.exports = {
   DEFAULT_PAYMENT_SETTINGS,
   DEFAULT_STUDIO_COSTS,
   normalizeStudioCosts,
+  computeForfettarioMonthSummary,
 };
