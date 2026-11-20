@@ -2690,6 +2690,7 @@ function computePaymentsDashboardSummary(appointments = [], transactions = []) {
   let monthCollected = 0;
   let allTimeNet = 0;
   const byMethod = {};
+  const byMonth = {};
 
   for (const tx of transactions) {
     if (tx.status && tx.status !== 'succeeded') continue;
@@ -2697,6 +2698,10 @@ function computePaymentsDashboardSummary(appointments = [], transactions = []) {
     const signedAmt = tx.direction === 'refund' ? -rawAmt : rawAmt;
     allTimeNet += signedAmt;
     const txDate = String(tx.created_at || '').slice(0, 10);
+    const txYm = txDate.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(txYm)) {
+      byMonth[txYm] = roundMoney((byMonth[txYm] || 0) + signedAmt);
+    }
     if (txDate === today) todayCollected += signedAmt;
     if (txDate >= weekStart && txDate <= today) weekCollected += signedAmt;
     if (txDate.startsWith(monthPrefix)) monthCollected += signedAmt;
@@ -2724,6 +2729,7 @@ function computePaymentsDashboardSummary(appointments = [], transactions = []) {
   }
 
   return {
+    current_month: monthPrefix,
     today_collected: roundMoney(todayCollected),
     week_collected: roundMoney(weekCollected),
     month_collected: roundMoney(monthCollected),
@@ -2733,8 +2739,25 @@ function computePaymentsDashboardSummary(appointments = [], transactions = []) {
     partial_count: partialCount,
     unpaid_count: unpaidCount,
     by_method: byMethod,
+    by_month: byMonth,
     status_labels: PAYMENT_STATUS_LABELS,
     method_labels: PAYMENT_METHOD_LABELS,
+  };
+}
+
+function enrichPaymentsSummaryWithFiscal(baseSummary, rawStudioCosts = {}) {
+  const fiscal = computeForfettarioMonthSummary(baseSummary.month_collected, rawStudioCosts || {});
+  return {
+    ...baseSummary,
+    month_estimated_taxes: fiscal.estimated_taxes,
+    month_total_state_outflow: fiscal.total_state_outflow,
+    month_net_after_taxes: fiscal.net_after_taxes,
+    month_net_real: fiscal.net_real,
+    monthly_fixed_total: fiscal.monthly_fixed_total,
+    monthly_inps: fiscal.monthly_inps,
+    profitability_coeff_pct: fiscal.profitability_coeff_pct,
+    tax_rate_pct: fiscal.tax_rate_pct,
+    effective_tax_rate_pct: fiscal.effective_tax_rate_pct,
   };
 }
 
@@ -2758,18 +2781,7 @@ app.get('/api/admin/payments', requireAdmin, async (req, res, next) => {
     ]);
 
     const baseSummary = computePaymentsDashboardSummary(allAppts, allTransactionsForKpi || transactions);
-    const fiscal = computeForfettarioMonthSummary(baseSummary.month_collected, rawStudioCosts || {});
-    const summary = {
-      ...baseSummary,
-      month_estimated_taxes: fiscal.estimated_taxes,
-      month_total_state_outflow: fiscal.total_state_outflow,
-      month_net_after_taxes: fiscal.net_after_taxes,
-      month_net_real: fiscal.net_real,
-      monthly_fixed_total: fiscal.monthly_fixed_total,
-      profitability_coeff_pct: fiscal.profitability_coeff_pct,
-      tax_rate_pct: fiscal.tax_rate_pct,
-      effective_tax_rate_pct: fiscal.effective_tax_rate_pct,
-    };
+    const summary = enrichPaymentsSummaryWithFiscal(baseSummary, rawStudioCosts || {});
     const origin = getRequestOrigin(req);
 
     return res.json({
@@ -2858,11 +2870,15 @@ app.post('/api/admin/payments/transactions', requireAdmin, async (req, res, next
       return sendError(res, 'Azione movimento non supportata.', 400);
     }
 
-    const [transactions, allAppts] = await Promise.all([
+    const [transactions, allAppts, rawStudioCosts] = await Promise.all([
       store.listPaymentTransactions({ limit: 500 }),
       store.listAppointments({}),
+      store.getStudioSetting('studio_costs'),
     ]);
-    const summary = computePaymentsDashboardSummary(allAppts, transactions);
+    const summary = enrichPaymentsSummaryWithFiscal(
+      computePaymentsDashboardSummary(allAppts, transactions),
+      rawStudioCosts || {}
+    );
     return res.json({
       ok: true,
       transaction: resultTx,

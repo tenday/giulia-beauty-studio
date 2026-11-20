@@ -1051,21 +1051,40 @@ function updateKpis() {
     const val = Number(STATE.paymentSummary?.week_collected || 0);
     weekPaidEl.textContent = `${formatPromoEuroAmount(val)} €`;
   }
+  const monthNetLblEl = document.getElementById('kpiMonthNetLabel');
   const monthNetEl = document.getElementById('kpiMonthNetAmount');
   const monthNetHintEl = document.getElementById('kpiMonthNetHint');
   if (monthNetEl) {
     const sum = STATE.paymentSummary || {};
-    const gross = Number(sum.month_collected || 0);
-    const taxes = Number(sum.month_total_state_outflow ?? sum.month_estimated_taxes ?? 0);
+    const anchor = STATE.anchorDate instanceof Date && !Number.isNaN(STATE.anchorDate.getTime())
+      ? STATE.anchorDate
+      : new Date();
+    const ym = `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+    const monthName = MONTHS_IT[anchor.getMonth()] || 'Mese';
+    if (monthNetLblEl) {
+      monthNetLblEl.textContent = `Incasso Netto (${monthName})`;
+    }
+    const byMonth = sum.by_month && typeof sum.by_month === 'object' ? sum.by_month : null;
+    const isCurrentMonth = !sum.current_month || ym === sum.current_month;
+    const gross =
+      byMonth && Object.prototype.hasOwnProperty.call(byMonth, ym)
+        ? Number(byMonth[ym] || 0)
+        : isCurrentMonth
+        ? Number(sum.month_collected || 0)
+        : 0;
+    const coeff = Number(sum.profitability_coeff_pct ?? STATE.studioCosts?.profitability_coeff_pct ?? 67);
+    const taxRate = Number(sum.tax_rate_pct ?? STATE.studioCosts?.tax_rate_pct ?? 15);
+    const inps = Number(sum.monthly_inps ?? STATE.studioCosts?.monthly_inps ?? 0);
     const fixed = Number(sum.monthly_fixed_total ?? STATE.studioCosts?.monthly_fixed_total ?? 400);
-    const net =
-      sum.month_net_real !== undefined && sum.month_net_real !== null
-        ? Number(sum.month_net_real)
-        : Math.round((gross - taxes - fixed) * 100) / 100;
+    const taxableNet = Math.max(0, Math.round((gross * (coeff / 100) - inps + Number.EPSILON) * 100) / 100);
+    const estTaxes = Math.round((taxableNet * (taxRate / 100) + Number.EPSILON) * 100) / 100;
+    const stateOutflow = Math.round((estTaxes + inps + Number.EPSILON) * 100) / 100;
+    const net = Math.round((gross - stateOutflow - fixed + Number.EPSILON) * 100) / 100;
+
     monthNetEl.textContent = `${net >= 0 ? '+' : ''}${formatPromoEuroAmount(net)} €`;
     monthNetEl.style.color = net >= 0 ? '#166534' : '#91384a';
     if (monthNetHintEl) {
-      monthNetHintEl.textContent = `Lordo ${formatPromoEuroAmount(gross)} € • Tasse -${formatPromoEuroAmount(taxes)} € • Fisse -${formatPromoEuroAmount(fixed)} €`;
+      monthNetHintEl.textContent = `Lordo ${formatPromoEuroAmount(gross)} € • Tasse -${formatPromoEuroAmount(stateOutflow)} € • Fisse -${formatPromoEuroAmount(fixed)} €`;
     }
   }
 
